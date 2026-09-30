@@ -91,7 +91,7 @@ export function AppLayout() {
     agents, selectedAgent, saveAgent, deleteAgent, handleAgentChange, lockedEngine, lockedAgentId,
   } = agentState;
   const {
-    activeProjectId, activeProjectPath, activeSpaceProject, activeSpaceTerminalCwd, showThinking,
+    activeProjectId, activeProjectPath, currentBranch, activeSpaceProject, activeSpaceTerminalCwd, showThinking,
     hasProjects, isSpaceSwitching, showToolPicker, hasRightPanel,
     activeTodos, bgAgents, hasTodos, hasAgents, availableContextual,
     glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled, jiraBoardEnabled,
@@ -1228,6 +1228,7 @@ export function AppLayout() {
                             loadSplitPaneBootstrap={manager.loadSplitPaneBootstrap}
                             projects={projectManager.projects}
                             activeProjectPath={activeProjectPath}
+                            currentBranch={currentBranch}
                             splitView={splitView}
                             paneControllerCtx={paneControllerCtx}
                             isIsland={isIsland}
@@ -1533,6 +1534,7 @@ export function AppLayout() {
                   onPlanModeChange={activePaneCtrl?.handlePanePlanModeChange ?? handlePlanModeChange}
                   onPermissionModeChange={activePaneCtrl?.handlePanePermissionModeChange ?? handlePermissionModeChange}
                   projectPath={activeProjectPath}
+                  currentBranch={currentBranch}
                   contextUsage={manager.contextUsage}
                   isCompacting={manager.isCompacting}
                   onCompact={manager.compact}

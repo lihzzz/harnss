@@ -13,6 +13,7 @@ describe.skipIf(!runOpenCodeE2E)("OpenCode ACP integration", () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "harnss-opencode-acp-"));
     const env = {
       ...process.env,
+      HOME: path.join(dataDir, "home"),
       XDG_DATA_HOME: path.join(dataDir, "data"),
       XDG_CONFIG_HOME: path.join(dataDir, "config"),
       XDG_STATE_HOME: path.join(dataDir, "state"),

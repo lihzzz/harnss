@@ -199,22 +199,43 @@ export function useAppSpaceWorkflow(input: UseAppSpaceWorkflowInput) {
   }, [input.manager, input.projectManager.projects, input.spaceManager.activeSpaceId, input.splitView, readLastSessionMap]);
 
   useEffect(() => {
-    if (!activeProjectPath) {
-      input.manager.setCurrentBranch(undefined);
-      return;
-    }
+    const setCurrentBranch = input.manager.setCurrentBranch;
     let cancelled = false;
-    window.claude.git.status(activeProjectPath).then((result) => {
-      if (!cancelled && !("error" in result)) {
-        input.manager.setCurrentBranch(result.branch);
-      }
-    }).catch(() => {
-      if (!cancelled) input.manager.setCurrentBranch(undefined);
-    });
+
+    if (!activeProjectPath) {
+      setCurrentBranch(undefined);
+    } else {
+      const refreshCurrentBranch = async () => {
+        try {
+          const result = await window.claude.git.status(activeProjectPath);
+          if (cancelled) return;
+          setCurrentBranch("error" in result ? undefined : result.branch);
+        } catch {
+          if (!cancelled) setCurrentBranch(undefined);
+        }
+      };
+
+      setCurrentBranch(undefined);
+      void refreshCurrentBranch();
+
+      const interval = window.setInterval(() => {
+        if (!document.hidden) void refreshCurrentBranch();
+      }, 3000);
+      const onVisibilityChange = () => {
+        if (!document.hidden) void refreshCurrentBranch();
+      };
+      document.addEventListener("visibilitychange", onVisibilityChange);
+
+      return () => {
+        cancelled = true;
+        window.clearInterval(interval);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      };
+    }
     return () => {
       cancelled = true;
     };
-  }, [activeProjectPath, input.manager]);
+  }, [activeProjectPath, input.manager.setCurrentBranch]);
 
   return {
     activeProjectId,

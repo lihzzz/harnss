@@ -47,6 +47,7 @@ export interface SplitTopRowItemProps {
   loadSplitPaneBootstrap: (sessionId: string) => Promise<SessionPaneBootstrap | null>;
   projects: Project[];
   activeProjectPath: string | undefined;
+  currentBranch?: string;
 
   // Split view state
   splitView: SplitViewState;
@@ -402,7 +403,7 @@ function renderToolColumn(
 function SplitTopRowItemInner(props: SplitTopRowItemProps) {
   const {
     item, displayIndex, insertBeforeIndex, previewIndex,
-    activeSessionId, activeSession, primaryPane,
+    activeSessionId, activeSession, primaryPane, currentBranch,
     loadSplitPaneBootstrap,
     projects, activeProjectPath,
     splitView, paneControllerCtx,
@@ -498,6 +499,7 @@ function SplitTopRowItemInner(props: SplitTopRowItemProps) {
       lockedEngine: isActiveSessionPane ? lockedEngine : (resolvedSession?.engine ?? null),
       lockedAgentId: isActiveSessionPane ? lockedAgentId : (resolvedSession?.agentId ?? null),
       projectPath: paneProjectPath,
+      currentBranch: isActiveSessionPane ? currentBranch : undefined,
       selectedWorktreePath: paneProjectPath,
       onSelectWorktree: isActiveSessionPane ? handleAgentWorktreeChange : undefined,
       codexModelData: props.codexRawModels,

@@ -76,6 +76,7 @@ export interface SplitChatPaneProps {
 
   // Worktree
   projectPath: string | undefined;
+  currentBranch?: string;
   selectedWorktreePath: string | null | undefined;
   onSelectWorktree?: (path: string | null) => void;
 
@@ -152,6 +153,7 @@ function SplitChatPaneInner({
   lockedEngine,
   lockedAgentId,
   projectPath,
+  currentBranch,
   selectedWorktreePath,
   onSelectWorktree,
   codexModelData,
@@ -278,6 +280,7 @@ function SplitChatPaneInner({
               onPlanModeChange={paneController.handlePanePlanModeChange}
               onPermissionModeChange={paneController.handlePanePermissionModeChange}
               projectPath={projectPath}
+              currentBranch={currentBranch}
               contextUsage={paneState.contextUsage}
               isCompacting={paneState.isCompacting}
               onCompact={paneState.engine.compact}

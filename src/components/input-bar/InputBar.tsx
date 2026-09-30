@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   ArrowUp,
+  GitBranch,
   Loader2,
   Mic,
   MicOff,
@@ -71,6 +72,7 @@ export interface InputBarProps {
   onPlanModeChange: (enabled: boolean) => void;
   onPermissionModeChange: (mode: string) => void;
   projectPath?: string;
+  currentBranch?: string;
   contextUsage?: ContextUsage | null;
   isCompacting?: boolean;
   onCompact?: () => void;
@@ -127,6 +129,7 @@ export const InputBar = memo(function InputBar({
   onPlanModeChange,
   onPermissionModeChange,
   projectPath,
+  currentBranch,
   contextUsage,
   isCompacting,
   onCompact,
@@ -942,6 +945,22 @@ export const InputBar = memo(function InputBar({
               acpPermissionBehavior={acpPermissionBehavior}
               onAcpPermissionBehaviorChange={onAcpPermissionBehaviorChange}
             />
+
+            {currentBranch && (
+              <>
+                <span
+                  className="mx-0.5 h-3.5 w-px shrink-0 bg-border/20"
+                  aria-hidden="true"
+                />
+                <span
+                  className="inline-flex min-w-0 max-w-[220px] shrink items-center gap-1 rounded-lg px-1.5 py-1 text-xs text-muted-foreground"
+                  title={`Current branch: ${currentBranch}`}
+                >
+                  <GitBranch className="size-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{currentBranch}</span>
+                </span>
+              </>
+            )}
           </div>
 
           {/* Right controls */}

@@ -166,6 +166,7 @@ export function useSessionManager(
   const acpPermissionBehaviorRef = useRef<AcpPermissionBehavior>(acpPermissionBehavior);
   acpPermissionBehaviorRef.current = acpPermissionBehavior;
   const currentBranchRef = useRef<string | undefined>(undefined);
+  const [currentBranch, setCurrentBranchState] = useState<string | undefined>();
   // Stable ref to switchSession so toast callbacks don't capture stale closures
   const switchSessionRef = useRef<((id: string) => Promise<void>) | undefined>(undefined);
   // Stable ref for space switching — avoids adding onSpaceChange as a useCallback dependency
@@ -412,6 +413,7 @@ export function useSessionManager(
 
   const setCurrentBranch = useCallback((branch: string | undefined) => {
     currentBranchRef.current = branch;
+    setCurrentBranchState(branch);
   }, []);
 
   const completeAcpAuth = useCallback(async (result: ACPAuthenticateResult) => {
@@ -567,6 +569,7 @@ export function useSessionManager(
     setSessions,
     activeSessionId,
     setCurrentBranch,
+    currentBranch,
     activeSession,
     isDraft,
     draftProjectId,

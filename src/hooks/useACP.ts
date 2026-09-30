@@ -616,13 +616,14 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
   }, [sessionId, pendingPermission]);
 
   const setConfig = useCallback(async (configId: string, value: string) => {
-    if (!sessionId) return;
+    if (!sessionId) return { error: "ACP session not found." };
     acpLog("CONFIG_SET", { session: sessionId.slice(0, 8), configId, value });
     const result = await window.claude.acp.setConfig(sessionId, configId, value);
     if (result.configOptions) {
       setConfigOptions(result.configOptions);
     }
     setConfigOptionsLoading(false);
+    return result;
   }, [sessionId]);
 
   const compact = useCallback(async () => {
