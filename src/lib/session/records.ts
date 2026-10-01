@@ -30,6 +30,7 @@ export function toChatSession(
     branch: session.branch,
     agentId: session.agentId,
     agentSessionId: session.agentSessionId,
+    codexGoal: session.codexGoal,
   };
 }
 
@@ -59,5 +60,6 @@ export function buildPersistedSession(
     ...(session.agentId ? { agentId: session.agentId } : {}),
     ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
     ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
+    ...(session.engine === "codex" ? { codexGoal: session.codexGoal ?? null } : {}),
   };
 }

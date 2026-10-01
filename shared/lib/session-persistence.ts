@@ -2,6 +2,8 @@
  * Pure session persistence helpers shared between Electron and CLI.
  */
 
+import { parseThreadGoal } from "./codex-goal";
+
 export interface SessionMeta {
   id: string;
   projectId: string;
@@ -28,6 +30,7 @@ export interface SessionMeta {
   agentId?: string;
   /** ACP-side session ID used to restore the agent conversation. */
   agentSessionId?: string;
+  codexGoal?: import("../types/codex-protocol/v2/ThreadGoal").ThreadGoal | null;
 }
 
 /**
@@ -67,5 +70,8 @@ export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt:
     branch: data.branch as string | undefined,
     agentId: data.agentId as string | undefined,
     agentSessionId: data.agentSessionId as string | undefined,
+    codexGoal: data.codexGoal === null || data.codexGoal === undefined
+      ? null
+      : parseThreadGoal(data.codexGoal),
   };
 }

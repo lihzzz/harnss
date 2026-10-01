@@ -104,8 +104,11 @@ export function register(): void {
         ...metaFiles.map(async (file): Promise<SessionMeta | null> => {
           try {
             const raw = await fs.promises.readFile(path.join(dir, file), "utf-8");
-            const data = JSON.parse(raw) as SessionMeta;
-            return data;
+            const data = JSON.parse(raw) as Record<string, unknown>;
+            const lastMessageAt = typeof data.lastMessageAt === "number"
+              ? data.lastMessageAt
+              : typeof data.createdAt === "number" ? data.createdAt : 0;
+            return extractSessionMeta(data, lastMessageAt);
           } catch {
             return null;
           }

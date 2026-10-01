@@ -15,6 +15,7 @@ import type { CodexModelSummary } from "@/hooks/session/types";
 import { buildCodexCollabMode, DEFAULT_PERMISSION_MODE } from "@/hooks/session/types";
 import { canonicalizeModelValue, findEquivalentModel } from "@/lib/model-utils";
 import type { PaneController } from "@/types";
+import { getRetryRequest } from "@/lib/session/retry";
 
 // ── Model catalog builders (moved from AppLayout) ──
 
@@ -75,12 +76,22 @@ export interface PaneControllerContext {
     setSessionPermissionMode: (sessionId: string, mode: string) => void;
     setCodexEffort: (effort: string) => void;
     codexEffort: string;
+    codexGoal: import("@/types").CodexThreadGoal | null;
+    codexGoalSupported: boolean | null;
+    codexGoalLoading: boolean;
+    codexGoalError: string | null;
+    getCodexGoal: () => Promise<void>;
+    setCodexGoal: (input: { objective: string; tokenBudget: number | null }) => Promise<boolean>;
+    pauseCodexGoal: () => Promise<boolean>;
+    resumeCodexGoal: () => Promise<boolean>;
+    clearCodexGoal: () => Promise<boolean>;
     codexRawModels: CodexModelSummary[];
     codexModelsLoadingMessage: string | null;
     cachedClaudeModels: ModelInfo[];
     acpConfigOptions: ACPConfigOption[];
     acpConfigOptionsLoading: boolean;
     setACPConfig: (key: string, value: string) => void;
+    retryLastMessage: (errorMessageId: string) => Promise<void>;
   };
   // Split-view helpers (optional — absent in single-chat mode)
   splitView?: {
@@ -190,6 +201,12 @@ export function usePaneController(
       paneState.codex.setCodexEffort(effort);
     };
 
+    const handlePaneGoalGet = () => isActiveSessionPane ? ctx.manager.getCodexGoal() : paneState.codex.getGoal();
+    const handlePaneGoalSet = (input: { objective: string; tokenBudget: number | null }) => isActiveSessionPane ? ctx.manager.setCodexGoal(input) : paneState.codex.setGoal(input);
+    const handlePaneGoalPause = () => isActiveSessionPane ? ctx.manager.pauseCodexGoal() : paneState.codex.pauseGoal();
+    const handlePaneGoalResume = () => isActiveSessionPane ? ctx.manager.resumeCodexGoal() : paneState.codex.resumeGoal();
+    const handlePaneGoalClear = () => isActiveSessionPane ? ctx.manager.clearCodexGoal() : paneState.codex.clearGoal();
+
     const handlePaneAgentChange = async (agent: InstalledAgent | null) => {
       if (isActiveSessionPane) {
         ctx.handleAgentChange(agent);
@@ -273,6 +290,21 @@ export function usePaneController(
       await paneState.engine.interrupt();
     };
 
+    const handlePaneRetry = async (errorMessageId: string) => {
+      if (paneState.isProcessing) return;
+      if (isActiveSessionPane) {
+        await ctx.manager.retryLastMessage(errorMessageId);
+        return;
+      }
+
+      const request = getRetryRequest(paneState.messages, errorMessageId);
+      if (!request) return;
+      paneState.engine.setMessages((prev) => prev.map((message) =>
+        message.id === errorMessageId ? { ...message, retryable: false } : message,
+      ));
+      await handlePaneSend(request.content, request.images, request.displayContent);
+    };
+
     return {
       paneEngine,
       selectedPaneAgent,
@@ -287,6 +319,15 @@ export function usePaneController(
       paneAcpConfigOptionsLoading,
       paneCodexModelsLoadingMessage,
       paneCodexEffort: isActiveSessionPane ? ctx.manager.codexEffort : paneState.codex.codexEffort,
+      paneCodexGoal: isActiveSessionPane ? ctx.manager.codexGoal : paneState.codex.codexGoal,
+      paneCodexGoalSupported: isActiveSessionPane ? ctx.manager.codexGoalSupported : paneState.codex.codexGoalSupported,
+      paneCodexGoalLoading: isActiveSessionPane ? ctx.manager.codexGoalLoading : paneState.codex.goalLoading,
+      paneCodexGoalError: isActiveSessionPane ? ctx.manager.codexGoalError : paneState.codex.goalError,
+      handlePaneGoalGet,
+      handlePaneGoalSet,
+      handlePaneGoalPause,
+      handlePaneGoalResume,
+      handlePaneGoalClear,
       handlePaneModelChange,
       handlePaneClaudeModelEffortChange,
       handlePanePlanModeChange,
@@ -295,6 +336,7 @@ export function usePaneController(
       handlePaneAgentChange,
       handlePaneClear,
       handlePaneSend,
+      handlePaneRetry,
       handlePaneStop,
       handlePaneAcpConfigChange: isActiveSessionPane ? ctx.manager.setACPConfig : paneState.acp.setConfig,
     };

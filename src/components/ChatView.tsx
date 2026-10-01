@@ -143,6 +143,7 @@ interface ChatMessageRowProps {
   onFullRevert?: (checkpointId: string) => void;
   onSendQueuedNow?: (messageId: string) => void;
   onUnqueueQueuedMessage?: (messageId: string) => void;
+  onRetry?: (errorMessageId: string) => void | Promise<void>;
 }
 
 const ChatMessageRow = memo(function ChatMessageRow({
@@ -156,6 +157,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   onFullRevert,
   onSendQueuedNow,
   onUnqueueQueuedMessage,
+  onRetry,
 }: ChatMessageRowProps) {
   // ── Display preferences from Zustand store ──
   const autoExpandTools = useSettingsStore((s) => s.autoExpandTools);
@@ -238,6 +240,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
         onFullRevert={onFullRevert}
         onSendQueuedNow={onSendQueuedNow}
         onUnqueueQueued={onUnqueueQueuedMessage}
+        onRetry={onRetry}
       />
     </div>
   );
@@ -251,7 +254,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
   prev.onRevert === next.onRevert &&
   prev.onFullRevert === next.onFullRevert &&
   prev.onSendQueuedNow === next.onSendQueuedNow &&
-  prev.onUnqueueQueuedMessage === next.onUnqueueQueuedMessage,
+  prev.onUnqueueQueuedMessage === next.onUnqueueQueuedMessage &&
+  prev.onRetry === next.onRetry,
 );
 
 // ── ChatViewProps ──
@@ -270,6 +274,7 @@ interface ChatViewProps {
   onSendQueuedNow?: (messageId: string) => void;
   onUnqueueQueuedMessage?: (messageId: string) => void;
   sendNextId?: string | null;
+  onRetry?: (errorMessageId: string) => void | Promise<void>;
   /** Current space ID — included in remount key so space switches show spinner immediately */
   spaceId?: string;
 }
@@ -356,6 +361,7 @@ function ChatViewContent({
   messages, isProcessing, showThinking, extraBottomPadding, scrollToMessageId, onScrolledToMessage,
   sessionId, onRevert, onFullRevert, onTopScrollProgress,
   onSendQueuedNow, onUnqueueQueuedMessage, sendNextId,
+  onRetry,
 }: ChatViewProps) {
   // ── Display preferences from Zustand store (only those used directly in ChatViewContent) ──
   const autoGroupTools = useSettingsStore((s) => s.autoGroupTools);
@@ -867,6 +873,7 @@ function ChatViewContent({
                 onFullRevert={onFullRevert}
                 onSendQueuedNow={onSendQueuedNow}
                 onUnqueueQueuedMessage={onUnqueueQueuedMessage}
+                onRetry={onRetry}
               />
             </div>
           ))}

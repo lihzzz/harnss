@@ -382,7 +382,8 @@ export function handleClaudeEvent(
       if (resultEvt.is_error || resultEvt.subtype?.startsWith("error")) {
         const detail = resultEvt.errors?.join("; ") || resultEvt.result || "";
         const errorMsg = formatResultError(resultEvt.subtype, detail);
-        state.messages.push(createSystemMessage(errorMsg, true));
+        const canRetry = resultEvt.subtype === "error" || resultEvt.subtype === "error_during_execution";
+        state.messages.push(createSystemMessage(errorMsg, true, canRetry));
       }
       return { processingChanged: true, isProcessing: false };
     }

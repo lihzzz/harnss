@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import type { PersistedSession, Project } from "../../types";
 import { toChatSession } from "../../lib/session/records";
 import { DRAFT_ID } from "./types";
+import { parseThreadGoal } from "@shared/lib/codex-goal";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks } from "./types";
 
 const MAX_SESSION_PAYLOAD_CACHE = 6;
@@ -73,6 +74,7 @@ export function useSessionCache({
 
   /** Apply a loaded (or cached) session payload into React state. */
   const applyLoadedSession = useCallback((id: string, data: PersistedSession) => {
+    const codexGoal = data.engine === "codex" ? parseThreadGoal(data.codexGoal) : null;
     startTransition(() => {
       setStartOptions((prev) => ({
         ...prev,
@@ -90,6 +92,8 @@ export function useSessionCache({
         sessionInfo: null,
         totalCost: data.totalCost,
         contextUsage: data.contextUsage ?? null,
+        codexGoal,
+        codexGoalSupported: data.engine === "codex" ? null : false,
       });
       setInitialPermission(null);
       setInitialRawAcpPermission(null);
@@ -104,6 +108,7 @@ export function useSessionCache({
             ...(data.agentId ? { agentId: data.agentId } : {}),
             ...(data.agentSessionId ? { agentSessionId: data.agentSessionId } : {}),
             ...(data.codexThreadId ? { codexThreadId: data.codexThreadId } : {}),
+            ...(data.engine === "codex" ? { codexGoal } : {}),
             ...(data.effort ? { effort: data.effort } : {}),
             ...(data.permissionMode ? { permissionMode: data.permissionMode } : {}),
             planMode: !!data.planMode,

@@ -328,6 +328,24 @@ declare global {
           message: string,
         ) => Promise<IpcResult>;
         compact: (sessionId: string) => Promise<{ error?: string }>;
+        getGoal: (sessionId: string) => Promise<{
+          supported: boolean;
+          goal: import("@shared/types/codex").CodexThreadGoal | null;
+          reason?: "method-not-found";
+          error?: string;
+        }>;
+        setGoal: (sessionId: string, input: { objective?: string | null; tokenBudget?: number | null; status?: "active" | "paused" }) => Promise<{
+          supported: boolean;
+          goal: import("@shared/types/codex").CodexThreadGoal | null;
+          reason?: "method-not-found";
+          error?: string;
+        }>;
+        clearGoal: (sessionId: string) => Promise<{
+          supported: boolean;
+          goal: import("@shared/types/codex").CodexThreadGoal | null;
+          reason?: "method-not-found";
+          error?: string;
+        }>;
         listSkills: (sessionId: string) => Promise<{
           skills: SkillsListEntry[];
           error?: string;
@@ -340,7 +358,7 @@ declare global {
         authStatus: () => Promise<{ account: unknown; requiresOpenaiAuth: boolean }>;
         login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) => Promise<unknown>;
         resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access" }) =>
-          Promise<{ sessionId?: string; threadId?: string; error?: string }>;
+          Promise<{ sessionId?: string; threadId?: string; goal?: import("@shared/types/codex").CodexThreadGoal | null; goalSupported?: boolean; error?: string }>;
         setModel: (sessionId: string, model: string) => Promise<{ error?: string }>;
         version: () => Promise<{ version?: string; error?: string }>;
         binaryStatus: () => Promise<{ installed: boolean; downloading: boolean }>;

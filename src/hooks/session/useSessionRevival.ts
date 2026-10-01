@@ -73,7 +73,7 @@ export function useSessionRevival({
       });
 
       if (result.error || !result.sessionId) {
-        acp.setMessages((prev) => [...prev, createSystemMessage(result.error || "Failed to reconnect ACP session. Please start a new session.", true)]);
+        acp.setMessages((prev) => [...prev, createSystemMessage(result.error || "Failed to reconnect ACP session. Please start a new session.", true, true)]);
         return;
       }
 
@@ -113,7 +113,7 @@ export function useSessionRevival({
       });
       const promptResult = await window.claude.acp.prompt(newId, text, images);
       if (promptResult?.error) {
-        acp.setMessages((prev) => [...prev, createSystemMessage(`ACP error: ${promptResult.error}`, true)]);
+        acp.setMessages((prev) => [...prev, createSystemMessage(`ACP error: ${promptResult.error}`, true, true)]);
         acp.setIsProcessing(false);
       }
     },
@@ -153,15 +153,23 @@ export function useSessionRevival({
       });
 
       if (result.error || !result.sessionId) {
-        codex.setMessages((prev) => [...prev, createSystemMessage(result.error || "Failed to resume Codex session.", true)]);
+        codex.setMessages((prev) => [...prev, createSystemMessage(result.error || "Failed to resume Codex session.", true, true)]);
         return;
       }
 
       const newId = result.sessionId;
       liveSessionIdsRef.current.add(newId);
 
+      // A supported app-server returning `goal: null` is authoritative. Only
+      // fall back to the local snapshot when the response predates Goal support.
+      const resumedGoal = result.goalSupported === true
+        ? result.goal ?? null
+        : result.goalSupported === false
+          ? null
+          : result.goal ?? session.codexGoal ?? null;
+
       setSessions((prev) => prev.map((s) =>
-        s.id === oldId ? { ...s, id: newId, codexThreadId: result.threadId ?? codexThreadId } : s,
+        s.id === oldId ? { ...s, id: newId, codexThreadId: result.threadId ?? codexThreadId, codexGoal: resumedGoal } : s,
       ));
       setInitialMessages(messagesRef.current);
       setInitialMeta({
@@ -170,6 +178,8 @@ export function useSessionRevival({
         sessionInfo: null,
         totalCost: totalCostRef.current,
         contextUsage: contextUsageRef.current,
+        codexGoal: resumedGoal,
+        codexGoalSupported: result.goalSupported ?? null,
       });
       setActiveSessionId(newId);
 
@@ -193,7 +203,7 @@ export function useSessionRevival({
         codexCollabMode,
       );
       if (sendResult?.error) {
-        codex.setMessages((prev) => [...prev, createSystemMessage(`Unable to send message: ${sendResult.error}`, true)]);
+        codex.setMessages((prev) => [...prev, createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true)]);
         codex.setIsProcessing(false);
       }
     },
@@ -225,14 +235,14 @@ export function useSessionRevival({
       } catch (err) {
         engine.setMessages((prev) => [
           ...prev,
-          createSystemMessage(`Failed to resume session: ${err instanceof Error ? err.message : String(err)}`, true),
+          createSystemMessage(`Failed to resume session: ${err instanceof Error ? err.message : String(err)}`, true, true),
         ]);
         return;
       }
       if (result.error) {
         engine.setMessages((prev) => [
           ...prev,
-          createSystemMessage(result.error!, true),
+          createSystemMessage(result.error!, true, true),
         ]);
         return;
       }
@@ -284,7 +294,7 @@ export function useSessionRevival({
         liveSessionIdsRef.current.delete(newSessionId);
         engine.setMessages((prev) => [
           ...prev,
-          createSystemMessage(`Unable to send message: ${sendResult.error}`, true),
+          createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true),
         ]);
         return;
       }

@@ -1,7 +1,9 @@
 import { lazy, memo, Suspense, useState, useMemo, createContext, useContext, type ReactNode } from "react";
-import { AlertCircle, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronUp, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -12,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import { guessLanguage } from "@/lib/languages";
 import { useStreamingTextReveal } from "@/hooks/useStreamingTextReveal";
+import { useChatPersistedState } from "@/components/chat-ui-state";
 import type { UIMessage, ImageAttachment } from "@/types";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { CopyButton } from "./CopyButton";
@@ -23,7 +26,112 @@ import {
 } from "@/components/lib/chat-layout";
 
 // Stable references to avoid re-creating on every render
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeKatex];
+
+function getFenceMarker(line: string): { char: "`" | "~"; length: number } | null {
+  const match = /^( {0,3})(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(line);
+  if (!match) return null;
+  return { char: match[2][0] as "`" | "~", length: match[2].length };
+}
+
+function isFenceClose(line: string, fence: { char: "`" | "~"; length: number }): boolean {
+  const pattern = new RegExp(`^ {0,3}${fence.char}{${fence.length},}[ \\t]*(?:\\n|$)`);
+  return pattern.test(line);
+}
+
+/** Normalize LaTeX delimiters while leaving fenced and inline code unchanged. */
+function normalizeMathText(text: string): string {
+  let result = "";
+  let index = 0;
+
+  while (index < text.length) {
+    if (text[index] === "`") {
+      const runStart = index;
+      while (index < text.length && text[index] === "`") index += 1;
+      const marker = text.slice(runStart, index);
+      const close = text.indexOf(marker, index);
+      if (close < 0) {
+        result += text.slice(runStart);
+        break;
+      }
+      const end = close + marker.length;
+      result += text.slice(runStart, end);
+      index = end;
+      continue;
+    }
+
+    const displayStart = text.startsWith("\\[", index) ? "\\[" : null;
+    const inlineStart = text.startsWith("\\(", index) ? "\\(" : null;
+    const start = displayStart ?? inlineStart;
+    if (!start) {
+      result += text[index];
+      index += 1;
+      continue;
+    }
+
+    const endMarker = displayStart ? "\\]" : "\\)";
+    const close = text.indexOf(endMarker, index + start.length);
+    if (close < 0) {
+      result += start;
+      index += start.length;
+      continue;
+    }
+
+    const expression = text.slice(index + start.length, close).trim();
+    if (displayStart) {
+      const linePrefix = text.slice(text.lastIndexOf("\n", index - 1) + 1, index);
+      const afterClose = text.slice(close + endMarker.length);
+      const isBlock = /^[ \t]*$/.test(linePrefix) && /^[ \t]*(?:\n|$)/.test(afterClose);
+      result += isBlock ? `$$\n${expression}\n$$` : `$$${expression}$$`;
+    } else {
+      result += `$${expression}$`;
+    }
+    index = close + endMarker.length;
+  }
+
+  return result;
+}
+
+/**
+ * Models commonly emit the LaTeX display delimiters `\[` and `\]`, while
+ * remark-math follows Markdown's dollar delimiters. Normalize the former
+ * before parsing so persisted messages render the same as new ones.
+ */
+function normalizeMathDelimiters(markdown: string): string {
+  const lines = markdown.split(/(?<=\n)/);
+  const output: string[] = [];
+  let fence: { char: "`" | "~"; length: number } | null = null;
+  let text = "";
+
+  const flushText = () => {
+    if (text) {
+      output.push(normalizeMathText(text));
+      text = "";
+    }
+  };
+
+  for (const line of lines) {
+    if (fence) {
+      output.push(line);
+      if (isFenceClose(line, fence)) fence = null;
+      continue;
+    }
+
+    const marker = getFenceMarker(line);
+    if (marker) {
+      flushText();
+      output.push(line);
+      fence = marker;
+      continue;
+    }
+
+    text += line;
+  }
+
+  flushText();
+  return output.join("");
+}
 import type { Components } from "react-markdown";
 
 const SyntaxHighlightedCode = lazy(() =>
@@ -117,6 +225,15 @@ const SYNTAX_STYLE: React.CSSProperties = {
 /** Override oneDark's background on the inner <code> element */
 const CODE_TAG_PROPS = { style: { background: "transparent", textShadow: "none" } };
 
+const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 12;
+const USER_MESSAGE_COLLAPSE_CHARACTER_LIMIT = 1_200;
+
+function getCollapsedUserContent(content: string): string {
+  const firstLines = content.split("\n").slice(0, USER_MESSAGE_COLLAPSE_LINE_LIMIT).join("\n");
+  const truncated = firstLines.slice(0, USER_MESSAGE_COLLAPSE_CHARACTER_LIMIT).trimEnd();
+  return truncated.length < content.length ? `${truncated}…` : content;
+}
+
 /** Strip `<file path="...">...</file>` and `<folder path="...">...</folder>` context blocks from user messages */
 function stripFileContext(text: string): string {
   let result = text.replace(/<file path="[^"]*">[\s\S]*?<\/file>\s*/g, "");
@@ -178,6 +295,8 @@ interface MessageBubbleProps {
   onSendQueuedNow?: (messageId: string) => void;
   /** Called when user removes a queued user message before it is sent */
   onUnqueueQueued?: (messageId: string) => void;
+  /** Called when a retryable system error should submit the failed user turn again. */
+  onRetry?: (errorMessageId: string) => void | Promise<void>;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -190,12 +309,25 @@ export const MessageBubble = memo(function MessageBubble({
   onFullRevert,
   onSendQueuedNow,
   onUnqueueQueued,
+  onRetry,
 }: MessageBubbleProps) {
   // All hooks must be called before any early returns (Rules of Hooks)
   const isUser = message.role === "user";
   const [viewingImage, setViewingImage] = useState<ImageAttachment | null>(null);
   const time = useMemo(() => new Date(message.timestamp).toLocaleTimeString(), [message.timestamp]);
   const displayContent = useMemo(() => isUser ? (message.displayContent ?? stripFileContext(message.content)) : message.content, [isUser, message.content, message.displayContent]);
+  const markdownContent = useMemo(() => normalizeMathDelimiters(message.content), [message.content]);
+  const [isUserMessageExpanded, setIsUserMessageExpanded] = useChatPersistedState(
+    `user-message:${message.id}`,
+    false,
+  );
+  const isLongUserMessage = isUser && (
+    displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTER_LIMIT ||
+    displayContent.split("\n").length > USER_MESSAGE_COLLAPSE_LINE_LIMIT
+  );
+  const renderedUserContent = isLongUserMessage && !isUserMessageExpanded
+    ? getCollapsedUserContent(displayContent)
+    : displayContent;
 
   // Per-token fade-in animation via DOM surgery in useLayoutEffect.
   // Always renders ReactMarkdown (real-time markdown parsing) — the hook
@@ -215,6 +347,16 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="inline-flex items-center gap-1.5">
           {isError ? <AlertCircle className="h-3 w-3" /> : <Info className="h-3 w-3" />}
           {message.content}
+          {isError && message.retryable && onRetry && (
+            <button
+              type="button"
+              className="ms-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] text-foreground/60 transition-colors hover:bg-foreground/[0.08] hover:text-foreground"
+              onClick={() => void onRetry(message.id)}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Retry
+            </button>
+          )}
         </div>
       </div>
     );
@@ -251,7 +393,27 @@ export const MessageBubble = memo(function MessageBubble({
                   open={!!viewingImage}
                   onOpenChange={(isOpen) => { if (!isOpen) setViewingImage(null); }}
                 />
-                {renderWithMentions(displayContent)}
+                {renderWithMentions(renderedUserContent)}
+                {isLongUserMessage && (
+                  <button
+                    type="button"
+                    aria-expanded={isUserMessageExpanded}
+                    className="mt-2 flex w-fit items-center gap-1 rounded-md text-[11px] font-medium text-foreground/45 transition-colors hover:text-foreground/75 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => setIsUserMessageExpanded((expanded) => !expanded)}
+                  >
+                    {isUserMessageExpanded ? (
+                      <>
+                        <ChevronUp className="h-3 w-3" />
+                        Collapse message
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="h-3 w-3" />
+                        Show full message
+                      </>
+                    )}
+                  </button>
+                )}
                 {message.isQueued && (
                   <div className="mt-2 flex items-center gap-2 border-t border-foreground/[0.06] pt-2 text-[11px] text-muted-foreground">
                     <Clock className="h-3 w-3 shrink-0" />
@@ -374,9 +536,10 @@ export const MessageBubble = memo(function MessageBubble({
                     <IsStreamingMarkdownContext.Provider value={!!message.isStreaming}>
                       <ReactMarkdown
                         remarkPlugins={REMARK_PLUGINS}
+                        rehypePlugins={REHYPE_PLUGINS}
                         components={MD_COMPONENTS}
                       >
-                        {message.content}
+                        {markdownContent}
                       </ReactMarkdown>
                     </IsStreamingMarkdownContext.Provider>
                   </div>
@@ -398,6 +561,7 @@ export const MessageBubble = memo(function MessageBubble({
   prev.message.thinkingComplete === next.message.thinkingComplete &&
   prev.message.images === next.message.images &&
   prev.message.isError === next.message.isError &&
+  prev.message.retryable === next.message.retryable &&
   prev.message.checkpointId === next.message.checkpointId &&
   prev.message.isQueued === next.message.isQueued &&
   prev.assistantTurnDividerLabel === next.assistantTurnDividerLabel &&
@@ -407,7 +571,8 @@ export const MessageBubble = memo(function MessageBubble({
   prev.onRevert === next.onRevert &&
   prev.onFullRevert === next.onFullRevert &&
   prev.onSendQueuedNow === next.onSendQueuedNow &&
-  prev.onUnqueueQueued === next.onUnqueueQueued,
+  prev.onUnqueueQueued === next.onUnqueueQueued &&
+  prev.onRetry === next.onRetry,
 );
 
 /**

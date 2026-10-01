@@ -246,6 +246,15 @@ function SplitChatPaneInner({
               showDevFill={isActiveSessionPane ? showDevFill : false}
               onSeedDevExampleConversation={isActiveSessionPane ? onSeedDevExampleConversation : undefined}
               onSeedDevExampleSpaceData={isActiveSessionPane ? onSeedDevExampleSpaceData : undefined}
+              codexGoal={paneController.paneCodexGoal}
+              codexGoalSupported={paneController.paneCodexGoalSupported}
+              codexGoalLoading={paneController.paneCodexGoalLoading}
+              codexGoalError={paneController.paneCodexGoalError}
+              onGetCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalGet : undefined}
+              onSetCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalSet : undefined}
+              onPauseCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalPause : undefined}
+              onResumeCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalResume : undefined}
+              onClearCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalClear : undefined}
               onClosePane={onClosePane}
             />
           </div>
@@ -259,6 +268,7 @@ function SplitChatPaneInner({
             onRevert={onRevert}
             onFullRevert={onFullRevert}
             onTopScrollProgress={onTopScrollProgress}
+            onRetry={paneController.handlePaneRetry}
           />
           <div
             className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] transition-opacity duration-200 ${isIsland ? "h-24" : "h-28"}`}

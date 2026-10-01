@@ -114,10 +114,10 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     scheduleRaf(flushStreamingToState);
   }, [scheduleRaf, flushStreamingToState]);
 
-  const pushSystemError = useCallback((content: string) => {
+  const pushSystemError = useCallback((content: string, retryable = true) => {
     setMessages((prev) => [
       ...prev,
-      createSystemMessage(content, true),
+      createSystemMessage(content, true, retryable),
     ]);
   }, [setMessages]);
 
@@ -493,7 +493,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         const errorDetail = data.error || `Agent process exited with code ${data.code}`;
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorDetail, true),
+          createSystemMessage(errorDetail, true, true),
         ]);
       }
     });
@@ -567,13 +567,13 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       const result = await window.claude.acp.cancel(sessionId);
       if (result?.error) {
         acpLog("INTERRUPT_ERROR", { session: sessionId.slice(0, 8), error: result.error });
-        pushSystemError(`ACP cancel error: ${result.error}`);
+        pushSystemError(`ACP cancel error: ${result.error}`, false);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       acpLog("INTERRUPT_ERROR", { session: sessionId.slice(0, 8), error: msg });
       captureException(err instanceof Error ? err : new Error(msg), { label: "ACP_INTERRUPT_ERR" });
-      pushSystemError(`ACP cancel error: ${msg}`);
+      pushSystemError(`ACP cancel error: ${msg}`, false);
     }
   }, [sessionId, finalizeStreamingMessage, closePendingTools, pushSystemError, setIsCompacting]);
 

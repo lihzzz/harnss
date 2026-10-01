@@ -707,9 +707,11 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             const errorMsg = resultEvent.errors?.join("\n")
               || resultEvent.result
               || "An error occurred";
+            const canRetry = resultEvent.subtype === "error"
+              || resultEvent.subtype === "error_during_execution";
             setMessages((prev) => [
               ...prev,
-              createSystemMessage(formatResultError(resultEvent.subtype, errorMsg), true),
+              createSystemMessage(formatResultError(resultEvent.subtype, errorMsg), true, canRetry),
             ]);
           }
 
@@ -963,7 +965,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
         const errorDetail = data.error || `Process exited with code ${data.code}`;
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorDetail, true),
+          createSystemMessage(errorDetail, true, true),
         ]);
       }
     });

@@ -864,12 +864,22 @@ export function AppLayout() {
       setSessionPermissionMode: manager.setSessionPermissionMode,
       setCodexEffort: manager.setCodexEffort,
       codexEffort: manager.codexEffort,
+      codexGoal: manager.codexGoal,
+      codexGoalSupported: manager.codexGoalSupported,
+      codexGoalLoading: manager.codexGoalLoading,
+      codexGoalError: manager.codexGoalError,
+      getCodexGoal: manager.getCodexGoal,
+      setCodexGoal: manager.setCodexGoal,
+      pauseCodexGoal: manager.pauseCodexGoal,
+      resumeCodexGoal: manager.resumeCodexGoal,
+      clearCodexGoal: manager.clearCodexGoal,
       codexRawModels: manager.codexRawModels,
       codexModelsLoadingMessage: manager.codexModelsLoadingMessage,
       cachedClaudeModels: manager.cachedClaudeModels,
       acpConfigOptions: manager.acpConfigOptions,
       acpConfigOptionsLoading: manager.acpConfigOptionsLoading,
       setACPConfig: manager.setACPConfig,
+      retryLastMessage: manager.retryLastMessage,
     },
     splitView: {
       setFocusedSession: splitView.setFocusedSession,
@@ -994,7 +1004,7 @@ export function AppLayout() {
   );
   const showCodexAuthDialog =
     !!manager.activeSessionId &&
-    manager.activeSession?.engine === "codex" &&
+    manager.activeEngine === "codex" &&
     manager.codexAuthRequired;
   const acpAuthAgentName = manager.acpAuthAgentId
     ? agents.find((agent) => agent.id === manager.acpAuthAgentId)?.name ?? manager.acpAuthAgentId
@@ -1498,6 +1508,15 @@ export function AppLayout() {
                   showDevFill={devFillEnabled}
                   onSeedDevExampleConversation={manager.seedDevExampleConversation}
                   onSeedDevExampleSpaceData={handleSeedDevExampleSpaceData}
+                  codexGoal={manager.activeEngine === "codex" ? manager.codexGoal : null}
+                  codexGoalSupported={manager.activeEngine === "codex" ? manager.codexGoalSupported : false}
+                  codexGoalLoading={manager.activeEngine === "codex" ? manager.codexGoalLoading : false}
+                  codexGoalError={manager.activeEngine === "codex" ? manager.codexGoalError : null}
+                  onGetCodexGoal={manager.activeEngine === "codex" ? manager.getCodexGoal : undefined}
+                  onSetCodexGoal={manager.activeEngine === "codex" ? manager.setCodexGoal : undefined}
+                  onPauseCodexGoal={manager.activeEngine === "codex" ? manager.pauseCodexGoal : undefined}
+                  onResumeCodexGoal={manager.activeEngine === "codex" ? manager.resumeCodexGoal : undefined}
+                  onClearCodexGoal={manager.activeEngine === "codex" ? manager.clearCodexGoal : undefined}
                 />
               </div>
               {chatSearchOpen && (
@@ -1518,6 +1537,7 @@ export function AppLayout() {
                 sessionId={manager.activeSessionId}
                 onRevert={manager.isConnected && manager.revertFiles ? handleRevert : undefined}
                 onFullRevert={manager.isConnected && manager.fullRevert ? handleFullRevert : undefined}
+                onRetry={activePaneCtrl?.handlePaneRetry}
                 onTopScrollProgress={handleTopScrollProgress}
                 onSendQueuedNow={handleSendQueuedNow}
                 onUnqueueQueuedMessage={handleUnqueueMessage}

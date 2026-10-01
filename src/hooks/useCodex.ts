@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import type { TodoItem, AppPermissionBehavior, ModelInfo, ImageAttachment, SessionInfo, BackgroundSessionSnapshot, SlashCommand, CodexSessionEvent, CodexServerRequest, CodexExitEvent, CodexTokenUsageNotification } from "@/types";
+import type { TodoItem, AppPermissionBehavior, ModelInfo, ImageAttachment, SessionInfo, BackgroundSessionSnapshot, SlashCommand, CodexSessionEvent, CodexServerRequest, CodexExitEvent, CodexTokenUsageNotification, CodexThreadGoal } from "@/types";
 import type { CollaborationMode } from "@/types/codex-protocol/CollaborationMode";
 import type { ItemStartedNotification } from "@/types/codex-protocol/v2/ItemStartedNotification";
 import type { ItemCompletedNotification } from "@/types/codex-protocol/v2/ItemCompletedNotification";
@@ -33,6 +33,7 @@ import { suppressNextSessionCompletion } from "@/lib/notification-utils";
 import { captureException } from "@/lib/analytics/analytics";
 import { createSystemMessage, createUserMessage, nextId } from "@/lib/message-factory";
 import { useEngineBase } from "./useEngineBase";
+import { parseThreadGoal } from "@shared/lib/codex-goal";
 
 interface UseCodexOptions {
   sessionId: string | null;
@@ -112,6 +113,10 @@ export function useCodex({
   const [codexEffort, setCodexEffort] = useState<string>("medium");
   const [authRequired, setAuthRequired] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [codexGoal, setCodexGoal] = useState<CodexThreadGoal | null>(initialMeta?.codexGoal ?? null);
+  const [codexGoalSupported, setCodexGoalSupported] = useState<boolean | null>(initialMeta?.codexGoalSupported ?? null);
+  const [goalLoading, setGoalLoading] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
 
   // Refs for rAF streaming flush (avoid React 19 batching issues)
   const bufferRef = useRef(new CodexStreamingBuffer());
@@ -156,6 +161,10 @@ export function useCodex({
   useEffect(() => {
     setTodoItems([]);
     setAuthRequired(false);
+    setCodexGoal(initialMeta?.codexGoal ?? null);
+    setCodexGoalSupported(initialMeta?.codexGoalSupported ?? null);
+    setGoalError(null);
+    setGoalLoading(false);
     cancelPendingFlush();
     bufferRef.current.reset();
     itemMapRef.current.clear();
@@ -309,6 +318,21 @@ export function useCodex({
   const handleNotification = useCallback((event: CodexSessionEvent) => {
     if (event._sessionId !== sessionIdRef.current) return;
     switch (event.method) {
+      case "thread/goal/updated": {
+        const goal = parseThreadGoal((event.params as { goal?: unknown } | undefined)?.goal);
+        if (!goal) return;
+        setCodexGoal((previous) => previous && previous.updatedAt > goal.updatedAt ? previous : goal);
+        setCodexGoalSupported(true);
+        setGoalError(null);
+        break;
+      }
+
+      case "thread/goal/cleared":
+        setCodexGoal(null);
+        setCodexGoalSupported(true);
+        setGoalError(null);
+        break;
+
       case "turn/started":
         setIsProcessing(true);
         planTextRef.current = ""; // Reset plan accumulator for new turn
@@ -396,9 +420,10 @@ export function useCodex({
         ) {
           setAuthRequired(true);
         }
+        setIsProcessing(false);
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorText, true),
+          createSystemMessage(errorText, true, true),
         ]);
         break;
       }
@@ -678,7 +703,7 @@ export function useCodex({
       const msg = turn.error?.message || "Turn failed";
       setMessages((prev) => [
         ...prev,
-        createSystemMessage(msg, true),
+        createSystemMessage(msg, true, true),
       ]);
     }
   }, [finalizeStreamingAssistant]);
@@ -827,6 +852,12 @@ export function useCodex({
     if (data._sessionId !== sessionIdRef.current) return;
     setIsConnected(false);
     setIsProcessing(false);
+    if (data.code !== 0 && data.code !== null) {
+      setMessages((prev) => [
+        ...prev,
+        createSystemMessage(`Codex process exited with code ${data.code}`, true, true),
+      ]);
+    }
   }, []);
 
   // ── Subscribe to events ──
@@ -836,6 +867,28 @@ export function useCodex({
     const unsubEvent = window.claude.codex.onEvent(handleNotification);
     const unsubApproval = window.claude.codex.onApprovalRequest(handleApproval);
     const unsubExit = window.claude.codex.onExit(handleExit);
+
+    let cancelled = false;
+    setGoalLoading(true);
+    void window.claude.codex.getGoal(sessionId).then((result) => {
+      if (cancelled) return;
+      setGoalLoading(false);
+      if (result.reason === "method-not-found" || result.supported === false) {
+        setCodexGoalSupported(false);
+        setCodexGoal(null);
+        return;
+      }
+      if (result.error) {
+        setGoalError(result.error);
+        return;
+      }
+      setCodexGoalSupported(true);
+      setCodexGoal(result.goal ?? null);
+    }).catch((error) => {
+      if (cancelled) return;
+      setGoalLoading(false);
+      setGoalError(error instanceof Error ? error.message : String(error));
+    });
 
     // Fetch available skills and apps for slash command autocomplete
     Promise.all([
@@ -869,6 +922,7 @@ export function useCodex({
     });
 
     return () => {
+      cancelled = true;
       unsubEvent();
       unsubApproval();
       unsubExit();
@@ -915,7 +969,7 @@ export function useCodex({
       if (!ok) {
         setMessages((prev) => [
           ...prev,
-          createSystemMessage("Unable to send message.", true),
+          createSystemMessage("Unable to send message.", true, true),
         ]);
       }
       return ok;
@@ -940,6 +994,91 @@ export function useCodex({
     setIsCompacting(true);
     await window.claude.codex.compact(sessionId);
   }, [sessionId]);
+
+  const getGoal = useCallback(async (sessionIdOverride?: string): Promise<void> => {
+    const targetSessionId = sessionIdOverride ?? sessionIdRef.current ?? sessionId;
+    if (!targetSessionId) return;
+    setGoalLoading(true);
+    setGoalError(null);
+    try {
+      const result = await window.claude.codex.getGoal(targetSessionId);
+      if (result.reason === "method-not-found" || result.supported === false) {
+        setCodexGoalSupported(false);
+        setCodexGoal(null);
+      } else if (result.error) {
+        setGoalError(result.error);
+      } else {
+        setCodexGoalSupported(true);
+        setCodexGoal(result.goal ?? null);
+      }
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGoalLoading(false);
+    }
+  }, [sessionId]);
+
+  const setGoal = useCallback(async (input: { objective?: string | null; tokenBudget?: number | null; status?: "active" | "paused" }, sessionIdOverride?: string): Promise<boolean> => {
+    const targetSessionId = sessionIdOverride ?? sessionIdRef.current ?? sessionId;
+    if (!targetSessionId) return false;
+    setGoalLoading(true);
+    setGoalError(null);
+    try {
+      const result = await window.claude.codex.setGoal(targetSessionId, input);
+      if (result.reason === "method-not-found" || result.supported === false) {
+        setCodexGoalSupported(false);
+        setCodexGoal(null);
+        return false;
+      }
+      if (result.error) {
+        setGoalError(result.error);
+        return false;
+      }
+      setCodexGoalSupported(true);
+      setCodexGoal(result.goal ?? null);
+      window.dispatchEvent(new CustomEvent("harnss:codex-goal-mutated", {
+        detail: { sessionId: targetSessionId, goal: result.goal ?? null },
+      }));
+      return true;
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setGoalLoading(false);
+    }
+  }, [sessionId]);
+
+  const clearGoal = useCallback(async (sessionIdOverride?: string): Promise<boolean> => {
+    const targetSessionId = sessionIdOverride ?? sessionIdRef.current ?? sessionId;
+    if (!targetSessionId) return false;
+    setGoalLoading(true);
+    setGoalError(null);
+    try {
+      const result = await window.claude.codex.clearGoal(targetSessionId);
+      if (result.reason === "method-not-found" || result.supported === false) {
+        setCodexGoalSupported(false);
+        return false;
+      }
+      if (result.error) {
+        setGoalError(result.error);
+        return false;
+      }
+      setCodexGoal(null);
+      setCodexGoalSupported(true);
+      window.dispatchEvent(new CustomEvent("harnss:codex-goal-mutated", {
+        detail: { sessionId: targetSessionId, goal: null },
+      }));
+      return true;
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setGoalLoading(false);
+    }
+  }, [sessionId]);
+
+  const pauseGoal = useCallback((sessionIdOverride?: string) => setGoal({ status: "paused" }, sessionIdOverride), [setGoal]);
+  const resumeGoal = useCallback((sessionIdOverride?: string) => setGoal({ status: "active" }, sessionIdOverride), [setGoal]);
 
   const respondPermission = useCallback(
     async (behavior: AppPermissionBehavior, _updatedInput?: Record<string, unknown>, _newPermissionMode?: string) => {
@@ -1097,5 +1236,14 @@ export function useCodex({
     codexModels, setCodexModels,
     codexEffort, setCodexEffort,
     slashCommands,
+    codexGoal,
+    codexGoalSupported,
+    goalLoading,
+    goalError,
+    getGoal,
+    setGoal,
+    clearGoal,
+    pauseGoal,
+    resumeGoal,
   };
 }

@@ -39,6 +39,13 @@ export type { ModelListResponse as CodexModelListResponse } from "./codex-protoc
 export type { AskForApproval as CodexApprovalPolicy } from "./codex-protocol/v2/AskForApproval";
 export type { SandboxPolicy as CodexSandboxPolicy } from "./codex-protocol/v2/SandboxPolicy";
 export type { CodexErrorInfo } from "./codex-protocol/v2/CodexErrorInfo";
+export type { ThreadGoal as CodexThreadGoal } from "./codex-protocol/v2/ThreadGoal";
+export type { ThreadGoalStatus as CodexThreadGoalStatus } from "./codex-protocol/v2/ThreadGoalStatus";
+export type { ThreadGoalGetResponse as CodexThreadGoalGetResponse } from "./codex-protocol/v2/ThreadGoalGetResponse";
+export type { ThreadGoalSetResponse as CodexThreadGoalSetResponse } from "./codex-protocol/v2/ThreadGoalSetResponse";
+export type { ThreadGoalClearResponse as CodexThreadGoalClearResponse } from "./codex-protocol/v2/ThreadGoalClearResponse";
+export type { ThreadGoalUpdatedNotification as CodexThreadGoalUpdatedNotification } from "./codex-protocol/v2/ThreadGoalUpdatedNotification";
+export type { ThreadGoalClearedNotification as CodexThreadGoalClearedNotification } from "./codex-protocol/v2/ThreadGoalClearedNotification";
 
 // Notification params
 export type { ItemStartedNotification as CodexItemStartedNotification } from "./codex-protocol/v2/ItemStartedNotification";

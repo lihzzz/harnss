@@ -28,7 +28,12 @@ import type {
   CodexInitializeResponse,
   CodexItemStartedNotification,
   CodexItemCompletedNotification,
+  CodexThreadGoal,
+  CodexThreadGoalGetResponse,
+  CodexThreadGoalSetResponse,
+  CodexThreadGoalClearResponse,
 } from "@shared/types/codex";
+import { isMethodNotFoundError, parseThreadGoal } from "@shared/lib/codex-goal";
 import type { SkillsListResponse } from "@shared/types/codex-protocol/v2/SkillsListResponse";
 import type { AppsListResponse } from "@shared/types/codex-protocol/v2/AppsListResponse";
 
@@ -47,7 +52,15 @@ interface CodexSession {
   approvalPolicy?: string;
   /** Sandbox policy for the session — passed to lazy thread/start */
   sandbox?: string;
+  goalSupport: "unknown" | "supported" | "unsupported";
+  goal: CodexThreadGoal | null;
+  goalMutation: Promise<void>;
+  threadStart: Promise<string> | null;
 }
+
+export type CodexGoalResult =
+  | { supported: true; goal: CodexThreadGoal | null; error?: string }
+  | { supported: false; goal: null; reason: "method-not-found"; error?: string };
 
 import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, pickModelId } from "@shared/lib/codex-helpers";
 
@@ -128,6 +141,15 @@ function summarizeCodexNotification(notification: CodexServerNotification): stri
       const { tokenUsage } = notification.params;
       return `thread/tokenUsage/updated total=${tokenUsage.total.totalTokens} last_in=${tokenUsage.last.inputTokens} last_out=${tokenUsage.last.outputTokens}`;
     }
+    case "thread/goal/updated":
+      {
+        const goal = parseThreadGoal((notification.params as { goal?: unknown })?.goal);
+        return goal
+          ? `thread/goal/updated status=${goal.status} updated=${goal.updatedAt}`
+          : "thread/goal/updated malformed";
+      }
+    case "thread/goal/cleared":
+      return `thread/goal/cleared thread=${shortId((notification.params as { threadId?: unknown })?.threadId, 12)}`;
     case "error": {
       const { error } = notification.params;
       return `error message="${error.message.slice(0, 180)}"`;
@@ -135,6 +157,96 @@ function summarizeCodexNotification(notification: CodexServerNotification): stri
     default:
       return notification.method;
   }
+}
+
+/** Start a thread only when a session was created without one (draft/lazy path). */
+async function ensureCodexThread(session: CodexSession): Promise<string> {
+  if (session.threadId) return session.threadId;
+  if (session.threadStart) return session.threadStart;
+
+  const start = (async () => {
+    const threadParams: Record<string, unknown> = {
+      cwd: session.cwd,
+      experimentalRawEvents: false,
+      persistExtendedHistory: false,
+    };
+    if (session.model) threadParams.model = session.model;
+    if (session.approvalPolicy) threadParams.approvalPolicy = session.approvalPolicy;
+    if (session.sandbox) threadParams.sandbox = session.sandbox;
+    const threadResult = await session.rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
+    session.threadId = threadResult.thread.id;
+    log("codex", ` Thread lazily started: session=${shortId(session.internalId, 12)} thread=${shortId(session.threadId, 12)}`);
+    return session.threadId;
+  })();
+  session.threadStart = start;
+  try {
+    return await start;
+  } finally {
+    if (session.threadStart === start) session.threadStart = null;
+  }
+}
+
+async function refreshGoal(
+  session: CodexSession,
+  getMainWindow?: () => BrowserWindow | null,
+): Promise<CodexGoalResult> {
+  const threadId = await ensureCodexThread(session);
+  try {
+    const result = await session.rpc.request<CodexThreadGoalGetResponse>("thread/goal/get", { threadId });
+    const goal = result?.goal == null ? null : parseThreadGoal(result.goal);
+    if (result?.goal != null && !goal) {
+      session.goalSupport = "supported";
+      return { supported: true, goal: session.goal, error: "Codex returned a malformed Goal snapshot" };
+    }
+    session.goalSupport = "supported";
+    session.goal = goal;
+    if (goal && getMainWindow) {
+      safeSend(getMainWindow, "codex:event", {
+        _sessionId: session.internalId,
+        method: "thread/goal/updated",
+        params: { threadId, turnId: null, goal },
+      });
+    }
+    return { supported: true, goal };
+  } catch (error) {
+    if (isMethodNotFoundError(error)) {
+      session.goalSupport = "unsupported";
+      session.goal = null;
+      return { supported: false, goal: null, reason: "method-not-found" };
+    }
+    return {
+      supported: true,
+      goal: session.goal,
+      error: reportError("CODEX_GOAL_GET_ERR", error, { engine: "codex", sessionId: session.internalId }),
+    };
+  }
+}
+
+function withGoalMutation<T>(session: CodexSession, operation: () => Promise<T>): Promise<T> {
+  const previous = session.goalMutation;
+  let release!: () => void;
+  session.goalMutation = new Promise<void>((resolve) => { release = resolve; });
+  return previous.catch(() => undefined).then(operation).finally(release);
+}
+
+function validateGoalInput(input: {
+  objective?: unknown;
+  tokenBudget?: unknown;
+  status?: unknown;
+}): string | null {
+  if (input.objective !== undefined && input.objective !== null &&
+      (typeof input.objective !== "string" || input.objective.trim().length === 0)) {
+    return "Goal objective must not be empty";
+  }
+  if (input.tokenBudget !== undefined && input.tokenBudget !== null &&
+      (typeof input.tokenBudget !== "number" || !Number.isInteger(input.tokenBudget) || input.tokenBudget <= 0)) {
+    return "Goal token budget must be a positive integer or null";
+  }
+  if (input.status !== undefined && input.status !== null &&
+      input.status !== "active" && input.status !== "paused") {
+    return "Goal status must be active or paused";
+  }
+  return null;
 }
 
 /** Wire up all RPC event handlers for a Codex session (shared by start and resume). */
@@ -165,6 +277,27 @@ function setupCodexHandlers(
         method: notification.method,
         item: notification.params.item,
       });
+    }
+
+    if (notification.method === "thread/goal/updated") {
+      const params = notification.params;
+      const goal = parseThreadGoal(params.goal);
+      if (!goal || goal.threadId !== session.threadId) {
+        log("codex", ` Ignoring malformed or cross-thread thread/goal/updated for session=${internalId}`);
+        return;
+      }
+      if (!session.goal || goal.updatedAt >= session.goal.updatedAt) {
+        session.goal = goal;
+        session.goalSupport = "supported";
+      }
+    } else if (notification.method === "thread/goal/cleared") {
+      if (notification.params.threadId === session.threadId) {
+        session.goal = null;
+        session.goalSupport = "supported";
+      } else {
+        log("codex", ` Ignoring cross-thread thread/goal/cleared for session=${internalId}`);
+        return;
+      }
     }
 
     // Track active turn from turn events
@@ -264,6 +397,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           model: undefined,
           approvalPolicy: options.approvalPolicy,
           sandbox: options.sandbox,
+          goalSupport: "unknown",
+          goal: null,
+          goalMutation: Promise.resolve(),
+          threadStart: null,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -374,20 +511,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       }
       if (!session.threadId) {
         try {
-          const threadParams: Record<string, unknown> = {
-            cwd: session.cwd,
-            experimentalRawEvents: false,
-            persistExtendedHistory: false,
-          };
-          if (session.model) threadParams.model = session.model;
-          if (session.approvalPolicy) threadParams.approvalPolicy = session.approvalPolicy;
-          if (session.sandbox) threadParams.sandbox = session.sandbox;
-          const threadResult = await session.rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
-          session.threadId = threadResult.thread.id;
-          log(
-            "codex",
-            ` Thread lazily started: session=${shortId(data.sessionId, 12)} thread=${shortId(session.threadId, 12)}`,
-          );
+          await ensureCodexThread(session);
         } catch (err) {
           const msg = reportError("CODEX_THREAD_START_ERR", err, { engine: "codex", sessionId: data.sessionId });
           return { error: msg };
@@ -558,6 +682,80 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
   });
 
+  // ─── codex:goal-get ───
+  ipcMain.handle("codex:goal-get", async (_, data: { sessionId: string }): Promise<CodexGoalResult> => {
+    const session = codexSessions.get(data.sessionId);
+    if (!session) return { supported: true, goal: null, error: "Session not found" };
+    try {
+      return await withGoalMutation(session, () => refreshGoal(session, getMainWindow));
+    } catch (error) {
+      if (isMethodNotFoundError(error)) {
+        session.goalSupport = "unsupported";
+        return { supported: false, goal: null, reason: "method-not-found" };
+      }
+      return {
+        supported: true,
+        goal: session.goal,
+        error: reportError("CODEX_GOAL_GET_ERR", error, { engine: "codex", sessionId: data.sessionId }),
+      };
+    }
+  });
+
+  // ─── codex:goal-set ───
+  ipcMain.handle("codex:goal-set", async (_, data: {
+    sessionId: string;
+    objective?: string | null;
+    tokenBudget?: number | null;
+    status?: "active" | "paused";
+  }): Promise<CodexGoalResult> => {
+    const session = codexSessions.get(data.sessionId);
+    if (!session) return { supported: true, goal: null, error: "Session not found" };
+    const validationError = validateGoalInput(data);
+    if (validationError) return { supported: true, goal: session.goal, error: validationError };
+    try {
+      return await withGoalMutation(session, async () => {
+        const threadId = await ensureCodexThread(session);
+        const params: Record<string, unknown> = { threadId };
+        if (data.objective !== undefined) params.objective = data.objective === null ? null : data.objective.trim();
+        if (data.tokenBudget !== undefined) params.tokenBudget = data.tokenBudget;
+        if (data.status !== undefined) params.status = data.status;
+        const result = await session.rpc.request<CodexThreadGoalSetResponse>("thread/goal/set", params);
+        const goal = parseThreadGoal(result?.goal);
+        if (!goal) return { supported: true, goal: session.goal, error: "Codex returned a malformed Goal snapshot" };
+        session.goalSupport = "supported";
+        session.goal = goal;
+        return { supported: true, goal };
+      });
+    } catch (error) {
+      if (isMethodNotFoundError(error)) {
+        session.goalSupport = "unsupported";
+        return { supported: false, goal: null, reason: "method-not-found" };
+      }
+      return { supported: true, goal: session.goal, error: reportError("CODEX_GOAL_SET_ERR", error, { engine: "codex", sessionId: data.sessionId }) };
+    }
+  });
+
+  // ─── codex:goal-clear ───
+  ipcMain.handle("codex:goal-clear", async (_, data: { sessionId: string }): Promise<CodexGoalResult> => {
+    const session = codexSessions.get(data.sessionId);
+    if (!session) return { supported: true, goal: null, error: "Session not found" };
+    try {
+      return await withGoalMutation(session, async () => {
+        const threadId = await ensureCodexThread(session);
+        await session.rpc.request<CodexThreadGoalClearResponse>("thread/goal/clear", { threadId });
+        session.goalSupport = "supported";
+        session.goal = null;
+        return { supported: true, goal: null };
+      });
+    } catch (error) {
+      if (isMethodNotFoundError(error)) {
+        session.goalSupport = "unsupported";
+        return { supported: false, goal: null, reason: "method-not-found" };
+      }
+      return { supported: true, goal: session.goal, error: reportError("CODEX_GOAL_CLEAR_ERR", error, { engine: "codex", sessionId: data.sessionId }) };
+    }
+  });
+
   // ─── codex:list-skills ───
   ipcMain.handle("codex:list-skills", async (_, sessionId: string) => {
     const session = codexSessions.get(sessionId);
@@ -714,6 +912,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           model: data.model,
           approvalPolicy: data.approvalPolicy,
           sandbox: data.sandbox,
+          goalSupport: "unknown",
+          goal: null,
+          goalMutation: Promise.resolve(),
+          threadStart: null,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -736,9 +938,10 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const threadResult = await rpc.request<CodexThreadResumeResponse>("thread/resume", threadParams);
         session.threadId = threadResult.thread.id;
         log("codex",` Thread resumed: ${session.threadId}`);
+        const goal = await refreshGoal(session, getMainWindow);
 
         void captureEvent("session_revived", { engine: "codex", success: true });
-        return { sessionId: internalId, threadId: session.threadId };
+        return { sessionId: internalId, threadId: session.threadId, goal: goal.goal, goalSupported: goal.supported };
       } catch (err) {
         void captureEvent("session_revived", { engine: "codex", success: false });
         const errMsg = reportError("CODEX_RESUME_ERR", err, { engine: "codex", sessionId: internalId });

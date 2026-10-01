@@ -73,4 +73,37 @@ describe("session records", () => {
     expect(persisted.agentSessionId).toBe("ses_test");
     expect(persisted.messages).toEqual(messages);
   });
+
+  it("round-trips a Codex Goal snapshot and preserves clear as null", () => {
+    const goal = {
+      threadId: "thread-1",
+      objective: "Ship it",
+      status: "active" as const,
+      tokenBudget: 100,
+      tokensUsed: 4,
+      timeUsedSeconds: 2,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const session: ChatSession = {
+      id: "session-1", projectId: "project-1", title: "Goal", createdAt: 1,
+      totalCost: 0, isActive: true, engine: "codex", codexThreadId: "thread-1", codexGoal: goal,
+    };
+    const messages: UIMessage[] = [];
+    expect(buildPersistedSession(session, messages, 0, null).codexGoal).toEqual(goal);
+    expect(buildPersistedSession({ ...session, codexGoal: null }, messages, 0, null).codexGoal).toBeNull();
+  });
+
+  it("ignores malformed persisted Codex Goal snapshots", () => {
+    const meta = extractSessionMeta({
+      id: "session-1",
+      projectId: "project-1",
+      title: "Goal",
+      createdAt: 1,
+      engine: "codex",
+      codexGoal: { status: "not-a-status" },
+    }, 1);
+
+    expect(meta.codexGoal).toBeNull();
+  });
 });

@@ -4,6 +4,7 @@ import { toMcpStatusState } from "../lib/mcp-utils";
 import { toChatSession } from "../lib/session/records";
 import { BackgroundSessionStore } from "../lib/background/session-store";
 import { createSystemMessage } from "../lib/message-factory";
+import { getRetryRequest } from "../lib/session/retry";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
 import {
   DRAFT_ID,
@@ -359,6 +360,42 @@ export function useSessionManager(
     resetCodexEffortToModelDefault,
   });
 
+  const ensureCodexSessionForGoal = useCallback(async (): Promise<string | null> => {
+    if (activeEngine !== "codex") return null;
+    if (codexSessionId) return codexSessionId;
+    if (activeSessionId !== DRAFT_ID) return null;
+    const sessionId = await materializeDraft("");
+    if (!sessionId) return null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return sessionId;
+  }, [activeEngine, activeSessionId, codexSessionId, materializeDraft]);
+
+  const getCodexGoal = useCallback(async () => {
+    const sessionId = await ensureCodexSessionForGoal();
+    if (sessionId) await codex.getGoal(sessionId);
+  }, [codex.getGoal, ensureCodexSessionForGoal]);
+  const setCodexGoal = useCallback(async (input: { objective: string; tokenBudget: number | null }) => {
+    const sessionId = await ensureCodexSessionForGoal();
+    if (!sessionId) return false;
+    return codex.setGoal(input, sessionId);
+  }, [codex.setGoal, ensureCodexSessionForGoal]);
+  const clearCodexGoal = useCallback(async () => codex.clearGoal(), [codex.clearGoal]);
+  const pauseCodexGoal = useCallback(async () => codex.pauseGoal(), [codex.pauseGoal]);
+  const resumeCodexGoal = useCallback(async () => codex.resumeGoal(), [codex.resumeGoal]);
+
+  const retryLastMessage = useCallback(async (errorMessageId: string) => {
+    if (isProcessingRef.current) return;
+    const request = getRetryRequest(messagesRef.current, errorMessageId);
+    if (!request) return;
+
+    // Disable this action before sending so a slow upstream cannot receive
+    // duplicate requests from repeated clicks.
+    engine.setMessages((prev) => prev.map((message) =>
+      message.id === errorMessageId ? { ...message, retryable: false } : message,
+    ));
+    await send(request.content, request.images, request.displayContent);
+  }, [engine, send]);
+
   const seedDevExampleConversation = useCallback(async () => {
     if (!import.meta.env.DEV) return;
     const { buildDevExampleConversation } = await import("../lib/dev-seeding/chat-seed");
@@ -477,7 +514,7 @@ export function useSessionManager(
     if (promptResult?.error) {
       acp.setMessages((prev) => [
         ...prev,
-        createSystemMessage(`ACP prompt error: ${promptResult.error}`, true),
+        createSystemMessage(`ACP prompt error: ${promptResult.error}`, true, true),
       ]);
       acp.setIsProcessing(false);
     }
@@ -521,6 +558,8 @@ export function useSessionManager(
           totalCost: backgroundState.totalCost,
           contextUsage: backgroundState.contextUsage,
           isCompacting: backgroundState.isCompacting,
+          codexGoal: backgroundState.codexGoal,
+          codexGoalSupported: backgroundState.codexGoalSupported,
         },
         initialPermission: backgroundState.pendingPermission,
         initialConfigOptions: [],
@@ -572,6 +611,7 @@ export function useSessionManager(
     setCurrentBranch,
     currentBranch,
     activeSession,
+    activeEngine,
     isDraft,
     draftProjectId,
     createSession,
@@ -599,6 +639,7 @@ export function useSessionManager(
     sessionInfo: engine.sessionInfo,
     totalCost: engine.totalCost,
     send,
+    retryLastMessage,
     unqueueMessage,
     sendQueuedMessageNext,
     sendNextId,
@@ -746,5 +787,14 @@ export function useSessionManager(
     codexModelsLoadingMessage,
     // Codex plan steps (from turn/plan/updated events — separate from Claude's TodoWrite tool)
     codexTodoItems: codex.todoItems,
+    codexGoal: isCodex ? codex.codexGoal : null,
+    codexGoalSupported: isCodex ? codex.codexGoalSupported : null,
+    codexGoalLoading: isCodex ? codex.goalLoading : false,
+    codexGoalError: isCodex ? codex.goalError : null,
+    getCodexGoal: isCodex ? getCodexGoal : async () => undefined,
+    setCodexGoal: isCodex ? setCodexGoal : async () => false,
+    clearCodexGoal: isCodex ? clearCodexGoal : async () => false,
+    pauseCodexGoal: isCodex ? pauseCodexGoal : async () => false,
+    resumeCodexGoal: isCodex ? resumeCodexGoal : async () => false,
   };
 }

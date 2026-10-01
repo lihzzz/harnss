@@ -11,6 +11,8 @@ import type { CommandExecutionOutputDeltaNotification } from "../../types/codex-
 import type { PlanDeltaNotification } from "../../types/codex-protocol/v2/PlanDeltaNotification";
 import type { TurnPlanUpdatedNotification } from "../../types/codex-protocol/v2/TurnPlanUpdatedNotification";
 import type { CodexTokenUsageNotification } from "@/types";
+import type { CodexThreadGoal } from "@/types";
+import { parseThreadGoal } from "@shared/lib/codex-goal";
 
 /**
  * Process a Codex notification for a background session, mutating `state` in place.
@@ -24,11 +26,29 @@ export function handleCodexEvent(
   processingChanged?: boolean;
   isProcessing?: boolean;
   permissionRequest?: PermissionRequest;
+  goalChanged?: boolean;
+  goal?: CodexThreadGoal | null;
 } | undefined {
   state.isConnected = true;
   const { method, params } = event;
 
   switch (method) {
+    case "thread/goal/updated": {
+      const goal = parseThreadGoal((params as { goal?: unknown }).goal);
+      if (!goal) break;
+      if (!state.codexGoal || goal.updatedAt >= state.codexGoal.updatedAt) {
+        state.codexGoal = goal;
+        state.codexGoalSupported = true;
+        return { goalChanged: true, goal };
+      }
+      break;
+    }
+
+    case "thread/goal/cleared":
+      state.codexGoal = null;
+      state.codexGoalSupported = true;
+      return { goalChanged: true, goal: null };
+
     case "turn/started":
       state.isProcessing = true;
       state.codexPlanText = "";

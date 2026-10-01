@@ -197,7 +197,7 @@ export function useSessionLifecycle({
           if (promptResult?.error) {
             acp.setMessages((prev) => [
               ...prev,
-              createSystemMessage(`ACP prompt error: ${promptResult.error}`, true),
+              createSystemMessage(`ACP prompt error: ${promptResult.error}`, true, true),
             ]);
             acp.setIsProcessing(false);
             refs.pendingAcpDraftPromptRef.current = null;
@@ -242,7 +242,7 @@ export function useSessionLifecycle({
             refs.liveSessionIdsRef.current.delete(sessionId);
             codex.setMessages((prev) => [
               ...prev,
-              createSystemMessage(`Unable to send message: ${sendResult.error}`, true),
+              createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true),
             ]);
             codex.setIsProcessing(false);
           }
@@ -265,7 +265,7 @@ export function useSessionLifecycle({
             refs.liveSessionIdsRef.current.delete(sessionId);
             claude.setMessages((prev) => [
               ...prev,
-              createSystemMessage(`Unable to send message: ${sendResult.error}`, true),
+              createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true),
             ]);
             return;
           }

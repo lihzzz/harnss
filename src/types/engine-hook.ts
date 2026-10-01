@@ -3,6 +3,7 @@ import type { UIMessage, SessionInfo } from "./session";
 import type { PermissionRequest } from "./permissions";
 import type { ContextUsage } from "./mcp";
 import type { RespondPermissionFn } from "../../shared/types/engine";
+import type { CodexThreadGoal } from "./codex";
 
 /** Metadata snapshot for restoring a session from the background store. */
 export interface BackgroundSessionSnapshot {
@@ -12,6 +13,8 @@ export interface BackgroundSessionSnapshot {
   totalCost: number;
   contextUsage: ContextUsage | null;
   isCompacting?: boolean;
+  codexGoal?: CodexThreadGoal | null;
+  codexGoalSupported?: boolean | null;
 }
 
 /**

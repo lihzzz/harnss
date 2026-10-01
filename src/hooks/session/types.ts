@@ -1,4 +1,4 @@
-import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttachment, McpServerStatus, ModelInfo, AcpPermissionBehavior, EngineId, Project, SlashCommand, ClaudeEffort, ContextUsage, ACPConfigOption, ACPPermissionEvent } from "@/types";
+import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttachment, McpServerStatus, ModelInfo, AcpPermissionBehavior, EngineId, Project, SlashCommand, ClaudeEffort, ContextUsage, ACPConfigOption, ACPPermissionEvent, CodexThreadGoal } from "@/types";
 import type { BackgroundSessionStore } from "../../lib/background/session-store";
 import { permissionModeToCodexPolicy, permissionModeToCodexSandbox } from "../../lib/engine/codex-adapter";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
@@ -34,6 +34,8 @@ export interface InitialMeta {
   totalCost: number;
   contextUsage: ContextUsage | null;
   isCompacting?: boolean;
+  codexGoal?: CodexThreadGoal | null;
+  codexGoalSupported?: boolean | null;
 }
 
 export interface QueuedMessage {

@@ -1,10 +1,11 @@
 import { useEffect, useEffectEvent, useRef } from "react";
-import type { ChatSession, PermissionRequest, NotificationSettings, NotificationTrigger, SessionInfo } from "@/types";
+import type { ChatSession, PermissionRequest, NotificationSettings, NotificationTrigger, SessionInfo, CodexThreadGoal } from "@/types";
 import {
   advanceSessionCompletionTracker,
   consumeSuppressedSessionCompletion,
   shouldNotifyPermissionRequest,
 } from "@/lib/notification-utils";
+import { getGoalNotificationTransition } from "@shared/lib/codex-goal";
 import { getSessionNotificationActor } from "@/lib/session-notifications";
 
 // ── Defaults (used when AppSettings hasn't loaded yet) ──
@@ -123,6 +124,7 @@ interface UseNotificationsOptions {
   sessionInfo: SessionInfo | null;
   /** Whether the agent is currently processing (used to detect session completion) */
   isProcessing: boolean;
+  codexGoal?: CodexThreadGoal | null;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -139,6 +141,11 @@ interface BackgroundPermissionDetail {
   permission: PermissionRequest;
 }
 
+interface BackgroundGoalDetail {
+  sessionId: string;
+  goal: CodexThreadGoal | null;
+}
+
 export function useNotifications({
   pendingPermission,
   notificationSettings,
@@ -146,6 +153,7 @@ export function useNotifications({
   activeSession,
   sessionInfo,
   isProcessing,
+  codexGoal,
   onOpenSession,
 }: UseNotificationsOptions): void {
   const settings = notificationSettings ?? FALLBACK;
@@ -153,6 +161,28 @@ export function useNotifications({
   const openSession = useEffectEvent((sessionId: string) => {
     onOpenSession?.(sessionId);
   });
+  const previousGoal = useRef<{ sessionId: string | null; goal: CodexThreadGoal | null }>({
+    sessionId: activeSessionId,
+    goal: codexGoal ?? null,
+  });
+  const goalNotificationKeys = useRef(new Set<string>());
+  const backgroundGoals = useRef(new Map<string, CodexThreadGoal | null>());
+
+  useEffect(() => {
+    if (previousGoal.current.sessionId !== activeSessionId) {
+      previousGoal.current = { sessionId: activeSessionId, goal: codexGoal ?? null };
+      return;
+    }
+    const transition = getGoalNotificationTransition(previousGoal.current.goal, codexGoal ?? null);
+    previousGoal.current = { sessionId: activeSessionId, goal: codexGoal ?? null };
+    const notificationKey = transition.key && activeSessionId ? `${activeSessionId}:${transition.key}` : null;
+    if (!codexGoal || !notificationKey || transition.kind === "none" || goalNotificationKeys.current.has(notificationKey)) return;
+    if (transition.kind === "completed" || transition.kind === "blocked" || transition.kind === "limited") {
+      goalNotificationKeys.current.add(notificationKey);
+      const title = transition.kind === "completed" ? "Goal complete" : transition.kind === "blocked" ? "Goal blocked" : "Goal limit reached";
+      fireNotification(settings.sessionComplete, title, `${activeActor}: ${codexGoal.objective}`, activeSessionId ? () => openSession(activeSessionId) : undefined);
+    }
+  }, [activeActor, activeSessionId, codexGoal, openSession, settings]);
 
   // ── Permission-based notifications ──
 
@@ -195,16 +225,16 @@ export function useNotifications({
     );
     prevSessionState.current = tracked;
 
-    if (completed) {
+    if (completed && !codexGoal) {
       if (consumeSuppressedSessionCompletion(current.sessionId)) return;
       fireNotification(
         settings.sessionComplete,
         "Task complete",
         `${activeActor} has finished processing.`,
-        current.sessionId ? () => openSession(current.sessionId) : undefined,
+        current.sessionId ? () => openSession(current.sessionId as string) : undefined,
       );
     }
-  }, [activeActor, activeSessionId, isProcessing, openSession, settings]);
+  }, [activeActor, activeSessionId, codexGoal, isProcessing, openSession, settings]);
 
   // ── Background session notifications ──
   useEffect(() => {
@@ -244,11 +274,29 @@ export function useNotifications({
       );
     };
 
+    const onBackgroundGoal = (evt: Event) => {
+      const detail = (evt as CustomEvent<BackgroundGoalDetail>).detail;
+      if (!detail?.sessionId) return;
+      const transition = getGoalNotificationTransition(
+        backgroundGoals.current.get(detail.sessionId) ?? null,
+        detail.goal ?? null,
+      );
+      backgroundGoals.current.set(detail.sessionId, detail.goal ?? null);
+      const notificationKey = transition.key && detail?.sessionId ? `${detail.sessionId}:${transition.key}` : null;
+      if (!detail?.goal || !notificationKey || goalNotificationKeys.current.has(notificationKey)) return;
+      if (transition.kind !== "completed" && transition.kind !== "blocked" && transition.kind !== "limited") return;
+      goalNotificationKeys.current.add(notificationKey);
+      const title = transition.kind === "completed" ? "Goal complete" : transition.kind === "blocked" ? "Goal blocked" : "Goal limit reached";
+      fireNotification(settings.sessionComplete, title, `${detail.goal.objective}`, () => openSession(detail.sessionId));
+    };
+
     window.addEventListener("harnss:background-session-complete", onBackgroundComplete as EventListener);
     window.addEventListener("harnss:background-permission-request", onBackgroundPermission as EventListener);
+    window.addEventListener("harnss:background-goal-updated", onBackgroundGoal as EventListener);
     return () => {
       window.removeEventListener("harnss:background-session-complete", onBackgroundComplete as EventListener);
       window.removeEventListener("harnss:background-permission-request", onBackgroundPermission as EventListener);
+      window.removeEventListener("harnss:background-goal-updated", onBackgroundGoal as EventListener);
     };
   }, [openSession, settings]);
 }

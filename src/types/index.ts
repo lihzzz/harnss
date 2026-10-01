@@ -182,6 +182,10 @@ export type {
   CodexAuthRequiredNotification,
   CodexTokenUsageNotification,
   CodexThreadItem,
+  CodexThreadGoal,
+  CodexThreadGoalStatus,
+  CodexThreadGoalUpdatedNotification,
+  CodexThreadGoalClearedNotification,
 } from "./codex";
 
 // ── Tool types ──

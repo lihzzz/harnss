@@ -57,6 +57,8 @@ export interface SessionPaneState {
   isCompacting: boolean;
   sessionInfo: SessionInfo | null;
   pendingPermission: PermissionRequest | null;
+  codexGoal: ReturnType<typeof useCodex>["codexGoal"];
+  codexGoalSupported: ReturnType<typeof useCodex>["codexGoalSupported"];
 }
 
 export function useSessionPane({
@@ -122,5 +124,7 @@ export function useSessionPane({
     isCompacting: "isCompacting" in engine ? !!engine.isCompacting : false,
     sessionInfo: engine.sessionInfo,
     pendingPermission: engine.pendingPermission,
+    codexGoal: codex.codexGoal,
+    codexGoalSupported: codex.codexGoalSupported,
   };
 }

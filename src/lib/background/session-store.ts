@@ -5,6 +5,7 @@ import type {
   PermissionRequest,
   SlashCommand,
   ContextUsage,
+  CodexThreadGoal,
 } from "@/types";
 import type { ACPSessionEvent, ACPPermissionEvent, CodexSessionEvent } from "@/types";
 import { handleClaudeEvent } from "./claude-handler";
@@ -24,6 +25,8 @@ export interface BackgroundSessionState {
   rawAcpPermission: ACPPermissionEvent | null;
   /** Slash commands available for this session (ACP agents update dynamically) */
   slashCommands: SlashCommand[];
+  codexGoal?: CodexThreadGoal | null;
+  codexGoalSupported?: boolean | null;
 }
 
 export interface InternalState extends BackgroundSessionState {
@@ -48,6 +51,7 @@ export class BackgroundSessionStore {
   private sessions = new Map<string, InternalState>();
   onProcessingChange?: (sessionId: string, isProcessing: boolean) => void;
   onPermissionRequest?: PermissionRequestCallback;
+  onGoalChange?: (sessionId: string, goal: CodexThreadGoal | null) => void;
 
   private getOrCreate(sessionId: string): InternalState {
     let state = this.sessions.get(sessionId);
@@ -63,6 +67,8 @@ export class BackgroundSessionStore {
         pendingPermission: null,
         rawAcpPermission: null,
         slashCommands: [],
+        codexGoal: null,
+        codexGoalSupported: null,
         parentToolMap: new Map(),
         currentStreamingMsgId: null,
         codexPlanText: "",
@@ -114,6 +120,9 @@ export class BackgroundSessionStore {
     if (result?.permissionRequest) {
       this.onPermissionRequest?.(sessionId, result.permissionRequest);
     }
+    if (result?.goalChanged) {
+      this.onGoalChange?.(sessionId, result.goal ?? null);
+    }
   }
 
   /** Store a pending permission for a background session and fire the callback. */
@@ -143,6 +152,8 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
+      codexGoal: state.codexGoal,
+      codexGoalSupported: state.codexGoalSupported,
     };
   }
 
@@ -162,6 +173,8 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
+      codexGoal: state.codexGoal,
+      codexGoalSupported: state.codexGoalSupported,
     };
   }
 
@@ -239,6 +252,8 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
       rawAcpPermission: state.rawAcpPermission ?? null,
       slashCommands: state.slashCommands ?? [],
+      codexGoal: state.codexGoal ?? null,
+      codexGoalSupported: state.codexGoalSupported ?? null,
       parentToolMap,
       currentStreamingMsgId: streamingMsg?.id ?? null,
       codexPlanText,

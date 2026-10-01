@@ -31,6 +31,19 @@ export interface RpcError {
   data?: unknown;
 }
 
+/** Error returned by a Codex JSON-RPC request, retaining the wire error code. */
+export class CodexRpcError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+
+  constructor(error: RpcError) {
+    super(`Codex RPC error [${error.code}]: ${error.message}`);
+    this.name = "CodexRpcError";
+    this.code = error.code;
+    this.data = error.data;
+  }
+}
+
 export type ServerRequestHandler = (msg: {
   id: RequestId;
   method: string;
@@ -181,7 +194,7 @@ export class CodexRpcClient {
         clearTimeout(pending.timer);
         if (hasError) {
           const err = msg.error as RpcError;
-          pending.reject(new Error(`Codex RPC error [${err.code}]: ${err.message}`));
+          pending.reject(new CodexRpcError(err));
         } else {
           pending.resolve(msg.result);
         }

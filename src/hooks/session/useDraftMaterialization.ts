@@ -612,7 +612,7 @@ export function useDraftMaterialization({
         planMode: !!options.planMode,
         totalCost: 0,
         isActive: true,
-        titleGenerating: true,
+        titleGenerating: text.trim().length > 0,
         ...(currentBranch ? { branch: currentBranch } : {}),
         engine: draftEngine,
         ...(draftEngine === "acp" && options.agentId ? {
@@ -660,7 +660,9 @@ export function useDraftMaterialization({
       setTimeout(() => { claude.refreshMcpStatus(); }, 500);
 
       // Fire-and-forget AI title generation — routes through ACP if that's the active engine
-      generateSessionTitle(sessionId, text, getProjectCwd(project), draftEngine);
+      if (text.trim()) {
+        generateSessionTitle(sessionId, text, getProjectCwd(project), draftEngine);
+      }
 
       materializingRef.current = false;
       return sessionId;

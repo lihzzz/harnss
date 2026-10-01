@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useGlassOrchestrator } from "@/hooks/useGlassOrchestrator";
 import { useNotifications } from "@/hooks/useNotifications";
-import type { ChatSession, MacBackgroundEffect, NotificationSettings, PermissionRequest, SessionInfo, ThemeOption } from "@/types";
+import type { ChatSession, MacBackgroundEffect, NotificationSettings, PermissionRequest, SessionInfo, ThemeOption, CodexThreadGoal } from "@/types";
 import type { SettingsSection } from "@/components/SettingsView";
 
 interface UseAppEnvironmentStateInput {
@@ -14,6 +14,7 @@ interface UseAppEnvironmentStateInput {
   activeSession: ChatSession | null;
   sessionInfo: SessionInfo | null;
   isProcessing: boolean;
+  codexGoal?: CodexThreadGoal | null;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -49,6 +50,7 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
     activeSession: input.activeSession,
     sessionInfo: input.sessionInfo,
     isProcessing: input.isProcessing,
+    codexGoal: input.codexGoal,
     onOpenSession: input.onOpenSession,
   });
 

@@ -281,6 +281,10 @@ contextBridge.exposeInMainWorld("claude", {
     respondServerRequestError: (sessionId: string, rpcId: string | number, code: number, message: string) =>
       ipcRenderer.invoke("codex:server_request_error", { sessionId, rpcId, code, message }),
     compact: (sessionId: string) => ipcRenderer.invoke("codex:compact", sessionId),
+    getGoal: (sessionId: string) => ipcRenderer.invoke("codex:goal-get", { sessionId }),
+    setGoal: (sessionId: string, input: { objective?: string | null; tokenBudget?: number | null; status?: "active" | "paused" }) =>
+      ipcRenderer.invoke("codex:goal-set", { sessionId, ...input }),
+    clearGoal: (sessionId: string) => ipcRenderer.invoke("codex:goal-clear", { sessionId }),
     listSkills: (sessionId: string) => ipcRenderer.invoke("codex:list-skills", sessionId),
     listApps: (sessionId: string) => ipcRenderer.invoke("codex:list-apps", sessionId),
     listModels: () => ipcRenderer.invoke("codex:list-models"),

@@ -1,10 +1,11 @@
-import { memo } from "react";
-import { ChevronDown, Info, Loader2, PanelLeft, X } from "lucide-react";
+import { memo, useState } from "react";
+import { ChevronDown, Info, Loader2, PanelLeft, Target, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isMac } from "@/lib/utils";
-import type { AcpPermissionBehavior } from "@/types";
+import type { AcpPermissionBehavior, CodexThreadGoal } from "@/types";
+import { CodexGoalDialog, CodexGoalStatus } from "@/components/codex";
 import { useI18n } from "@/lib/i18n";
 
 const PERMISSION_MODE_LABELS: Record<string, string> = {
@@ -39,6 +40,15 @@ interface ChatHeaderProps {
   onSeedDevExampleSpaceData?: () => void;
   /** Close this split pane (renders an X button on the right). */
   onClosePane?: () => void;
+  codexGoal?: CodexThreadGoal | null;
+  codexGoalSupported?: boolean | null;
+  codexGoalLoading?: boolean;
+  codexGoalError?: string | null;
+  onGetCodexGoal?: () => Promise<void>;
+  onSetCodexGoal?: (input: { objective: string; tokenBudget: number | null }) => Promise<boolean>;
+  onPauseCodexGoal?: () => Promise<boolean>;
+  onResumeCodexGoal?: () => Promise<boolean>;
+  onClearCodexGoal?: () => Promise<boolean>;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -59,6 +69,15 @@ export const ChatHeader = memo(function ChatHeader({
   onSeedDevExampleConversation,
   onSeedDevExampleSpaceData,
   onClosePane,
+  codexGoal,
+  codexGoalSupported,
+  codexGoalLoading,
+  codexGoalError,
+  onGetCodexGoal,
+  onSetCodexGoal,
+  onPauseCodexGoal,
+  onResumeCodexGoal,
+  onClearCodexGoal,
 }: ChatHeaderProps) {
   const { t } = useI18n();
   const modeLabel = permissionMode ? PERMISSION_MODE_LABELS[permissionMode] : null;
@@ -80,6 +99,8 @@ export const ChatHeader = memo(function ChatHeader({
 
   const hasDetails = detailRows.length > 0;
   const showDevSeedButton = import.meta.env.DEV && !!showDevFill && !!onSeedDevExampleConversation;
+  const [goalOpen, setGoalOpen] = useState(false);
+  const showGoal = codexGoalSupported !== false && !!onSetCodexGoal && !!onPauseCodexGoal && !!onResumeCodexGoal && !!onClearCodexGoal;
 
   return (
     <div
@@ -147,6 +168,18 @@ export const ChatHeader = memo(function ChatHeader({
         </span>
       ) : null}
 
+      {showGoal && (codexGoal ? <CodexGoalStatus goal={codexGoal} /> : (
+        <Button variant="ghost" size="xs" className="no-drag gap-1 text-muted-foreground" disabled={codexGoalLoading} onClick={async () => { await onGetCodexGoal?.(); setGoalOpen(true); }}>
+          <Target className="size-3" /> Goal
+        </Button>
+      ))}
+
+      {showGoal && codexGoal && (
+        <Button variant="ghost" size="xs" className="no-drag h-6 px-1.5 text-muted-foreground" disabled={codexGoalLoading} onClick={async () => { await onGetCodexGoal?.(); setGoalOpen(true); }} aria-label="Open Codex Goal">
+          <Target className="size-3" />
+        </Button>
+      )}
+
       {/* Session info, split view toggle, and pane close */}
       {(showDevSeedButton || hasDetails || onClosePane) && (
         <div className="ms-auto flex items-center gap-1.5">
@@ -209,6 +242,19 @@ export const ChatHeader = memo(function ChatHeader({
             </Tooltip>
           )}
         </div>
+      )}
+      {showGoal && onSetCodexGoal && onPauseCodexGoal && onResumeCodexGoal && onClearCodexGoal && (
+        <CodexGoalDialog
+          open={goalOpen}
+          onOpenChange={setGoalOpen}
+          goal={codexGoal ?? null}
+          loading={codexGoalLoading}
+          error={codexGoalError}
+          onSave={onSetCodexGoal}
+          onPause={onPauseCodexGoal}
+          onResume={onResumeCodexGoal}
+          onClear={onClearCodexGoal}
+        />
       )}
     </div>
   );
