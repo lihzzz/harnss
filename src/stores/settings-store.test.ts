@@ -52,4 +52,15 @@ describe("settings store", () => {
     expect(secondProjects["project-1"]?.activeTools).toBe(firstActiveTools);
     expect(secondProjects["project-1"]?.activeTools).toEqual(["tasks"]);
   });
+
+  it("defaults to Chinese and persists language changes", async () => {
+    const { useSettingsStore } = await import("./settings-store");
+
+    expect(useSettingsStore.getState().language).toBe("zh-CN");
+
+    useSettingsStore.getState().setLanguage("en-US");
+
+    expect(useSettingsStore.getState().language).toBe("en-US");
+    expect(localStorage.getItem("harnss-settings-store")).toContain('"language":"en-US"');
+  });
 });

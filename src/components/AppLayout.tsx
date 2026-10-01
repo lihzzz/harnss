@@ -1090,6 +1090,18 @@ export function AppLayout() {
             onToggleSidebar={sidebar.toggle}
             onReplayWelcome={handleReplayWelcome}
             initialSection={showSettings}
+            sessions={manager.sessions}
+            activeSessionId={manager.activeSessionId}
+            agents={agents}
+            onSelectSession={handleSidebarSelectSession}
+            onDeleteSession={manager.deleteSession}
+            onArchiveSession={manager.archiveSession}
+            onRenameSession={manager.renameSession}
+            onOpenInSplitView={(sessionId) => {
+              setShowSettings(false);
+              void requestAddSplitSession(sessionId);
+            }}
+            canOpenInSplitView={(sessionId) => splitView.canShowSessionSplitAction(sessionId, manager.activeSessionId)}
           />
         )}
         {/* Keep chat area mounted (hidden) when settings is open to avoid

@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { syncAnalyticsSettings } from "@/lib/analytics/posthog";
+import { I18nProvider } from "@/lib/i18n";
 
 export function App() {
   // Sync analytics opt-in state after mount — avoids blocking first paint with IPC calls
@@ -19,14 +20,16 @@ export function App() {
   }
 
   return (
-    <TooltipProvider>
-      <AppLayout />
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          className: "bg-background/90 backdrop-blur-md border border-border text-foreground shadow-lg",
-        }}
-      />
-    </TooltipProvider>
+    <I18nProvider>
+      <TooltipProvider>
+        <AppLayout />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            className: "bg-background/90 backdrop-blur-md border border-border text-foreground shadow-lg",
+          }}
+        />
+      </TooltipProvider>
+    </I18nProvider>
   );
 }

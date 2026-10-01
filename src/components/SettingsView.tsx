@@ -11,6 +11,7 @@ import {
   Users,
   BarChart3,
   PanelLeft,
+  Archive,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,31 +27,35 @@ import { AnalyticsSettings } from "@/components/settings/AnalyticsSettings";
 import { useSettingsStore } from "@/stores/settings-store";
 import { isMac } from "@/lib/utils";
 import type { AppSettings } from "@/types";
+import type { ChatSession, InstalledAgent } from "@/types";
 import { useAgentContext } from "./AgentContext";
+import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { ArchivedSettings } from "@/components/settings/ArchivedSettings";
 
 // ── Section definitions ──
 
-export type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "skills" | "custom-agents" | "advanced";
+export type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "skills" | "custom-agents" | "advanced" | "archived";
 
 interface NavItem {
   id: SettingsSection;
-  label: string;
+  labelKey: TranslationKey;
   icon: LucideIcon;
   /** Renders a subtle "soon" indicator next to the label */
   comingSoon?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "general", label: "General", icon: SlidersHorizontal },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "analytics", label: "Analytics", icon: BarChart3 },
-  { id: "agents", label: "ACP Agents", icon: Bot },
-  { id: "mcp", label: "MCP Servers", icon: Plug },
-  { id: "engines", label: "Engines", icon: Cpu },
-  { id: "skills", label: "Skills", icon: Sparkles, comingSoon: true },
-  { id: "custom-agents", label: "Agents", icon: Users, comingSoon: true },
-  { id: "advanced", label: "Advanced", icon: Wrench },
+  { id: "general", labelKey: "general", icon: SlidersHorizontal },
+  { id: "appearance", labelKey: "appearance", icon: Palette },
+  { id: "notifications", labelKey: "notifications", icon: Bell },
+  { id: "analytics", labelKey: "analytics", icon: BarChart3 },
+  { id: "agents", labelKey: "acpAgents", icon: Bot },
+  { id: "mcp", labelKey: "mcpServers", icon: Plug },
+  { id: "engines", labelKey: "engines", icon: Cpu },
+  { id: "skills", labelKey: "skills", icon: Sparkles, comingSoon: true },
+  { id: "custom-agents", labelKey: "agents", icon: Users, comingSoon: true },
+  { id: "advanced", labelKey: "advanced", icon: Wrench },
+  { id: "archived", labelKey: "archived", icon: Archive },
 ];
 
 // ── Props ──
@@ -65,6 +70,15 @@ interface SettingsViewProps {
   onReplayWelcome: () => void;
   /** Open directly to a specific section (e.g. "agents" from the engine picker). */
   initialSection?: SettingsSection;
+  sessions: ChatSession[];
+  activeSessionId: string | null;
+  agents?: InstalledAgent[];
+  onSelectSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
+  onArchiveSession: (id: string, archived: boolean) => void;
+  onRenameSession: (id: string, title: string) => void;
+  onOpenInSplitView?: (id: string) => void;
+  canOpenInSplitView?: (id: string) => boolean;
 }
 
 // ── Component ──
@@ -77,8 +91,18 @@ export const SettingsView = memo(function SettingsView({
   onToggleSidebar,
   onReplayWelcome,
   initialSection,
+  sessions,
+  activeSessionId,
+  agents: sessionAgents,
+  onSelectSession,
+  onDeleteSession,
+  onArchiveSession,
+  onRenameSession,
+  onOpenInSplitView,
+  canOpenInSplitView,
 }: SettingsViewProps) {
   const { agents, saveAgent, deleteAgent } = useAgentContext();
+  const { t } = useI18n();
   const islandLayout = useSettingsStore((s) => s.islandLayout);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection ?? "general");
   const macIslandTitlebarOffsetClass = "";
@@ -162,11 +186,26 @@ export const SettingsView = memo(function SettingsView({
             onReplayWelcome={onReplayWelcome}
           />
         );
+      case "archived":
+        return (
+          <ArchivedSettings
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            agents={sessionAgents}
+            onSelectSession={onSelectSession}
+            onDeleteSession={onDeleteSession}
+            onArchiveSession={onArchiveSession}
+            onRenameSession={onRenameSession}
+            onOpenInSplitView={onOpenInSplitView}
+            canOpenInSplitView={canOpenInSplitView}
+            islandLayout={islandLayout}
+          />
+        );
       case "skills":
         return (
           <PlaceholderSection
-            title="Skills"
-            description="Create, install, and manage agent skills that extend what your AI coding agents can do."
+            title={t("skills")}
+            description={t("skillsDescription")}
             icon={Sparkles}
             comingSoon
           />
@@ -174,8 +213,8 @@ export const SettingsView = memo(function SettingsView({
       case "custom-agents":
         return (
           <PlaceholderSection
-            title="Agents"
-            description="Build and configure custom agents with specialized tools, prompts, and workflows."
+            title={t("agents")}
+            description={t("customAgentsDescription")}
             icon={Users}
             comingSoon
           />
@@ -183,7 +222,7 @@ export const SettingsView = memo(function SettingsView({
       default:
         return null;
     }
-  }, [activeSection, appSettings, updateAppSettings, agents, saveAgent, deleteAgent, glassSupported, macLiquidGlassSupported, onReplayWelcome]);
+  }, [activeSection, appSettings, updateAppSettings, agents, saveAgent, deleteAgent, glassSupported, macLiquidGlassSupported, onReplayWelcome, t, sessions, activeSessionId, sessionAgents, onSelectSession, onDeleteSession, onArchiveSession, onRenameSession, onOpenInSplitView, canOpenInSplitView, islandLayout]);
 
   return (
     <div className={`island flex flex-1 flex-col overflow-hidden bg-background ${islandLayout ? "rounded-[var(--island-radius)]" : "rounded-none"}`}>
@@ -204,7 +243,7 @@ export const SettingsView = memo(function SettingsView({
             <PanelLeft className="h-4 w-4" />
           </Button>
         )}
-        <span className={`leading-none text-sm font-semibold text-foreground ${macIslandTitlebarOffsetClass}`}>Settings</span>
+        <span className={`leading-none text-sm font-semibold text-foreground ${macIslandTitlebarOffsetClass}`}>{t("settings")}</span>
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -226,10 +265,10 @@ export const SettingsView = memo(function SettingsView({
                   }`}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
-                  <span className="flex-1">{item.label}</span>
+                  <span className="flex-1">{t(item.labelKey)}</span>
                   {item.comingSoon && (
                     <span className="rounded bg-foreground/[0.06] px-1.5 py-px text-[10px] font-medium text-muted-foreground/70">
-                      Soon
+                      {t("soon")}
                     </span>
                   )}
                 </button>

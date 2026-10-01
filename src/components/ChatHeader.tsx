@@ -5,6 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isMac } from "@/lib/utils";
 import type { AcpPermissionBehavior } from "@/types";
+import { useI18n } from "@/lib/i18n";
 
 const PERMISSION_MODE_LABELS: Record<string, string> = {
   plan: "Plan",
@@ -59,6 +60,7 @@ export const ChatHeader = memo(function ChatHeader({
   onSeedDevExampleSpaceData,
   onClosePane,
 }: ChatHeaderProps) {
+  const { t } = useI18n();
   const modeLabel = permissionMode ? PERMISSION_MODE_LABELS[permissionMode] : null;
   const acpBehaviorLabel = acpPermissionBehavior
     ? ACP_PERMISSION_BEHAVIOR_LABELS[acpPermissionBehavior]
@@ -70,11 +72,11 @@ export const ChatHeader = memo(function ChatHeader({
 
   // Collect all session detail rows for the unified tooltip
   const detailRows: { label: string; value: string }[] = [];
-  if (model) detailRows.push({ label: "Model", value: model });
-  detailRows.push({ label: "Plan", value: planMode ? "On" : "Off" });
-  if (permissionDisplay) detailRows.push({ label: "Permissions", value: permissionDisplay });
+  if (model) detailRows.push({ label: t("model"), value: model });
+  detailRows.push({ label: t("plan"), value: planMode ? t("on") : t("off") });
+  if (permissionDisplay) detailRows.push({ label: t("permissions"), value: permissionDisplay });
   if (totalCost > 0) detailRows.push({ label: "Cost", value: `$${totalCost.toFixed(4)}` });
-  if (sessionId) detailRows.push({ label: "Session", value: sessionId });
+  if (sessionId) detailRows.push({ label: t("session"), value: sessionId });
 
   const hasDetails = detailRows.length > 0;
   const showDevSeedButton = import.meta.env.DEV && !!showDevFill && !!onSeedDevExampleConversation;
@@ -113,13 +115,13 @@ export const ChatHeader = memo(function ChatHeader({
               <div className="space-y-0.5 text-xs">
                 {model && (
                   <div className="flex justify-between gap-4">
-                    <span className="opacity-70">Model</span>
+                    <span className="opacity-70">{t("model")}</span>
                     <span className="font-mono">{model}</span>
                   </div>
                 )}
                 {permissionDisplay && (
                   <div className="flex justify-between gap-4">
-                    <span className="opacity-70">Permissions</span>
+                    <span className="opacity-70">{t("permissions")}</span>
                     <span className="font-mono">{permissionDisplay}</span>
                   </div>
                 )}
@@ -161,7 +163,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">
-                Close pane
+                {t("closePane")}
               </TooltipContent>
             </Tooltip>
           )}

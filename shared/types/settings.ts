@@ -8,6 +8,8 @@
 
 export type PreferredEditor = "auto" | "cursor" | "code" | "zed";
 export type VoiceDictationMode = "native" | "whisper";
+/** UI language. Chinese is the first-run default. */
+export type Language = "zh-CN" | "en-US";
 export type ThemeOption = "light" | "dark" | "system";
 export type MacBackgroundEffect = "liquid-glass" | "vibrancy" | "off";
 export type CodexBinarySource = "auto" | "managed" | "custom";

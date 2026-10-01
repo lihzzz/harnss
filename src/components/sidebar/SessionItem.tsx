@@ -32,6 +32,7 @@ import {
   clearSidebarDragPayload,
 } from "@/lib/sidebar/dnd";
 import { useContextMenuPosition } from "@/hooks/useContextMenuPosition";
+import { useI18n } from "@/lib/i18n";
 
 export function SessionItem({
   session,
@@ -46,6 +47,7 @@ export function SessionItem({
   agents,
   onOpenInSplitView,
   canOpenInSplitView = true,
+  surface = "sidebar",
 }: {
   islandLayout: boolean;
   session: ChatSession;
@@ -65,7 +67,10 @@ export function SessionItem({
   /** Open this session in the split view secondary pane. */
   onOpenInSplitView?: () => void;
   canOpenInSplitView?: boolean;
+  /** Render against the settings surface instead of the sidebar surface. */
+  surface?: "sidebar" | "settings";
 }) {
+  const { t } = useI18n();
   const { isEditing, startEditing, inputProps: renameInputProps } = useInlineRename({
     initialName: session.title,
     onRename,
@@ -75,6 +80,7 @@ export function SessionItem({
     handleContextMenu, handleMenuButtonClick,
     triggerStyle, containerRef,
   } = useContextMenuPosition();
+  const isSettingsSurface = surface === "settings";
 
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
@@ -96,7 +102,7 @@ export function SessionItem({
       <div className="flex items-center gap-1 px-1 ps-2">
         <input
           {...renameInputProps}
-          className="flex-1 rounded-lg bg-black/5 px-2 py-1 text-[13px] text-sidebar-foreground outline-none ring-1 ring-sidebar-ring dark:bg-white/5"
+          className={`flex-1 rounded-lg px-2 py-1 text-[13px] outline-none ring-1 ${isSettingsSurface ? "bg-foreground/[0.05] text-foreground ring-ring" : "bg-black/5 text-sidebar-foreground ring-sidebar-ring dark:bg-white/5"}`}
         />
       </div>
     );
@@ -108,9 +114,9 @@ export function SessionItem({
     <div
       ref={containerRef}
       className="group relative"
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
+      draggable={!isSettingsSurface}
+      onDragStart={isSettingsSurface ? undefined : handleDragStart}
+      onDragEnd={isSettingsSurface ? undefined : handleDragEnd}
       onContextMenu={handleContextMenu}
     >
       <button
@@ -118,7 +124,9 @@ export function SessionItem({
         className={`session-item-button flex w-full min-w-0 items-center gap-2.5 rounded-lg ps-4 pe-3 group-hover:pe-14 py-1.5 text-start text-[13px] font-medium transition-all ${
           isActive
             ? "session-item-active bg-primary/10 text-black dark:bg-primary/15 dark:text-primary"
-            : "text-sidebar-foreground/75 hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/5"
+            : isSettingsSurface
+              ? "text-foreground/75 hover:bg-foreground/[0.05] hover:text-foreground"
+              : "text-sidebar-foreground/75 hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/5"
         }`}
       >
         {session.hasPendingPermission ? (
@@ -146,7 +154,7 @@ export function SessionItem({
               className={`shrink-0 ${isActive ? "opacity-80" : "opacity-50"}`}
             />
             {session.pinned && (
-              <Pin className="absolute -end-1 -top-1 h-2 w-2 text-sidebar-foreground/40" />
+              <Pin className={`absolute -end-1 -top-1 h-2 w-2 ${isSettingsSurface ? "text-foreground/40" : "text-sidebar-foreground/40"}`} />
             )}
           </span>
         )}
@@ -155,7 +163,9 @@ export function SessionItem({
             className={
               isActive
                 ? "text-current opacity-80 italic"
-                : "text-sidebar-foreground/60 italic"
+                : isSettingsSurface
+                  ? "text-foreground/60 italic"
+                  : "text-sidebar-foreground/60 italic"
             }
           >
             Generating title...
@@ -169,10 +179,10 @@ export function SessionItem({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 rounded-md text-sidebar-foreground/60 hover:bg-black/10 hover:text-sidebar-foreground dark:hover:bg-white/10"
+          className={`h-6 w-6 rounded-md ${isSettingsSurface ? "text-muted-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground" : "text-sidebar-foreground/60 hover:bg-black/10 hover:text-sidebar-foreground dark:hover:bg-white/10"}`}
           onClick={onArchiveToggle}
-          aria-label={session.archived ? "Unarchive" : "Archive"}
-          title={session.archived ? "Unarchive" : "Archive"}
+          aria-label={session.archived ? t("unarchive") : t("archive")}
+          title={session.archived ? t("unarchive") : t("archive")}
         >
           {session.archived ? (
             <ArchiveRestore className="h-3.5 w-3.5" />
@@ -183,7 +193,7 @@ export function SessionItem({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 rounded-md text-sidebar-foreground/60 hover:bg-black/10 hover:text-sidebar-foreground dark:hover:bg-white/10"
+          className={`h-6 w-6 rounded-md ${isSettingsSurface ? "text-muted-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground" : "text-sidebar-foreground/60 hover:bg-black/10 hover:text-sidebar-foreground dark:hover:bg-white/10"}`}
           onClick={handleMenuButtonClick}
         >
           <MoreHorizontal className="h-3.5 w-3.5" />

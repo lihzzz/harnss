@@ -14,11 +14,11 @@ import { APP_SIDEBAR_WIDTH } from "@/lib/layout/constants";
 import { SidebarSearch } from "./SidebarSearch";
 import { SpaceBar, SpaceIcon } from "./SpaceBar";
 import { SpaceCustomizer } from "./SpaceCustomizer";
-import { ArchivedSection } from "./sidebar/ArchivedSection";
 import { ProjectSection } from "./sidebar/ProjectSection";
 import { SidebarActionsProvider } from "./sidebar/SidebarActionsContext";
 import { useAgentContext } from "./AgentContext";
 import { clearSidebarDragPayload, isSidebarDragKind } from "@/lib/sidebar/dnd";
+import { useI18n } from "@/lib/i18n";
 
 type ProjectDropPlacement = "before" | "after";
 
@@ -204,6 +204,7 @@ export const AppSidebar = memo(function AppSidebar({
     canOpenSessionInSplitView,
   } = sessionActions;
   const { agents } = useAgentContext();
+  const { t } = useI18n();
   const isCreating = draftSpaceId !== null;
   // The draft is a real space — find it in the spaces array
   const draftSpace = isCreating ? spaces.find((s) => s.id === draftSpaceId) ?? null : null;
@@ -262,11 +263,6 @@ export const AppSidebar = memo(function AppSidebar({
     }
     return map;
   }, [sessions]);
-
-  const archivedSessions = useMemo(() => {
-    const projectIds = new Set(filteredProjects.map((project) => project.id));
-    return sessions.filter((session) => session.archived && projectIds.has(session.projectId));
-  }, [filteredProjects, sessions]);
 
   // Other spaces for "Move to space" menu
   const otherSpaces = useMemo(() => spaces.filter((s) => s.id !== activeSpaceId), [spaces, activeSpaceId]);
@@ -519,7 +515,7 @@ export const AppSidebar = memo(function AppSidebar({
             className="no-drag flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-sidebar-foreground/70 transition-all hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/10"
           >
             <Plus className="h-3.5 w-3.5 shrink-0" />
-            <span>Add project</span>
+            <span>{t("addProject")}</span>
           </button>
         )}
       </div>
@@ -533,10 +529,10 @@ export const AppSidebar = memo(function AppSidebar({
             </div>
 
             <h2 className="mt-4 text-base font-semibold text-sidebar-foreground">
-              Create a Space
+              {t("createSpace")}
             </h2>
             <p className="mt-1 text-center text-xs text-sidebar-foreground/50 leading-relaxed">
-              Separate your projects for work, life, and more.
+              {t("separateProjects")}
             </p>
 
             {/* Name input */}
@@ -552,7 +548,7 @@ export const AppSidebar = memo(function AppSidebar({
                     if (e.key === "Enter" && draftSpace.name.trim()) onConfirmCreateSpace();
                     if (e.key === "Escape") onCancelCreateSpace();
                   }}
-                  placeholder="Space name..."
+                  placeholder={t("spaceName")}
                   className="h-9 ps-8 text-sm bg-sidebar-accent/40 border-sidebar-border"
                   autoFocus
                 />
@@ -564,7 +560,7 @@ export const AppSidebar = memo(function AppSidebar({
               <PopoverTrigger asChild>
                 <button className="mt-3 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-start text-sm font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/60">
                   <Paintbrush className="h-4 w-4 text-sidebar-foreground/40" />
-                  Choose a Theme
+                  {t("chooseTheme")}
                 </button>
               </PopoverTrigger>
               <PopoverContent
@@ -593,13 +589,13 @@ export const AppSidebar = memo(function AppSidebar({
               onClick={onConfirmCreateSpace}
               disabled={!draftSpace.name.trim()}
             >
-              Create Space
+              {t("createSpaceButton")}
             </Button>
             <button
               onClick={onCancelCreateSpace}
               className="w-full py-1.5 text-center text-sm text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
             >
-              Cancel
+              {t("cancel")}
             </button>
           </div>
         </div>
@@ -671,16 +667,10 @@ export const AppSidebar = memo(function AppSidebar({
                 {filteredProjects.length === 0 && (
                   <p className="px-2 py-8 text-center text-xs text-sidebar-foreground/50">
                     {projects.length === 0
-                      ? "Add a project to get started"
-                      : "No projects in this space"}
+                      ? t("addProjectToStart")
+                      : t("noProjectsInSpace")}
                   </p>
                 )}
-                <ArchivedSection
-                  sessions={archivedSessions}
-                  activeSessionId={activeSessionId}
-                  islandLayout={islandLayout}
-                  agents={agents}
-                />
               </div>
             </ScrollArea>
           </div>

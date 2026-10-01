@@ -16,6 +16,7 @@ import {
   handleSidebarFolderDrop,
 } from "@/lib/sidebar/dnd";
 import { useContextMenuPosition } from "@/hooks/useContextMenuPosition";
+import { useI18n } from "@/lib/i18n";
 
 export function FolderSection({
   folder,
@@ -43,6 +44,7 @@ export function FolderSection({
   agents?: InstalledAgent[];
   defaultCollapsed?: boolean;
 }) {
+  const { t } = useI18n();
   const {
     selectSession,
     deleteSession,
@@ -156,12 +158,12 @@ export function FolderSection({
               {folder.pinned ? (
                 <>
                   <PinOff className="me-2 h-3.5 w-3.5" />
-                  Unpin
+                  {t("unpin")}
                 </>
               ) : (
                 <>
                   <Pin className="me-2 h-3.5 w-3.5" />
-                  Pin
+                  {t("pin")}
                 </>
               )}
             </DropdownMenuItem>
@@ -174,7 +176,7 @@ export function FolderSection({
               onClick={onDeleteFolder}
             >
               <Trash2 className="me-2 h-3.5 w-3.5" />
-              Delete
+              {t("delete")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

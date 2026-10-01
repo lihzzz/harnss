@@ -3,6 +3,7 @@ import { Server } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import type { AppSettings } from "@/types";
+import { useI18n } from "@/lib/i18n";
 
 interface EngineSettingsProps {
   appSettings: AppSettings | null;
@@ -15,6 +16,7 @@ export const EngineSettings = memo(function EngineSettings({
   appSettings,
   onUpdateAppSettings,
 }: EngineSettingsProps) {
+  const { t } = useI18n();
   const [claudeBinarySource, setClaudeBinarySource] = useState<"auto" | "managed" | "custom">("auto");
   const [claudeCustomBinaryPath, setClaudeCustomBinaryPath] = useState("");
   const [codexBinarySource, setCodexBinarySource] = useState<"auto" | "managed" | "custom">("auto");
@@ -77,8 +79,8 @@ export const EngineSettings = memo(function EngineSettings({
   return (
     <div className="flex h-full flex-col">
       <SettingsHeader
-        title="Engines"
-        description="Configure engine-level runtime behavior and binary selection"
+        title={t("engines")}
+        description={t("settingsEnginesDescription")}
       />
 
       <ScrollArea className="min-h-0 flex-1">

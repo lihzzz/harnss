@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import type { AppSettings } from "@/types";
+import { useI18n } from "@/lib/i18n";
 
 interface AdvancedSettingsProps {
   appSettings: AppSettings | null;
@@ -19,6 +20,7 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   onUpdateAppSettings,
   onReplayWelcome,
 }: AdvancedSettingsProps) {
+  const { t } = useI18n();
   const [codexClientName, setCodexClientName] = useState("Harnss");
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
   const [showJiraBoard, setShowJiraBoard] = useState(false);
@@ -62,8 +64,8 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   return (
     <div className="flex h-full flex-col">
       <SettingsHeader
-        title="Advanced"
-        description="Low-level settings for protocol behavior and server communication"
+        title={t("advanced")}
+        description={t("settingsAdvancedDescription")}
       />
 
       <ScrollArea className="min-h-0 flex-1">

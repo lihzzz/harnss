@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import { useSettingsStore, deriveMacBackgroundEffect } from "@/stores/settings-store";
 import { isMac } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 
 // ── Props ──
 
@@ -20,6 +21,7 @@ export const AppearanceSettings = memo(function AppearanceSettings({
   glassSupported,
   macLiquidGlassSupported,
 }: AppearanceSettingsProps) {
+  const { t } = useI18n();
   // ── Read all appearance settings from the Zustand store ──
   const theme = useSettingsStore((s) => s.theme);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -68,33 +70,33 @@ export const AppearanceSettings = memo(function AppearanceSettings({
 
   return (
     <div className="flex h-full flex-col">
-      <SettingsHeader title="Appearance" description="Customize the look and feel of the interface" />
+      <SettingsHeader title={t("appearance")} description={t("settingsAppearanceDescription")} />
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-6 py-2">
           {/* ── Theme section ── */}
-          <SettingsSection icon={SunMoon} label="Theme" first>
+          <SettingsSection icon={SunMoon} label={t("settingsTheme")} first>
             <SettingRow
-              label="Color theme"
-              description="Choose between light and dark appearance, or follow your system setting."
+              label={t("settingsColorTheme")}
+              description={t("settingsColorThemeDescription")}
             >
               <SettingsSelect
                 value={theme}
                 onValueChange={onThemeChange}
                 options={[
-                  { value: "dark", label: "Dark" },
-                  { value: "light", label: "Light" },
-                  { value: "system", label: "System" },
+                  { value: "dark", label: t("dark") },
+                  { value: "light", label: t("light") },
+                  { value: "system", label: t("system") },
                 ]}
               />
             </SettingRow>
           </SettingsSection>
 
           {/* ── Tools section ── */}
-          <SettingsSection icon={Wrench} label="Tools">
+          <SettingsSection icon={Wrench} label={t("settingsTools")}>
             <SettingRow
-              label="Auto-group tools"
-              description="Collapse consecutive tool calls into a single group. Disable to keep every tool call and in-between thinking row visible on its own."
+              label={t("settingsAutoGroupTools")}
+              description={t("settingsAutoGroupToolsDescription")}
             >
               <Switch
                 checked={autoGroupTools}
@@ -103,8 +105,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Avoid grouping edits"
-              description="Treat Edit and Write tool calls as standalone rows, even when auto-grouping is enabled. Reads before and after an edit will form separate groups."
+              label={t("settingsAvoidGroupingEdits")}
+              description={t("settingsAvoidGroupingEditsDescription")}
             >
               <Switch
                 checked={avoidGroupingEdits}
@@ -114,8 +116,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Auto-expand tool results"
-              description="Temporarily expand completed tool calls, then collapse them again after a short delay. Disable to keep tool rows stable unless you open them yourself."
+              label={t("settingsAutoExpandTools")}
+              description={t("settingsAutoExpandToolsDescription")}
             >
               <Switch
                 checked={autoExpandTools}
@@ -124,8 +126,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Expand Edit and Write tools by default"
-              description="Start Edit and Write tool calls open when they appear. Disable to keep them collapsed until you open them."
+              label={t("settingsExpandEditTools")}
+              description={t("settingsExpandEditToolsDescription")}
             >
               <Switch
                 checked={expandEditToolCallsByDefault}
@@ -134,8 +136,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Show tool icons"
-              description="Display icons next to tool call labels. Disable for a text-only view."
+              label={t("settingsShowToolIcons")}
+              description={t("settingsShowToolIconsDescription")}
             >
               <Switch
                 checked={showToolIcons}
@@ -144,8 +146,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Colored tool icons"
-              description="Tint tool call icons with per-tool colors. Disable for monochrome icons."
+              label={t("settingsColoredToolIcons")}
+              description={t("settingsColoredToolIconsDescription")}
             >
               <Switch
                 checked={coloredToolIcons}
@@ -156,11 +158,11 @@ export const AppearanceSettings = memo(function AppearanceSettings({
           </SettingsSection>
 
           {/* ── Layout section ── */}
-          <SettingsSection icon={Layout} label="Layout">
+          <SettingsSection icon={Layout} label={t("settingsLayout")}>
             <div className="py-3">
-              <p className="text-sm font-medium text-foreground">Window layout</p>
+              <p className="text-sm font-medium text-foreground">{t("settingsWindowLayout")}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Choose how panels are arranged in the window.
+                {t("settingsWindowLayoutDescription")}
               </p>
               <div className="mt-3 flex gap-3">
                 {/* ── Island preview ── */}
@@ -198,7 +200,7 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                   <p className={`mt-2 text-center text-xs font-medium ${
                     islandLayout ? "text-primary" : "text-muted-foreground"
                   }`}>
-                    Islands
+                    {t("settingsIslands")}
                   </p>
                 </button>
 
@@ -244,15 +246,15 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                   <p className={`mt-2 text-center text-xs font-medium ${
                     !islandLayout ? "text-primary" : "text-muted-foreground"
                   }`}>
-                    Flat
+                    {t("settingsFlat")}
                   </p>
                 </button>
               </div>
             </div>
 
             <SettingRow
-              label="Colored sidebar icons"
-              description="Tint tool picker and panel header icons with per-tool colors. Disable for neutral monochrome icons."
+              label={t("settingsColoredSidebarIcons")}
+              description={t("settingsColoredSidebarIconsDescription")}
             >
               <Switch
                 checked={coloredSidebarIcons}
@@ -261,8 +263,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Island border shine"
-              description="Show a subtle diagonal reflection on island panel borders. Only visible in island layout mode."
+              label={t("settingsIslandShine")}
+              description={t("settingsIslandShineDescription")}
             >
               <Switch
                 checked={islandShine}
@@ -273,20 +275,20 @@ export const AppearanceSettings = memo(function AppearanceSettings({
           </SettingsSection>
 
           {/* ── Transparency section ── */}
-          <SettingsSection icon={Blend} label="Transparency">
+          <SettingsSection icon={Blend} label={t("settingsTransparency")}>
             <SettingRow
-              label={isMac ? "Window background effect" : "Window transparency"}
+              label={isMac ? t("settingsWindowBackgroundEffect") : t("settingsWindowTransparency")}
               description={
                 isMac
                   ? (
                     macLiquidGlassSupported
-                      ? "Choose the native macOS background material. Blur Off keeps the window opaque, while switching from Liquid Glass to Vibrancy needs a restart."
-                      : "Choose the native macOS background material. Liquid Glass is unavailable on this Mac, so Vibrancy and Off are available."
+                      ? t("settingsWindowBackgroundEffectDescription")
+                      : t("settingsWindowBackgroundEffectUnavailable")
                   )
                   : (
                     glassSupported
-                      ? "Allow the desktop to show through the window background. Uses Mica on Windows when enabled."
-                      : "Window transparency is not available on this platform."
+                    ? t("settingsWindowTransparencyDescription")
+                    : t("settingsWindowTransparencyUnavailable")
                   )
               }
             >
@@ -313,8 +315,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Transparent tool picker"
-              description="Remove the background from the right-side tool picker strip so icons float directly over the window."
+              label={t("settingsTransparentToolPicker")}
+              description={t("settingsTransparentToolPickerDescription")}
             >
               <Switch
                 checked={transparentToolPicker}

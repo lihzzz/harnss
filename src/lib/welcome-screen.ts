@@ -6,6 +6,25 @@ export interface ContinueMessage {
   accent: string;
 }
 
+const ZH_CONTINUE_MESSAGES: Record<string, ContinueMessage> = {
+  "Continue building": { headline: "继续构建", subtitle: "你的对话还在等你。选一个继续发布成果。", accent: "" },
+  "Welcome back": { headline: "欢迎回来", subtitle: "代码仓库想你了——其实才过去几秒。", accent: "" },
+  "Back at it, menace": { headline: "继续折腾吧", subtitle: "选一个对话，开始一场优雅的混乱。", accent: "" },
+  "One more tiny change": { headline: "再改一个小地方", subtitle: "经典的最后一句话。你的对话正在等你。", accent: "" },
+  "Hello, night owl": { headline: "你好，夜猫子", subtitle: "最好的想法和最糟的提交信息都在此刻出现。", accent: "" },
+  "Midnight debug club": { headline: "午夜调试俱乐部", subtitle: "堆栈信息正在黑暗中温柔地发光。", accent: "" },
+  "Moonlight merge pending": { headline: "月光下等待合并", subtitle: "在鸟儿上班前，接着完成刚才的工作。", accent: "" },
+  "Good morning, builder": { headline: "早上好，构建者", subtitle: "新标签页，新咖啡，同一张超长 TODO 清单。", accent: "" },
+  "Rise and refactor": { headline: "起床重构", subtitle: "你的对话比一些同事醒得还早。", accent: "" },
+  "Morning commit energy": { headline: "清晨提交能量", subtitle: "趁会议找到你之前，先完成一个简单目标。", accent: "" },
+  "Welcome back, sunshine": { headline: "欢迎回来，阳光", subtitle: "把半成品想法变成真正功能的黄金时段。", accent: "" },
+  "Afternoon sprint mode": { headline: "午后冲刺模式", subtitle: "代码正热，对话也已经排好队了。", accent: "" },
+  "Post-lunch patch attack": { headline: "午后补丁出击", subtitle: "选一个对话，让路线图变得更可信。", accent: "" },
+  "Evening shift engaged": { headline: "晚班已开始", subtitle: "安静的时间，专注的状态，带一点小恶魔能量。", accent: "" },
+  "Twilight build session": { headline: "暮色构建时刻", subtitle: "适合发布一些聪明又没必要的东西。", accent: "" },
+  "Welcome back after hours": { headline: "欢迎下班后回来", subtitle: "你的对话已准备好接受那次“很快看一下”。", accent: "" },
+};
+
 const ANYTIME_CONTINUE_MESSAGES: readonly ContinueMessage[] = [
   {
     headline: "Continue building",
@@ -158,6 +177,13 @@ export function getContinueMessage(
     [...TIME_AWARE_CONTINUE_MESSAGES[bucket], ...ANYTIME_CONTINUE_MESSAGES],
     previous,
   );
+}
+
+/** Return the same welcome message in the selected UI language. */
+export function localizeContinueMessage(message: ContinueMessage, language: "zh-CN" | "en-US"): ContinueMessage {
+  if (language !== "zh-CN") return message;
+  const localized = ZH_CONTINUE_MESSAGES[message.headline];
+  return localized ? { ...localized, accent: message.accent } : message;
 }
 
 export function getNextContinueMessageDelay(now: Date = new Date()): number {
