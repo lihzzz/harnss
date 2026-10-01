@@ -27,6 +27,7 @@ import type { CodexModelSummary } from "@/hooks/session/types";
 import type { GrabbedElement } from "@/types";
 import type { SplitViewState } from "@/hooks/useSplitView";
 import { getChatPaneMinWidthPx } from "@/lib/layout/workspace-constraints";
+import { getInputHistory } from "@/lib/chat/input-history";
 
 export interface SplitChatPaneProps {
   // Identity
@@ -187,6 +188,7 @@ function SplitChatPaneInner({
     isActiveSessionPane,
     paneControllerCtx,
   );
+  const inputHistory = useMemo(() => getInputHistory(paneState.messages), [paneState.messages]);
 
   const openPanelTools = useMemo(() => {
     return new Set<ToolId>((
@@ -306,6 +308,8 @@ function SplitChatPaneInner({
               onSelectWorktree={isActiveSessionPane ? onSelectWorktree : undefined}
               isEmptySession={paneState.messages.length === 0}
               onManageACPs={onManageACPs}
+              inputHistory={inputHistory}
+              inputHistorySessionId={sessionId}
             />
           </div>
         </div>

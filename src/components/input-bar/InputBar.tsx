@@ -5,6 +5,7 @@ import {
   useRef,
   useCallback,
   useMemo,
+  useEffect,
   memo,
   type KeyboardEvent,
 } from "react";
@@ -61,6 +62,9 @@ import { MentionPicker } from "./MentionPicker";
 import { useMentionAutocomplete } from "./useMentionAutocomplete";
 import { CommandPicker } from "./CommandPicker";
 import { useCommandAutocomplete } from "./CommandPicker";
+import { InputHistoryDialog } from "./InputHistoryDialog";
+
+const EMPTY_INPUT_HISTORY: string[] = [];
 
 export interface InputBarProps {
   onSend: (text: string, images?: ImageAttachment[], displayText?: string) => void;
@@ -117,6 +121,10 @@ export interface InputBarProps {
   onRemoveGrabbedElement?: (id: string) => void;
   /** Open ACP Agents settings */
   onManageACPs?: () => void;
+  /** User prompts sent in the current session, in chronological order. */
+  inputHistory?: string[];
+  /** Session identity used to reset keyboard history navigation when switching sessions. */
+  inputHistorySessionId?: string | null;
 }
 
 export const InputBar = memo(function InputBar({
@@ -157,6 +165,8 @@ export const InputBar = memo(function InputBar({
   grabbedElements,
   onRemoveGrabbedElement,
   onManageACPs,
+  inputHistory,
+  inputHistorySessionId,
 }: InputBarProps) {
   // ── Core state ──
   const [hasContent, setHasContent] = useState(false);
@@ -183,6 +193,16 @@ export const InputBar = memo(function InputBar({
   const editableRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasContentRef = useRef(false);
+  const inputHistoryRef = useRef(inputHistory ?? EMPTY_INPUT_HISTORY);
+  const historyIndexRef = useRef((inputHistory ?? EMPTY_INPUT_HISTORY).length);
+  const historyDraftRef = useRef<string | null>(null);
+  inputHistoryRef.current = inputHistory ?? EMPTY_INPUT_HISTORY;
+  const inputHistoryLength = inputHistory?.length ?? 0;
+
+  useEffect(() => {
+    historyIndexRef.current = inputHistoryRef.current.length;
+    historyDraftRef.current = null;
+  }, [inputHistoryLength, inputHistorySessionId]);
 
   // ── Derived engine state ──
   const isACPAgent = selectedAgent != null && selectedAgent.engine === "acp";
@@ -252,6 +272,8 @@ export const InputBar = memo(function InputBar({
       hasContentRef.current = false;
       setHasContent(false);
       setAttachments([]);
+      historyIndexRef.current = inputHistoryRef.current.length;
+      historyDraftRef.current = null;
       mention.closeMentions();
       command.setShowCommands(false);
     },
@@ -464,6 +486,76 @@ export const InputBar = memo(function InputBar({
     setDeepFolderInfo(null);
   }, []);
 
+  const setComposerText = useCallback(
+    (text: string) => {
+      const el = editableRef.current;
+      if (!el) return;
+
+      el.textContent = text;
+      const range = document.createRange();
+      const selection = window.getSelection();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      el.focus();
+
+      const nextHasContent = hasMeaningfulText(text);
+      hasContentRef.current = nextHasContent;
+      setHasContent(nextHasContent);
+      mention.closeMentions();
+      command.setShowCommands(false);
+    },
+    [command.setShowCommands, mention.closeMentions],
+  );
+
+  const isCaretAtBoundary = useCallback(
+    (el: HTMLDivElement, boundary: "start" | "end") => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false;
+
+      const caret = selection.getRangeAt(0);
+      if (!el.contains(caret.startContainer) && caret.startContainer !== el) return false;
+
+      const edge = document.createRange();
+      edge.selectNodeContents(el);
+      edge.collapse(boundary === "start");
+      return caret.compareBoundaryPoints(Range.START_TO_START, edge) === 0;
+    },
+    [],
+  );
+
+  const navigateInputHistory = useCallback(
+    (direction: "up" | "down") => {
+      const el = editableRef.current;
+      const history = inputHistoryRef.current;
+      if (!el || history.length === 0) return false;
+
+      const currentIndex = Math.min(Math.max(historyIndexRef.current, 0), history.length);
+      const isEmpty = !hasMeaningfulText(el.textContent ?? "");
+      if (direction === "up") {
+        if (!isEmpty && !isCaretAtBoundary(el, "start")) return false;
+        if (currentIndex === 0) return true;
+        if (currentIndex === history.length) {
+          historyDraftRef.current = el.textContent ?? "";
+        }
+        const nextIndex = currentIndex === history.length ? history.length - 1 : currentIndex - 1;
+        historyIndexRef.current = nextIndex;
+        setComposerText(history[nextIndex]);
+        return true;
+      }
+
+      if (!isEmpty && !isCaretAtBoundary(el, "end")) return false;
+      if (currentIndex >= history.length) return true;
+      const nextIndex = currentIndex + 1;
+      historyIndexRef.current = nextIndex;
+      setComposerText(nextIndex === history.length ? (historyDraftRef.current ?? "") : history[nextIndex]);
+      if (nextIndex === history.length) historyDraftRef.current = null;
+      return true;
+    },
+    [isCaretAtBoundary, setComposerText],
+  );
+
   // ── Keyboard handling ──
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -548,6 +640,15 @@ export const InputBar = memo(function InputBar({
       }
     }
 
+    if (e.key === "ArrowUp" && navigateInputHistory("up")) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "ArrowDown" && navigateInputHistory("down")) {
+      e.preventDefault();
+      return;
+    }
+
     if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       document.execCommand("insertLineBreak");
@@ -568,6 +669,10 @@ export const InputBar = memo(function InputBar({
     (e: React.FormEvent<HTMLDivElement>) => {
       const el = editableRef.current;
       if (!el) return;
+
+      // Any direct edit starts a new draft for history navigation.
+      historyIndexRef.current = inputHistoryRef.current.length;
+      historyDraftRef.current = null;
 
       const hasMentionChip =
         el.querySelector("[data-mention-path]") !== null;
@@ -1006,6 +1111,10 @@ export const InputBar = memo(function InputBar({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="pointer-events-auto flex justify-end px-1 pt-1">
+        <InputHistoryDialog history={inputHistory ?? EMPTY_INPUT_HISTORY} />
       </div>
 
       {/* Deep folder confirmation dialog */}

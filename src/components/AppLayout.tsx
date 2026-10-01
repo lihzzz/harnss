@@ -80,6 +80,7 @@ import {
   isNearBottomDockZone,
 } from "@/lib/workspace/drag";
 import { AgentProvider, type AgentContextValue } from "./AgentContext";
+import { getInputHistory } from "@/lib/chat/input-history";
 
 export function AppLayout() {
   const o = useAppOrchestrator();
@@ -87,6 +88,7 @@ export function AppLayout() {
   const {
     sidebar, projectManager, spaceManager, manager, settings, resolvedTheme, spaceTerminals, activeSpaceTerminals, splitView,
   } = managers;
+  const inputHistory = useMemo(() => getInputHistory(manager.messages), [manager.messages]);
   const {
     agents, selectedAgent, saveAgent, deleteAgent, handleAgentChange, lockedEngine, lockedAgentId,
   } = agentState;
@@ -1572,6 +1574,8 @@ export function AppLayout() {
                   onSelectWorktree={handleAgentWorktreeChange}
                   isEmptySession={manager.messages.length === 0}
                   onManageACPs={() => setShowSettings("agents")}
+                  inputHistory={inputHistory}
+                  inputHistorySessionId={manager.activeSessionId}
                 />
               </div>
               </>
