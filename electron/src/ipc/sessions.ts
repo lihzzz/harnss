@@ -3,6 +3,8 @@ import path from "path";
 import fs from "fs";
 import { getDataDir, getProjectSessionsDir, getSessionFilePath } from "../lib/data-dir";
 import { reportError } from "../lib/error-utils";
+import { writeJsonAtomically } from "../lib/atomic-file";
+import { SessionWriteQueue } from "../lib/session-write-queue";
 import {
   getLastUserMessageTimestamp,
   extractSessionMeta,
@@ -30,32 +32,37 @@ function getMetaFilePath(projectId: string, sessionId: string): string {
   return getSessionFilePath(projectId, sessionId).replace(/\.json$/, ".meta.json");
 }
 
+const sessionWriteQueue = new SessionWriteQueue();
+
+function sessionKey(projectId: string, sessionId: string): string {
+  return `${projectId}/${sessionId}`;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
 export function register(): void {
   ipcMain.handle("sessions:save", async (_event, data: { projectId: string; id: string; createdAt?: number; messages?: Array<{ role?: string; timestamp?: number }> }) => {
     try {
-      const filePath = getSessionFilePath(data.projectId, data.id);
-      const providedLastMessageAt = (data as Record<string, unknown>).lastMessageAt;
-      const normalizedProvidedLastMessageAt =
-        typeof providedLastMessageAt === "number" ? providedLastMessageAt : undefined;
-      // Always prefer the latest user message timestamp when messages are present.
-      const lastMessageAt =
-        getLastUserMessageTimestamp(data.messages) ??
-        normalizedProvidedLastMessageAt ??
-        data.createdAt ??
-        0;
-      const enriched = { ...data, lastMessageAt };
+      await sessionWriteQueue.enqueue(sessionKey(data.projectId, data.id), async () => {
+        const filePath = getSessionFilePath(data.projectId, data.id);
+        const providedLastMessageAt = (data as Record<string, unknown>).lastMessageAt;
+        const normalizedProvidedLastMessageAt =
+          typeof providedLastMessageAt === "number" ? providedLastMessageAt : undefined;
+        // Always prefer the latest user message timestamp when messages are present.
+        const lastMessageAt =
+          getLastUserMessageTimestamp(data.messages) ??
+          normalizedProvidedLastMessageAt ??
+          data.createdAt ??
+          0;
+        const enriched = { ...data, lastMessageAt };
 
-      // Write main session file (no pretty-printing for smaller file size)
-      const writeMain = fs.promises.writeFile(filePath, JSON.stringify(enriched), "utf-8");
+        await writeJsonAtomically(filePath, enriched);
 
-      // Write metadata sidecar (fire-and-forget alongside main write)
-      const meta = extractSessionMeta(enriched as unknown as Record<string, unknown>, lastMessageAt);
-      const metaPath = getMetaFilePath(data.projectId, data.id);
-      const writeMeta = fs.promises.writeFile(metaPath, JSON.stringify(meta), "utf-8").catch((err) => {
-        reportError("SESSIONS:META_WRITE_ERR", err, { sessionId: data.id });
-      });
-
-      await Promise.all([writeMain, writeMeta]);
+        const meta = extractSessionMeta(enriched as unknown as Record<string, unknown>, lastMessageAt);
+        await writeJsonAtomically(getMetaFilePath(data.projectId, data.id), meta);
+      }, "save");
       return { ok: true };
     } catch (err) {
       const message = reportError("SESSIONS:SAVE_ERR", err, { sessionId: data.id });
@@ -140,33 +147,33 @@ export function register(): void {
     },
   ) => {
     try {
-      // Patch the .meta.json sidecar
-      const metaPath = getMetaFilePath(projectId, sessionId);
-      try {
-        const metaRaw = await fs.promises.readFile(metaPath, "utf-8");
-        const meta = JSON.parse(metaRaw);
-        if ("pinned" in patch) meta.pinned = patch.pinned || undefined;
-        if ("folderId" in patch) meta.folderId = patch.folderId || undefined;
-        if ("branch" in patch) meta.branch = patch.branch || undefined;
-        if ("archived" in patch) meta.archived = patch.archived || undefined;
-        await fs.promises.writeFile(metaPath, JSON.stringify(meta), "utf-8");
-      } catch {
-        // meta sidecar missing — will be recreated on next full save
-      }
+      await sessionWriteQueue.enqueue(sessionKey(projectId, sessionId), async () => {
+        const metaPath = getMetaFilePath(projectId, sessionId);
+        try {
+          const meta = JSON.parse(await fs.promises.readFile(metaPath, "utf-8"));
+          if ("pinned" in patch) meta.pinned = patch.pinned || undefined;
+          if ("folderId" in patch) meta.folderId = patch.folderId || undefined;
+          if ("branch" in patch) meta.branch = patch.branch || undefined;
+          if ("archived" in patch) meta.archived = patch.archived || undefined;
+          await writeJsonAtomically(metaPath, meta);
+        } catch (error) {
+          // meta sidecar missing — it will be recreated on the next full save
+          if (!isMissingFileError(error)) throw error;
+        }
 
-      // Patch the main .json file (read → merge → write)
-      const filePath = getSessionFilePath(projectId, sessionId);
-      try {
-        const raw = await fs.promises.readFile(filePath, "utf-8");
-        const data = JSON.parse(raw);
-        if ("pinned" in patch) data.pinned = patch.pinned || undefined;
-        if ("folderId" in patch) data.folderId = patch.folderId || undefined;
-        if ("branch" in patch) data.branch = patch.branch || undefined;
-        if ("archived" in patch) data.archived = patch.archived || undefined;
-        await fs.promises.writeFile(filePath, JSON.stringify(data), "utf-8");
-      } catch {
-        // main file missing — nothing to patch
-      }
+        const filePath = getSessionFilePath(projectId, sessionId);
+        try {
+          const data = JSON.parse(await fs.promises.readFile(filePath, "utf-8"));
+          if ("pinned" in patch) data.pinned = patch.pinned || undefined;
+          if ("folderId" in patch) data.folderId = patch.folderId || undefined;
+          if ("branch" in patch) data.branch = patch.branch || undefined;
+          if ("archived" in patch) data.archived = patch.archived || undefined;
+          await writeJsonAtomically(filePath, data);
+        } catch (error) {
+          // main file missing — nothing to patch
+          if (!isMissingFileError(error)) throw error;
+        }
+      });
 
       return { ok: true };
     } catch (err) {
@@ -177,18 +184,19 @@ export function register(): void {
 
   ipcMain.handle("sessions:delete", async (_event, projectId: string, sessionId: string) => {
     try {
-      const filePath = getSessionFilePath(projectId, sessionId);
-      const metaPath = getMetaFilePath(projectId, sessionId);
+      await sessionWriteQueue.enqueue(sessionKey(projectId, sessionId), async () => {
+        const filePath = getSessionFilePath(projectId, sessionId);
+        const metaPath = getMetaFilePath(projectId, sessionId);
 
-      // Delete both main file and sidecar, ignoring ENOENT
-      await Promise.all([
-        fs.promises.unlink(filePath).catch((err: NodeJS.ErrnoException) => {
-          if (err.code !== "ENOENT") throw err;
-        }),
-        fs.promises.unlink(metaPath).catch((err: NodeJS.ErrnoException) => {
-          if (err.code !== "ENOENT") throw err;
-        }),
-      ]);
+        await Promise.all([
+          fs.promises.unlink(filePath).catch((err: NodeJS.ErrnoException) => {
+            if (err.code !== "ENOENT") throw err;
+          }),
+          fs.promises.unlink(metaPath).catch((err: NodeJS.ErrnoException) => {
+            if (err.code !== "ENOENT") throw err;
+          }),
+        ]);
+      });
       return { ok: true };
     } catch (err) {
       const message = reportError("SESSIONS:DELETE_ERR", err, { projectId, sessionId });

@@ -1,9 +1,7 @@
-import { memo, useState, useMemo, createContext, useContext, type ReactNode } from "react";
+import { lazy, memo, Suspense, useState, useMemo, createContext, useContext, type ReactNode } from "react";
 import { AlertCircle, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -18,7 +16,6 @@ import type { UIMessage, ImageAttachment } from "@/types";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { CopyButton } from "./CopyButton";
 import { ImageLightbox } from "./ImageLightbox";
-import { MermaidDiagram } from "./MermaidDiagram";
 import {
   CHAT_CONTENT_STACK_CLASS,
   CHAT_PROSE_EDGE_CLASS,
@@ -28,6 +25,13 @@ import {
 // Stable references to avoid re-creating on every render
 const REMARK_PLUGINS = [remarkGfm];
 import type { Components } from "react-markdown";
+
+const SyntaxHighlightedCode = lazy(() =>
+  import("./SyntaxHighlightedCode").then(({ SyntaxHighlightedCode: Component }) => ({ default: Component })),
+);
+const MermaidDiagram = lazy(() =>
+  import("./MermaidDiagram").then(({ MermaidDiagram: Component }) => ({ default: Component })),
+);
 
 /**
  * Context to distinguish fenced code blocks (inside <pre>) from inline `code`.
@@ -424,7 +428,11 @@ function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }
 
     // Render mermaid diagrams with MermaidDiagram component
     if (language === "mermaid") {
-      return <MermaidDiagram code={code} isStreaming={isStreaming} />;
+      return (
+        <Suspense fallback={<pre className="overflow-x-auto p-3 text-xs font-mono"><code>{code}</code></pre>}>
+          <MermaidDiagram code={code} isStreaming={isStreaming} />
+        </Suspense>
+      );
     }
 
     return (
@@ -438,15 +446,14 @@ function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }
             <code>{code}</code>
           </pre>
         ) : (
-          <SyntaxHighlighter
-            style={oneDark}
-            language={language}
-            PreTag="div"
-            customStyle={SYNTAX_STYLE}
-            codeTagProps={CODE_TAG_PROPS}
-          >
-            {code}
-          </SyntaxHighlighter>
+          <Suspense fallback={<pre className="overflow-x-auto p-3 text-xs font-mono" style={SYNTAX_STYLE}><code>{code}</code></pre>}>
+            <SyntaxHighlightedCode
+              code={code}
+              language={language}
+              customStyle={SYNTAX_STYLE}
+              codeTagProps={CODE_TAG_PROPS}
+            />
+          </Suspense>
         )}
       </div>
     );
@@ -466,15 +473,14 @@ function CodeBlock(props: React.HTMLAttributes<HTMLElement> & { node?: unknown }
           <CopyButton text={code} className="opacity-0 transition-opacity group-hover/code:opacity-100" />
         </div>
         {guessedLang ? (
-          <SyntaxHighlighter
-            style={oneDark}
-            language={guessedLang}
-            PreTag="div"
-            customStyle={SYNTAX_STYLE}
-            codeTagProps={CODE_TAG_PROPS}
-          >
-            {code}
-          </SyntaxHighlighter>
+          <Suspense fallback={<pre className="overflow-x-auto p-3 text-xs font-mono" style={SYNTAX_STYLE}><code>{code}</code></pre>}>
+            <SyntaxHighlightedCode
+              code={code}
+              language={guessedLang}
+              customStyle={SYNTAX_STYLE}
+              codeTagProps={CODE_TAG_PROPS}
+            />
+          </Suspense>
         ) : (
           <pre className="overflow-x-auto p-3 text-xs font-mono">
             <code>{code}</code>
