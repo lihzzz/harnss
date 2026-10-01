@@ -115,7 +115,7 @@ export function SessionItem({
     >
       <button
         onClick={onSelect}
-        className={`session-item-button flex w-full min-w-0 items-center gap-2.5 rounded-lg ps-4 pe-3 group-hover:pe-8 py-1.5 text-start text-[13px] font-medium transition-all ${
+        className={`session-item-button flex w-full min-w-0 items-center gap-2.5 rounded-lg ps-4 pe-3 group-hover:pe-14 py-1.5 text-start text-[13px] font-medium transition-all ${
           isActive
             ? "session-item-active bg-primary/10 text-black dark:bg-primary/15 dark:text-primary"
             : "text-sidebar-foreground/75 hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/5"
@@ -165,7 +165,21 @@ export function SessionItem({
         )}
       </button>
 
-      <div className="absolute end-1.5 top-1/2 -translate-y-1/2 opacity-0 transition-all group-hover:opacity-100">
+      <div className="absolute end-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-all group-hover:opacity-100">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 rounded-md text-sidebar-foreground/60 hover:bg-black/10 hover:text-sidebar-foreground dark:hover:bg-white/10"
+          onClick={onArchiveToggle}
+          aria-label={session.archived ? "Unarchive" : "Archive"}
+          title={session.archived ? "Unarchive" : "Archive"}
+        >
+          {session.archived ? (
+            <ArchiveRestore className="h-3.5 w-3.5" />
+          ) : (
+            <Archive className="h-3.5 w-3.5" />
+          )}
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -239,19 +253,6 @@ export function SessionItem({
           <DropdownMenuItem onClick={startEditing}>
             <Pencil className="me-2 h-3.5 w-3.5" />
             Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onArchiveToggle}>
-            {session.archived ? (
-              <>
-                <ArchiveRestore className="me-2 h-3.5 w-3.5" />
-                Unarchive
-              </>
-            ) : (
-              <>
-                <Archive className="me-2 h-3.5 w-3.5" />
-                Archive
-              </>
-            )}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-destructive focus:text-destructive"

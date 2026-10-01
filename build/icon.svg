@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#172235" />
+      <stop offset="1" stop-color="#0E4B59" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(512 512) rotate(90) scale(430)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#39D6C4" stop-opacity=".24" />
+      <stop offset="1" stop-color="#39D6C4" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="node" x1="256" y1="224" x2="768" y2="800" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB28F" />
+      <stop offset="1" stop-color="#FF6F61" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="220" fill="url(#background)" />
+  <circle cx="512" cy="512" r="430" fill="url(#glow)" />
+
+  <!-- Adapted from Lucide's waypoints icon. See licenses/lucide-waypoints-ISC.txt. -->
+  <g fill="none" stroke="#F1FBF8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M423.44 216.56 216.56 423.44" stroke-width="48" />
+    <path d="M743.44 536.56 536.56 743.44" stroke-width="48" />
+    <path d="M240 512h544" stroke-width="48" />
+  </g>
+
+  <g fill="url(#node)" stroke="#F1FBF8" stroke-width="24">
+    <circle cx="512" cy="160" r="80" />
+    <circle cx="160" cy="512" r="80" />
+    <circle cx="864" cy="512" r="80" />
+    <circle cx="512" cy="864" r="80" />
+  </g>
+</svg>
