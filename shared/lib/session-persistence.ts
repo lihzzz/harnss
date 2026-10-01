@@ -26,6 +26,8 @@ export interface SessionMeta {
   branch?: string;
   /** Agent ID — which agent was used for this session. */
   agentId?: string;
+  /** ACP-side session ID used to restore the agent conversation. */
+  agentSessionId?: string;
 }
 
 /**
@@ -64,5 +66,6 @@ export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt:
     archived: data.archived as boolean | undefined,
     branch: data.branch as string | undefined,
     agentId: data.agentId as string | undefined,
+    agentSessionId: data.agentSessionId as string | undefined,
   };
 }

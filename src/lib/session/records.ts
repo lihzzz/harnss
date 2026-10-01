@@ -29,6 +29,7 @@ export function toChatSession(
     archived: session.archived,
     branch: session.branch,
     agentId: session.agentId,
+    agentSessionId: session.agentSessionId,
   };
 }
 

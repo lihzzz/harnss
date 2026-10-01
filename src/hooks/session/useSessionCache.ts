@@ -149,6 +149,7 @@ export function useSessionCache({
           if (!existing) return session;
           return {
             ...session,
+            ...(session.agentSessionId ? {} : existing.agentSessionId ? { agentSessionId: existing.agentSessionId } : {}),
             isActive: existing.isActive,
             isProcessing: existing.isProcessing,
             hasPendingPermission: existing.hasPendingPermission,

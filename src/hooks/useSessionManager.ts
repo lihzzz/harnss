@@ -396,6 +396,7 @@ export function useSessionManager(
         map.set(session.id, existing
           ? {
               ...session,
+              ...(session.agentSessionId ? {} : existing.agentSessionId ? { agentSessionId: existing.agentSessionId } : {}),
               isProcessing: existing.isProcessing,
               hasPendingPermission: existing.hasPendingPermission,
               hasUnreadCompletion: existing.hasUnreadCompletion,

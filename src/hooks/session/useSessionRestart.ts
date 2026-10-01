@@ -46,6 +46,7 @@ export function useSessionRestart({
     backgroundStoreRef,
     startOptionsRef,
     acpAgentIdRef,
+    acpAgentSessionIdRef,
   } = refs;
 
   // ── Restart ACP session with updated MCP servers ──
@@ -72,12 +73,20 @@ export function useSessionRestart({
     // Try session/load first — updates MCP on the existing connection, no context loss
     const nextCwd = cwdOverride ?? getProjectCwd(project);
     const reloadResult = await window.claude.acp.reloadSession(currentId, servers, nextCwd);
-    if (reloadResult.supportsLoad && reloadResult.ok) {
-      // session/load succeeded — session ID and process unchanged, context preserved
-      return { ok: true };
+    if (reloadResult.supportsLoad) {
+      if (reloadResult.ok) {
+        // session/load succeeded — session ID and process unchanged, context preserved
+        return { ok: true };
+      }
+      // A load-capable agent failed to restore its durable session. Do not
+      // silently replace it with a fresh context while keeping old UI history.
+      return { error: reloadResult.error || "Failed to restore ACP session context." };
+    }
+    if (reloadResult.error) {
+      return { error: reloadResult.error };
     }
 
-    // Fall back to stop + restart (agent doesn't support session/load, or reload failed)
+    // Fall back to stop + restart only when the agent explicitly lacks session/load.
     const currentMessages = messagesRef.current;
     const currentCost = totalCostRef.current;
 
@@ -100,10 +109,14 @@ export function useSessionRestart({
     }
 
     const newId = result.sessionId;
+    const newAgentSessionId = "agentSessionId" in result ? result.agentSessionId : undefined;
+    acpAgentSessionIdRef.current = newAgentSessionId ?? acpAgentSessionIdRef.current;
     liveSessionIdsRef.current.add(newId);
 
     setSessions(prev => prev.map(s =>
-      s.id === currentId ? { ...s, id: newId } : s
+      s.id === currentId
+        ? { ...s, id: newId, ...(newAgentSessionId ? { agentSessionId: newAgentSessionId } : {}) }
+        : s
     ));
     // Restore UI message history and config options through initialMessages -> useACP reset effect
     setInitialMessages(currentMessages);
