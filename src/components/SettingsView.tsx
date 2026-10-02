@@ -27,7 +27,7 @@ import { AnalyticsSettings } from "@/components/settings/AnalyticsSettings";
 import { useSettingsStore } from "@/stores/settings-store";
 import { isMac } from "@/lib/utils";
 import type { AppSettings } from "@/types";
-import type { ChatSession, InstalledAgent } from "@/types";
+import type { ChatSession, InstalledAgent, Project } from "@/types";
 import { useAgentContext } from "./AgentContext";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { ArchivedSettings } from "@/components/settings/ArchivedSettings";
@@ -71,6 +71,7 @@ interface SettingsViewProps {
   /** Open directly to a specific section (e.g. "agents" from the engine picker). */
   initialSection?: SettingsSection;
   sessions: ChatSession[];
+  projects: Project[];
   activeSessionId: string | null;
   agents?: InstalledAgent[];
   onSelectSession: (id: string) => void;
@@ -92,6 +93,7 @@ export const SettingsView = memo(function SettingsView({
   onReplayWelcome,
   initialSection,
   sessions,
+  projects,
   activeSessionId,
   agents: sessionAgents,
   onSelectSession,
@@ -190,6 +192,7 @@ export const SettingsView = memo(function SettingsView({
         return (
           <ArchivedSettings
             sessions={sessions}
+            projects={projects}
             activeSessionId={activeSessionId}
             agents={sessionAgents}
             onSelectSession={onSelectSession}

@@ -1103,6 +1103,7 @@ export function AppLayout() {
             onReplayWelcome={handleReplayWelcome}
             initialSection={showSettings}
             sessions={manager.sessions}
+            projects={projectManager.projects}
             activeSessionId={manager.activeSessionId}
             agents={agents}
             onSelectSession={handleSidebarSelectSession}
