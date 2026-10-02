@@ -80,7 +80,11 @@ import {
   isNearBottomDockZone,
 } from "@/lib/workspace/drag";
 import { AgentProvider, type AgentContextValue } from "./AgentContext";
-import { getInputHistory } from "@/lib/chat/input-history";
+import {
+  getInputHistory,
+  loadPersistedInputHistory,
+  mergeInputHistory,
+} from "@/lib/chat/input-history";
 
 export function AppLayout() {
   const o = useAppOrchestrator();
@@ -88,7 +92,6 @@ export function AppLayout() {
   const {
     sidebar, projectManager, spaceManager, manager, settings, resolvedTheme, spaceTerminals, activeSpaceTerminals, splitView,
   } = managers;
-  const inputHistory = useMemo(() => getInputHistory(manager.messages), [manager.messages]);
   const {
     agents, selectedAgent, saveAgent, deleteAgent, handleAgentChange, lockedEngine, lockedAgentId,
   } = agentState;
@@ -99,6 +102,10 @@ export function AppLayout() {
     glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled, jiraBoardEnabled,
     draftSpaceId,
   } = state;
+  const inputHistory = useMemo(
+    () => mergeInputHistory(loadPersistedInputHistory(activeProjectPath), getInputHistory(manager.messages)),
+    [activeProjectPath, manager.messages],
+  );
   const {
     showSettings, setShowSettings, scrollToMessageId, setScrollToMessageId, chatSearchOpen, setChatSearchOpen,
   } = ui;

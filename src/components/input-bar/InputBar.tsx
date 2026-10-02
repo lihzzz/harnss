@@ -38,7 +38,10 @@ import type {
   SlashCommand,
 } from "@/types";
 import { BOTTOM_CHAT_MAX_WIDTH_CLASS } from "@/lib/layout/constants";
-import { canNavigateInputHistory } from "@/lib/chat/input-history";
+import {
+  appendPersistedInputHistory,
+  canNavigateInputHistory,
+} from "@/lib/chat/input-history";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { resolveModelValue } from "@/lib/model-utils";
 const ImageAnnotationEditor = lazy(() =>
@@ -410,6 +413,7 @@ export const InputBar = memo(function InputBar({
         onSend(trimmed, currentImages);
       }
 
+      appendPersistedInputHistory(projectPath, trimmed);
       clearComposer(el);
     },
     [attachments, projectPath, onSend, clearComposer, grabbedElements],

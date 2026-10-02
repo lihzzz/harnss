@@ -27,7 +27,11 @@ import type { CodexModelSummary } from "@/hooks/session/types";
 import type { GrabbedElement } from "@/types";
 import type { SplitViewState } from "@/hooks/useSplitView";
 import { getChatPaneMinWidthPx } from "@/lib/layout/workspace-constraints";
-import { getInputHistory } from "@/lib/chat/input-history";
+import {
+  getInputHistory,
+  loadPersistedInputHistory,
+  mergeInputHistory,
+} from "@/lib/chat/input-history";
 
 export interface SplitChatPaneProps {
   // Identity
@@ -188,7 +192,10 @@ function SplitChatPaneInner({
     isActiveSessionPane,
     paneControllerCtx,
   );
-  const inputHistory = useMemo(() => getInputHistory(paneState.messages), [paneState.messages]);
+  const inputHistory = useMemo(
+    () => mergeInputHistory(loadPersistedInputHistory(projectPath), getInputHistory(paneState.messages)),
+    [projectPath, paneState.messages],
+  );
 
   const openPanelTools = useMemo(() => {
     return new Set<ToolId>((
