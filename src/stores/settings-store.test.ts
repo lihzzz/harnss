@@ -63,4 +63,30 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().language).toBe("en-US");
     expect(localStorage.getItem("harnss-settings-store")).toContain('"language":"en-US"');
   });
+
+  it("keeps custom model IDs per engine when model selection changes", async () => {
+    const { useSettingsStore } = await import("./settings-store");
+
+    useSettingsStore.getState().setCustomModelForEngine("claude", "my-custom-model");
+    useSettingsStore.getState().setCustomModelForEngine("codex", "gpt-x");
+
+    // Switching the selected model must not affect stored custom IDs
+    useSettingsStore.getState().setModelForEngine("project-1", "claude", "sonnet");
+
+    const state = useSettingsStore.getState();
+    expect(state.customModelsByEngine.claude).toBe("my-custom-model");
+    expect(state.customModelsByEngine.codex).toBe("gpt-x");
+    expect(state.customModelsByEngine.acp).toBe("");
+    expect(state.projects["project-1"]?.modelsByEngine.claude).toBe("sonnet");
+  });
+
+  it("trims and clears custom model IDs", async () => {
+    const { useSettingsStore } = await import("./settings-store");
+
+    useSettingsStore.getState().setCustomModelForEngine("acp", "  my-model  ");
+    expect(useSettingsStore.getState().customModelsByEngine.acp).toBe("my-model");
+
+    useSettingsStore.getState().setCustomModelForEngine("acp", "");
+    expect(useSettingsStore.getState().customModelsByEngine.acp).toBe("");
+  });
 });

@@ -15,6 +15,12 @@ export const DEFAULT_ENGINE_MODELS: Record<EngineId, string> = {
   codex: "",
 };
 
+const DEFAULT_CUSTOM_ENGINE_MODELS: Record<EngineId, string> = {
+  claude: "",
+  acp: "",
+  codex: "",
+};
+
 const MIN_RIGHT_PANEL = 200;
 const MAX_RIGHT_PANEL = 500;
 const DEFAULT_RIGHT_PANEL = 288;
@@ -110,6 +116,8 @@ interface GlobalSettingsState {
   coloredSidebarIcons: boolean;
   showToolIcons: boolean;
   coloredToolIcons: boolean;
+  /** Per-engine user-defined model IDs, kept independent of preset model selections */
+  customModelsByEngine: Record<EngineId, string>;
 }
 
 /** Actions (setters) — excluded from persistence via partialize */
@@ -134,6 +142,7 @@ interface SettingsActions {
   setColoredSidebarIcons: (on: boolean) => void;
   setShowToolIcons: (on: boolean) => void;
   setColoredToolIcons: (on: boolean) => void;
+  setCustomModelForEngine: (engine: EngineId, model: string) => void;
 
   // Per-project setters (all take projectId as first arg)
   setModelForEngine: (projectId: string, engine: EngineId, model: string) => void;
@@ -322,6 +331,7 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
     coloredSidebarIcons: readLegacyBool("harnss-colored-sidebar-icons", true),
     showToolIcons: readLegacyBool("harnss-show-tool-icons", true),
     coloredToolIcons: readLegacyBool("harnss-colored-tool-icons", false),
+    customModelsByEngine: DEFAULT_CUSTOM_ENGINE_MODELS,
   };
 }
 
@@ -437,6 +447,7 @@ export const useSettingsStore = create<SettingsStore>()(
       coloredSidebarIcons: true,
       showToolIcons: true,
       coloredToolIcons: false,
+      customModelsByEngine: DEFAULT_CUSTOM_ENGINE_MODELS,
 
       projects: {},
 
@@ -498,6 +509,13 @@ export const useSettingsStore = create<SettingsStore>()(
       setShowToolIcons: (on) => set({ showToolIcons: on }),
 
       setColoredToolIcons: (on) => set({ coloredToolIcons: on }),
+
+      setCustomModelForEngine: (engine, model) => {
+        const normalized = model.trim();
+        const current = get().customModelsByEngine;
+        if (current[engine] === normalized) return;
+        set({ customModelsByEngine: { ...current, [engine]: normalized } });
+      },
 
       // ── Per-project setters ──
 
@@ -629,6 +647,7 @@ export const useSettingsStore = create<SettingsStore>()(
         coloredSidebarIcons: state.coloredSidebarIcons,
         showToolIcons: state.showToolIcons,
         coloredToolIcons: state.coloredToolIcons,
+        customModelsByEngine: state.customModelsByEngine,
         // Per-project
         projects: state.projects,
       }),
