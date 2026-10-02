@@ -12,6 +12,7 @@ import {
   FolderMinus,
   Archive,
   ArchiveRestore,
+  FileDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +34,11 @@ import {
 } from "@/lib/sidebar/dnd";
 import { useContextMenuPosition } from "@/hooks/useContextMenuPosition";
 import { useI18n } from "@/lib/i18n";
+import { isMac } from "@/lib/utils";
+import { DRAFT_ID } from "@/hooks/session/types";
+import { toast } from "sonner";
+
+const REVEAL_LABEL = isMac ? "Reveal in Finder" : "Show in Explorer";
 
 export function SessionItem({
   session,
@@ -96,6 +102,26 @@ export function SessionItem({
   const handleDragEnd = useCallback(() => {
     clearSidebarDragPayload();
   }, []);
+
+  const handleExportMarkdown = useCallback(async () => {
+    try {
+      const result = await window.claude.sessions.exportMarkdown(session.projectId, session.id);
+      if (result?.error) {
+        toast.error(result.error);
+        return;
+      }
+      if (result?.canceled) return;
+      const filePath = result?.filePath;
+      toast.success("Session exported", {
+        description: filePath,
+        action: filePath
+          ? { label: REVEAL_LABEL, onClick: () => void window.claude.showItemInFolder(filePath) }
+          : undefined,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    }
+  }, [session.projectId, session.id]);
 
   if (isEditing) {
     return (
@@ -257,6 +283,13 @@ export function SessionItem({
             <DropdownMenuItem onClick={onOpenInSplitView}>
               <Columns2 className="me-2 h-3.5 w-3.5" />
               Open in Split View
+            </DropdownMenuItem>
+          )}
+
+          {session.id !== DRAFT_ID && (
+            <DropdownMenuItem onClick={handleExportMarkdown}>
+              <FileDown className="me-2 h-3.5 w-3.5" />
+              Export as Markdown
             </DropdownMenuItem>
           )}
 

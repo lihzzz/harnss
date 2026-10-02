@@ -23,3 +23,24 @@ export function getInputHistory(messages: UIMessage[]): string[] {
     return prompt ? [prompt] : [];
   });
 }
+
+/** Allow arrow-key navigation to continue while the composer shows a history entry. */
+export function canNavigateInputHistory({
+  currentText,
+  history,
+  currentIndex,
+  isEmpty,
+  atBoundary,
+}: {
+  currentText: string;
+  history: readonly string[];
+  currentIndex: number;
+  isEmpty: boolean;
+  atBoundary: boolean;
+}): boolean {
+  const isCurrentHistoryEntry =
+    currentIndex >= 0 &&
+    currentIndex < history.length &&
+    currentText === history[currentIndex];
+  return isEmpty || isCurrentHistoryEntry || atBoundary;
+}

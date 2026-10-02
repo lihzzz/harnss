@@ -62,6 +62,24 @@ export type { ErrorNotification as CodexErrorNotification } from "./codex-protoc
 export type { ReasoningSummaryTextDeltaNotification as CodexReasoningSummaryDeltaNotification } from "./codex-protocol/v2/ReasoningSummaryTextDeltaNotification";
 export type { ReasoningTextDeltaNotification as CodexReasoningTextDeltaNotification } from "./codex-protocol/v2/ReasoningTextDeltaNotification";
 
+/** Runtime diagnostics for the experimental Codex Computer Use bridge. */
+export interface CodexComputerUseStatus {
+  /** Whether Harnss will pass `--enable computer_use` to new app-server processes. */
+  enabled: boolean;
+  /** Whether the launched app-server reports the feature as enabled. */
+  featureEnabled: boolean;
+  /** Whether the configured node_repl MCP server completed startup. */
+  nodeReplConnected: boolean;
+  /** Tool names discovered from node_repl. */
+  nodeReplTools: string[];
+  /** True only when the feature and the node_repl executor are both ready. */
+  ready: boolean;
+  codexPath?: string;
+  codexVersion?: string | null;
+  codexHome?: string;
+  error?: string;
+}
+
 // Approval types (server-initiated requests)
 export type { CommandExecutionRequestApprovalParams as CodexCommandApprovalParams } from "./codex-protocol/v2/CommandExecutionRequestApprovalParams";
 export type { CommandExecutionRequestApprovalResponse as CodexCommandApprovalResponse } from "./codex-protocol/v2/CommandExecutionRequestApprovalResponse";

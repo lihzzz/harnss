@@ -30,6 +30,7 @@ const DEFAULTS: AppSettings = {
   notifications: NOTIFICATION_DEFAULTS,
   codexClientName: "Harnss",
   codexBinarySource: "auto",
+  codexComputerUseEnabled: false,
   codexCustomBinaryPath: "",
   claudeBinarySource: "auto",
   claudeCustomBinaryPath: "",

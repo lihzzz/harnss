@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "@/types";
-import { getInputHistory, stripInputContext } from "./input-history";
+import {
+  canNavigateInputHistory,
+  getInputHistory,
+  stripInputContext,
+} from "./input-history";
 
 const userMessage = (content: string, extra: Partial<UIMessage> = {}): UIMessage => ({
   id: content,
@@ -28,5 +32,25 @@ describe("input history", () => {
       userMessage("full content", { displayContent: "shown prompt\n\n[[element:<button> Save]]" }),
     ])).toEqual(["fix this", "shown prompt"]);
     expect(stripInputContext('<element tag="button">details</element>\n\ninspect')).toBe("inspect");
+  });
+
+  it("continues navigating when the composer shows the selected history entry", () => {
+    expect(canNavigateInputHistory({
+      currentText: "second",
+      history: ["first", "second"],
+      currentIndex: 1,
+      isEmpty: false,
+      atBoundary: false,
+    })).toBe(true);
+  });
+
+  it("does not take over arrows from text being edited away from a boundary", () => {
+    expect(canNavigateInputHistory({
+      currentText: "draft",
+      history: ["first", "second"],
+      currentIndex: 2,
+      isEmpty: false,
+      atBoundary: false,
+    })).toBe(false);
   });
 });

@@ -12,7 +12,7 @@ import crypto from "crypto";
 import { log } from "../lib/logger";
 import { safeSend } from "../lib/safe-send";
 import { CodexRpcClient } from "../lib/codex-rpc";
-import { getCodexBinaryPath, getCodexBinaryStatus, getCodexVersion } from "../lib/codex-binary";
+import { getCodexBinaryPath, getCodexBinaryStatus, getCodexHome, getCodexVersion } from "../lib/codex-binary";
 import { getAppSetting } from "../lib/app-settings";
 import { reportError } from "../lib/error-utils";
 import { captureEvent } from "../lib/posthog";
@@ -20,7 +20,6 @@ import { captureEvent } from "../lib/posthog";
 import type {
   CodexServerNotification,
   CodexModel,
-  CodexModelListResponse,
   CodexAccountResponse,
   CodexThreadStartResponse,
   CodexThreadResumeResponse,
@@ -32,6 +31,7 @@ import type {
   CodexThreadGoalGetResponse,
   CodexThreadGoalSetResponse,
   CodexThreadGoalClearResponse,
+  CodexComputerUseStatus,
 } from "@shared/types/codex";
 import { isMethodNotFoundError, parseThreadGoal } from "@shared/lib/codex-goal";
 import type { SkillsListResponse } from "@shared/types/codex-protocol/v2/SkillsListResponse";
@@ -62,7 +62,7 @@ export type CodexGoalResult =
   | { supported: true; goal: CodexThreadGoal | null; error?: string }
   | { supported: false; goal: null; reason: "method-not-found"; error?: string };
 
-import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, pickModelId } from "@shared/lib/codex-helpers";
+import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, listModelsWithConfigured, pickModelId } from "@shared/lib/codex-helpers";
 
 const codexSessions = new Map<string, CodexSession>();
 
@@ -78,6 +78,103 @@ function getAppServerClientInfo(): { name: string; title: string; version: strin
     title: clientName,
     version: app.getVersion(),
   };
+}
+
+function getCodexAppServerArgs(): string[] {
+  const args = ["app-server"];
+  if (getAppSetting("codexComputerUseEnabled")) {
+    args.push("--enable", "computer_use");
+  }
+  return args;
+}
+
+function getCodexAppServerEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    CODEX_HOME: getCodexHome(),
+    RUST_LOG: process.env.RUST_LOG ?? "warn",
+  };
+}
+
+function spawnCodexAppServer(codexPath: string, cwd: string) {
+  return spawn(codexPath, getCodexAppServerArgs(), {
+    stdio: ["pipe", "pipe", "pipe"],
+    cwd,
+    env: getCodexAppServerEnv(),
+  });
+}
+
+interface CodexConfigReadResponse {
+  config?: {
+    features?: Record<string, unknown> | null;
+  };
+}
+
+interface CodexMcpServerStatus {
+  name?: string;
+  serverInfo?: unknown;
+  tools?: Record<string, unknown> | null;
+  toolsError?: unknown;
+}
+
+interface CodexMcpServerStatusResponse {
+  data?: CodexMcpServerStatus[];
+}
+
+async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
+  const enabled = getAppSetting("codexComputerUseEnabled");
+  const base: CodexComputerUseStatus = {
+    enabled,
+    featureEnabled: false,
+    nodeReplConnected: false,
+    nodeReplTools: [],
+    ready: false,
+  };
+
+  try {
+    const codexPath = await getCodexBinaryPath();
+    const [codexVersion] = await Promise.all([getCodexVersion()]);
+    const proc = spawnCodexAppServer(codexPath, process.cwd());
+    if (!proc.pid) throw new Error("Failed to spawn codex app-server process");
+
+    const rpc = new CodexRpcClient(proc);
+    try {
+      const initResult = await rpc.request<CodexInitializeResponse>("initialize", {
+        clientInfo: getAppServerClientInfo(),
+        capabilities: { experimentalApi: true },
+      });
+      rpc.notify("initialized", {});
+
+      const [configResult, mcpResult] = await Promise.all([
+        rpc.request<CodexConfigReadResponse>("config/read"),
+        rpc.request<CodexMcpServerStatusResponse>("mcpServerStatus/list", {}, 120_000),
+      ]);
+      const nodeRepl = (mcpResult.data ?? []).find((server) => server.name === "node_repl");
+      const nodeReplTools = nodeRepl?.tools && typeof nodeRepl.tools === "object"
+        ? Object.keys(nodeRepl.tools)
+        : [];
+      const featureEnabled = configResult.config?.features?.computer_use === true;
+      const nodeReplConnected = !!nodeRepl?.serverInfo && nodeRepl?.toolsError == null;
+
+      return {
+        ...base,
+        featureEnabled,
+        nodeReplConnected,
+        nodeReplTools,
+        ready: enabled && featureEnabled && nodeReplConnected && nodeReplTools.includes("js"),
+        codexPath,
+        codexVersion,
+        codexHome: initResult.codexHome,
+      };
+    } finally {
+      rpc.destroy();
+    }
+  } catch (error) {
+    return {
+      ...base,
+      error: reportError("CODEX_COMPUTER_USE_STATUS_ERR", error, { engine: "codex" }),
+    };
+  }
 }
 
 // pickModelId imported from @shared/lib/codex-helpers
@@ -372,14 +469,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const codexPath = await getCodexBinaryPath();
         log("codex",` Starting app-server: ${codexPath} (session=${internalId})`);
 
-        const proc = spawn(codexPath, ["app-server"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          cwd: options.cwd,
-          env: {
-            ...process.env,
-            RUST_LOG: process.env.RUST_LOG ?? "warn",
-          },
-        });
+        const proc = spawnCodexAppServer(codexPath, options.cwd);
 
         if (!proc.pid) {
           throw new Error("Failed to spawn codex app-server process");
@@ -437,8 +527,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         let models: CodexModel[] = [];
         let selectedModel: string | undefined;
         try {
-          const modelResult = await rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-          models = modelResult.data ?? [];
+          models = await listModelsWithConfigured(rpc);
           selectedModel = pickModelId(options.model, models);
           if (options.model && selectedModel !== options.model) {
             log("codex", ` Requested model ${options.model} not found; using ${selectedModel ?? "server default"}`);
@@ -790,8 +879,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     for (const session of codexSessions.values()) {
       if (session.rpc.isAlive) {
         try {
-          const result = await session.rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-          return { models: result.data ?? [] };
+          return { models: await listModelsWithConfigured(session.rpc) };
         } catch {
           continue;
         }
@@ -801,14 +889,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     // No live session: spawn a short-lived app-server process and fetch model/list.
     try {
       const codexPath = await getCodexBinaryPath();
-      const proc = spawn(codexPath, ["app-server"], {
-        stdio: ["pipe", "pipe", "pipe"],
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          RUST_LOG: process.env.RUST_LOG ?? "warn",
-        },
-      });
+      const proc = spawnCodexAppServer(codexPath, process.cwd());
       if (!proc.pid) {
         throw new Error("Failed to spawn codex app-server process");
       }
@@ -820,8 +901,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           capabilities: { experimentalApi: true },
         });
         rpc.notify("initialized", {});
-        const result = await rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-        return { models: result.data ?? [] };
+        return { models: await listModelsWithConfigured(rpc) };
       } finally {
         rpc.destroy();
       }
@@ -890,14 +970,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const codexPath = await getCodexBinaryPath();
         log("codex",` Resuming thread ${data.threadId} in new process (session=${internalId})`);
 
-        const proc = spawn(codexPath, ["app-server"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          cwd: data.cwd,
-          env: {
-            ...process.env,
-            RUST_LOG: process.env.RUST_LOG ?? "warn",
-          },
-        });
+        const proc = spawnCodexAppServer(codexPath, data.cwd);
 
         if (!proc.pid) throw new Error("Failed to spawn codex app-server");
 
@@ -980,6 +1053,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("codex:binary-status", async () => {
     return getCodexBinaryStatus();
   });
+
+  // ─── codex:computer-use-status ───
+  ipcMain.handle("codex:computer-use-status", async () => getComputerUseStatus());
 }
 
 /** Stop all Codex sessions (called on app quit). */

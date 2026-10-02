@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "path";
 import fs from "fs";
 import { getDataDir, getProjectSessionsDir, getSessionFilePath } from "../lib/data-dir";
@@ -10,6 +10,7 @@ import {
   extractSessionMeta,
   type SessionMeta,
 } from "@shared/lib/session-persistence";
+import { buildSessionMarkdown, type MarkdownMessage } from "@shared/lib/session-markdown";
 
 interface SearchResult {
   messageResults: Array<{
@@ -30,6 +31,11 @@ interface SearchResult {
 
 function getMetaFilePath(projectId: string, sessionId: string): string {
   return getSessionFilePath(projectId, sessionId).replace(/\.json$/, ".meta.json");
+}
+
+function sanitizeExportFileName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").replace(/\s+/g, " ").trim();
+  return (cleaned || "session").slice(0, 80);
 }
 
 const sessionWriteQueue = new SessionWriteQueue();
@@ -278,6 +284,42 @@ export function register(): void {
     } catch (err) {
       reportError("SESSIONS:SEARCH_ERR", err, { query });
       return { messageResults: [], sessionResults: [] };
+    }
+  });
+
+  ipcMain.handle("sessions:export-markdown", async (event, { projectId, sessionId }: { projectId: string; sessionId: string }) => {
+    try {
+      const filePath = getSessionFilePath(projectId, sessionId);
+      let raw: string;
+      try {
+        raw = await fs.promises.readFile(filePath, "utf-8");
+      } catch (err) {
+        if (isMissingFileError(err)) return { error: "Session file not found" };
+        throw err;
+      }
+
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      const messages = Array.isArray(data.messages) ? (data.messages as MarkdownMessage[]) : [];
+      const lastMessageAt = getLastUserMessageTimestamp(data.messages as Array<{ role?: string; timestamp?: number }>) ?? 0;
+      const markdown = buildSessionMarkdown(extractSessionMeta(data, lastMessageAt), messages);
+
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const options = {
+        title: "Export Session as Markdown",
+        defaultPath: path.join(app.getPath("documents"), `${sanitizeExportFileName(String(data.title ?? "session"))}.md`),
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      };
+      const result = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options);
+
+      if (result.canceled || !result.filePath) return { canceled: true };
+
+      await fs.promises.writeFile(result.filePath, markdown, "utf-8");
+      return { ok: true, filePath: result.filePath };
+    } catch (err) {
+      const message = reportError("SESSIONS:EXPORT_MD_ERR", err, { projectId, sessionId });
+      return { error: message };
     }
   });
 }

@@ -177,6 +177,12 @@ declare global {
           branch?: string;
           archived?: boolean;
         }) => Promise<IpcResult>;
+        exportMarkdown: (projectId: string, sessionId: string) => Promise<{
+          ok?: boolean;
+          filePath?: string;
+          canceled?: boolean;
+          error?: string;
+        }>;
       };
       folders: {
         list: (projectId: string) => Promise<ChatFolder[]>;

@@ -38,6 +38,7 @@ import type {
   SlashCommand,
 } from "@/types";
 import { BOTTOM_CHAT_MAX_WIDTH_CLASS } from "@/lib/layout/constants";
+import { canNavigateInputHistory } from "@/lib/chat/input-history";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { resolveModelValue } from "@/lib/model-utils";
 const ImageAnnotationEditor = lazy(() =>
@@ -534,7 +535,13 @@ export const InputBar = memo(function InputBar({
       const currentIndex = Math.min(Math.max(historyIndexRef.current, 0), history.length);
       const isEmpty = !hasMeaningfulText(el.textContent ?? "");
       if (direction === "up") {
-        if (!isEmpty && !isCaretAtBoundary(el, "start")) return false;
+        if (!canNavigateInputHistory({
+          currentText: el.textContent ?? "",
+          history,
+          currentIndex,
+          isEmpty,
+          atBoundary: isCaretAtBoundary(el, "start"),
+        })) return false;
         if (currentIndex === 0) return true;
         if (currentIndex === history.length) {
           historyDraftRef.current = el.textContent ?? "";
@@ -545,7 +552,13 @@ export const InputBar = memo(function InputBar({
         return true;
       }
 
-      if (!isEmpty && !isCaretAtBoundary(el, "end")) return false;
+      if (!canNavigateInputHistory({
+        currentText: el.textContent ?? "",
+        history,
+        currentIndex,
+        isEmpty,
+        atBoundary: isCaretAtBoundary(el, "end"),
+      })) return false;
       if (currentIndex >= history.length) return true;
       const nextIndex = currentIndex + 1;
       historyIndexRef.current = nextIndex;

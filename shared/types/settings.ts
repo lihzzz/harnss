@@ -47,6 +47,8 @@ export interface AppSettings {
   codexClientName: string;
   /** Which Codex binary source to use */
   codexBinarySource: CodexBinarySource;
+  /** Enable Codex's experimental desktop Computer Use feature for new sessions */
+  codexComputerUseEnabled: boolean;
   /** Absolute path used when codexBinarySource is custom */
   codexCustomBinaryPath: string;
   /** Which Claude binary source to use */
