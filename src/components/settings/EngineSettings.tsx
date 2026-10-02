@@ -1,8 +1,10 @@
 import { memo, useState, useCallback, useEffect } from "react";
 import { Server } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import type { AppSettings } from "@/types";
+import type { CodexComputerUseStatus } from "@shared/types/codex";
 import { useI18n } from "@/lib/i18n";
 
 interface EngineSettingsProps {
@@ -22,6 +24,9 @@ export const EngineSettings = memo(function EngineSettings({
   const [codexBinarySource, setCodexBinarySource] = useState<"auto" | "managed" | "custom">("auto");
   const [codexCustomBinaryPath, setCodexCustomBinaryPath] = useState("");
   const [opencodeCustomBinaryPath, setOpencodeCustomBinaryPath] = useState("");
+  const [computerUseEnabled, setComputerUseEnabled] = useState(false);
+  const [computerUseStatus, setComputerUseStatus] = useState<CodexComputerUseStatus | null>(null);
+  const [computerUseChecking, setComputerUseChecking] = useState(false);
 
   useEffect(() => {
     if (appSettings) {
@@ -30,8 +35,29 @@ export const EngineSettings = memo(function EngineSettings({
       setCodexBinarySource(appSettings.codexBinarySource || "auto");
       setCodexCustomBinaryPath(appSettings.codexCustomBinaryPath || "");
       setOpencodeCustomBinaryPath(appSettings.opencodeCustomBinaryPath || "");
+      setComputerUseEnabled(appSettings.codexComputerUseEnabled || false);
     }
   }, [appSettings]);
+
+  useEffect(() => {
+    if (!computerUseEnabled) {
+      setComputerUseStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setComputerUseChecking(true);
+    window.claude.codex
+      .computerUseStatus()
+      .then((status) => {
+        if (!cancelled) setComputerUseStatus(status);
+      })
+      .finally(() => {
+        if (!cancelled) setComputerUseChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [computerUseEnabled]);
 
   const handleClaudeBinarySourceChange = useCallback(
     async (source: "auto" | "managed" | "custom") => {
@@ -75,6 +101,26 @@ export const EngineSettings = memo(function EngineSettings({
     },
     [onUpdateAppSettings],
   );
+
+  const handleComputerUseToggle = useCallback(
+    async (checked: boolean) => {
+      setComputerUseEnabled(checked);
+      await onUpdateAppSettings({ codexComputerUseEnabled: checked });
+    },
+    [onUpdateAppSettings],
+  );
+
+  const computerUseStatusText = computerUseChecking
+    ? "Checking node_repl runtime…"
+    : !computerUseStatus
+      ? ""
+      : computerUseStatus.error
+        ? `Check failed: ${computerUseStatus.error}`
+        : computerUseStatus.ready
+          ? `Ready — node_repl connected (tools: ${computerUseStatus.nodeReplTools.join(", ")})`
+          : !computerUseStatus.featureEnabled
+            ? "Codex computer_use feature is not enabled in the resolved config."
+            : "node_repl MCP server is not connected. Configure it in ~/.codex/config.toml.";
 
   return (
     <div className="flex h-full flex-col">
@@ -158,6 +204,23 @@ export const EngineSettings = memo(function EngineSettings({
                   placeholder="Absolute path to codex executable"
                 />
               </SettingRow>
+            )}
+
+            <SettingRow
+              label="Computer Use (experimental)"
+              description="Let Codex operate desktop apps through the node_repl runtime bundled with the Codex/ChatGPT desktop app. Applies to newly started sessions."
+            >
+              <Switch
+                checked={computerUseEnabled}
+                onCheckedChange={handleComputerUseToggle}
+              />
+            </SettingRow>
+
+            {computerUseEnabled && computerUseStatusText && (
+              <SettingRow
+                label="Computer Use status"
+                description={computerUseStatusText}
+              />
             )}
           </SettingsSection>
 

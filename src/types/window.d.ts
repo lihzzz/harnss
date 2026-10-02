@@ -368,6 +368,7 @@ declare global {
         setModel: (sessionId: string, model: string) => Promise<{ error?: string }>;
         version: () => Promise<{ version?: string; error?: string }>;
         binaryStatus: () => Promise<{ installed: boolean; downloading: boolean }>;
+        computerUseStatus: () => Promise<import("@shared/types/codex").CodexComputerUseStatus>;
         onEvent: (callback: (data: CodexSessionEvent) => void) => () => void;
         onApprovalRequest: (callback: (data: CodexServerRequest) => void) => () => void;
         onExit: (callback: (data: CodexExitEvent) => void) => () => void;

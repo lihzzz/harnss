@@ -1,11 +1,12 @@
 import { memo } from "react";
-import type { UIMessage, ToolUseResult } from "@/types";
+import type { UIMessage, ToolResultImage, ToolUseResult } from "@/types";
 
 // ── MCP renderers (extracted) ──
 import { JiraIssueList, JiraIssueDetail, JiraProjectList, JiraTransitions } from "./mcp-renderers/jira";
 import { ConfluenceSearchResults, ConfluenceSpaces, ConfluencePageDescendants, ConfluenceCreatedPage, ConfluenceUpdatedPage, ConfluencePageList } from "./mcp-renderers/confluence";
 import { RovoSearchResults, RovoFetchResult, AtlassianResourcesList } from "./mcp-renderers/atlassian";
 import { Context7LibraryList, Context7DocsResult } from "./mcp-renderers/context7";
+import { ComputerUseResult } from "./mcp-renderers/computer-use";
 
 // ── MCP tool result data extraction ──
 
@@ -82,7 +83,7 @@ function extractMcpText(result: ToolUseResult): string | null {
 
 // ── Registry: MCP tool name → renderer ──
 
-type McpRenderer = (props: { data: unknown; toolInput: Record<string, unknown>; rawText?: string | null }) => React.ReactNode;
+type McpRenderer = (props: { data: unknown; toolInput: Record<string, unknown>; rawText?: string | null; images?: ToolResultImage[] }) => React.ReactNode;
 
 const MCP_RENDERERS: Record<string, McpRenderer> = {
   // Jira
@@ -127,6 +128,8 @@ const MCP_PATTERN_RENDERERS: Array<{ pattern: RegExp; renderer: McpRenderer }> =
   // Context7
   { pattern: /Context7[/_]+resolve-library-id$/, renderer: Context7LibraryList },
   { pattern: /Context7[/_]+query-docs$/, renderer: Context7DocsResult },
+  // Codex Computer Use (node_repl/cua_repl `js` execution)
+  { pattern: /^mcp__(?:node_repl|cua_repl|computer-use)__js$/i, renderer: ComputerUseResult },
 ];
 
 function findRenderer(toolName: string): McpRenderer | null {
@@ -188,6 +191,10 @@ export function getMcpCompactSummary(toolName: string, toolInput: Record<string,
   if (/query-docs$/.test(toolName)) {
     return String(toolInput.query ?? "").slice(0, 60);
   }
+  // Codex Computer Use — node_repl `js` calls carry a user-facing title
+  if (/^mcp__(?:node_repl|cua_repl|computer-use)__js$/i.test(toolName)) {
+    return String(toolInput.title ?? "").slice(0, 80);
+  }
   return "";
 }
 
@@ -202,11 +209,12 @@ export const McpToolContent = memo(function McpToolContent({ message }: { messag
 
   const data = extractMcpData(result);
   const rawText = extractMcpText(result);
-  if (!data && !rawText) return null;
+  const images = result.images;
+  if (!data && !rawText && (!images || images.length === 0)) return null;
 
   return (
     <div className="text-xs">
-      {renderer({ data: data ?? {}, toolInput: message.toolInput ?? {}, rawText })}
+      {renderer({ data: data ?? {}, toolInput: message.toolInput ?? {}, rawText, images })}
     </div>
   );
 });

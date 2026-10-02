@@ -15,6 +15,7 @@ export type {
   AssistantMessageUsage,
   ContentBlock,
   ToolResultEvent,
+  ToolResultImage,
   ToolUseResult,
   ResultEvent,
   ModelUsageEntry,

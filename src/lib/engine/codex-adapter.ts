@@ -5,12 +5,13 @@
  * Each item type maps to a UIMessage role + toolName for the existing ToolCall UI.
  */
 
-import type { TodoItem, ImageAttachment, ToolUseResult, CodexThreadItem } from "@/types";
+import type { TodoItem, ImageAttachment, ToolResultImage, ToolUseResult, CodexThreadItem } from "@/types";
 import type { FileUpdateChange } from "@/types/codex-protocol/v2/FileUpdateChange";
 import type { PatchChangeKind } from "@/types/codex-protocol/v2/PatchChangeKind";
 import type { TurnPlanStep } from "@/types/codex-protocol/v2/TurnPlanStep";
 import type { WebSearchAction } from "@/types/codex-protocol/v2/WebSearchAction";
 import { parseUnifiedDiff } from "@/lib/diff/unified-diff";
+import { isRecord } from "@/lib/utils";
 
 export { SimpleStreamingBuffer as CodexStreamingBuffer } from "@/lib/engine/streaming-buffer";
 
@@ -187,6 +188,9 @@ export function codexItemToToolResult(item: CodexThreadItem): ToolUseResult | un
         return { content: `Error: ${JSON.stringify(item.error)}` };
       }
       if (item.result) {
+        if (isComputerUseMcpCall(item.server, item.tool)) {
+          return computerUseResult(item.result);
+        }
         return { content: typeof item.result === "string" ? item.result : JSON.stringify(item.result) };
       }
       return undefined;
@@ -203,6 +207,77 @@ export function codexItemToToolResult(item: CodexThreadItem): ToolUseResult | un
     default:
       return undefined;
   }
+}
+
+/**
+ * Codex desktop Computer Use is exposed through the bundled node_repl/cua_repl
+ * MCP servers. Keep this check narrow so other MCP output continues to use the
+ * existing generic result handling.
+ */
+export function isComputerUseMcpCall(server: string, tool: string): boolean {
+  return /^(?:node_repl|cua_repl|computer-use)$/i.test(server) && tool === "js";
+}
+
+/**
+ * Preserve text and screenshot blocks from a node_repl `js` result instead of
+ * dumping raw base64 into the chat transcript as JSON text.
+ */
+function computerUseResult(result: {
+  content: Array<unknown>;
+  structuredContent: unknown;
+}): ToolUseResult {
+  const images: ToolResultImage[] = [];
+  const textBlocks: string[] = [];
+
+  for (const block of result.content) {
+    if (typeof block === "string") {
+      textBlocks.push(block);
+      continue;
+    }
+    if (!isRecord(block)) continue;
+
+    if (block.type === "text" && typeof block.text === "string") {
+      textBlocks.push(block.text);
+      continue;
+    }
+
+    const image = toToolResultImage(block);
+    if (image) images.push(image);
+  }
+
+  const content = textBlocks.join("\n").trim();
+  const structuredContent = isRecord(result.structuredContent)
+    ? result.structuredContent
+    : undefined;
+
+  return {
+    type: "computer_use",
+    ...(content ? { content } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(structuredContent ? { structuredContent } : {}),
+  };
+}
+
+function toToolResultImage(block: Record<string, unknown>): ToolResultImage | null {
+  if (block.type === "image" && typeof block.data === "string") {
+    const mimeType = typeof block.mimeType === "string" ? block.mimeType : "image/png";
+    const src = block.data.startsWith("data:")
+      ? block.data
+      : `data:${mimeType};base64,${block.data}`;
+    return { src, mimeType, alt: "Computer screenshot" };
+  }
+
+  if (block.type === "image_url") {
+    const imageUrl = block.image_url;
+    const src = typeof imageUrl === "string"
+      ? imageUrl
+      : isRecord(imageUrl) && typeof imageUrl.url === "string"
+        ? imageUrl.url
+        : null;
+    return src ? { src, alt: "Computer screenshot" } : null;
+  }
+
+  return null;
 }
 
 function codexWebSearchToToolPayload(

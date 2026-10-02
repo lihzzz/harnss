@@ -299,6 +299,7 @@ contextBridge.exposeInMainWorld("claude", {
       ipcRenderer.invoke("codex:set-model", { sessionId, model }),
     version: () => ipcRenderer.invoke("codex:version"),
     binaryStatus: () => ipcRenderer.invoke("codex:binary-status"),
+    computerUseStatus: () => ipcRenderer.invoke("codex:computer-use-status"),
     onEvent: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("codex:event", listener);
