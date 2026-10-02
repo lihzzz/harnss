@@ -168,20 +168,8 @@ export const ChatHeader = memo(function ChatHeader({
         </span>
       ) : null}
 
-      {showGoal && (codexGoal ? <CodexGoalStatus goal={codexGoal} /> : (
-        <Button variant="ghost" size="xs" className="no-drag gap-1 text-muted-foreground" disabled={codexGoalLoading} onClick={async () => { await onGetCodexGoal?.(); setGoalOpen(true); }}>
-          <Target className="size-3" /> Goal
-        </Button>
-      ))}
-
-      {showGoal && codexGoal && (
-        <Button variant="ghost" size="xs" className="no-drag h-6 px-1.5 text-muted-foreground" disabled={codexGoalLoading} onClick={async () => { await onGetCodexGoal?.(); setGoalOpen(true); }} aria-label="Open Codex Goal">
-          <Target className="size-3" />
-        </Button>
-      )}
-
       {/* Session info, split view toggle, and pane close */}
-      {(showDevSeedButton || hasDetails || onClosePane) && (
+      {(showGoal || showDevSeedButton || hasDetails || onClosePane) && (
         <div className="ms-auto flex items-center gap-1.5">
           {onClosePane && (
             <Tooltip>
@@ -240,6 +228,16 @@ export const ChatHeader = memo(function ChatHeader({
                 </div>
               </TooltipContent>
             </Tooltip>
+          )}
+          {showGoal && (codexGoal ? <CodexGoalStatus goal={codexGoal} /> : (
+            <Button variant="ghost" size="xs" className="no-drag gap-1 text-muted-foreground" disabled={codexGoalLoading} onClick={async () => { await onGetCodexGoal?.(); setGoalOpen(true); }}>
+              <Target className="size-3" /> Goal
+            </Button>
+          ))}
+          {showGoal && codexGoal && (
+            <Button variant="ghost" size="xs" className="no-drag h-6 px-1.5 text-muted-foreground" disabled={codexGoalLoading} onClick={async () => { await onGetCodexGoal?.(); setGoalOpen(true); }} aria-label="Open Codex Goal">
+              <Target className="size-3" />
+            </Button>
           )}
         </div>
       )}
