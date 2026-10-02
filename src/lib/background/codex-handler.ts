@@ -13,6 +13,9 @@ import type { TurnPlanUpdatedNotification } from "../../types/codex-protocol/v2/
 import type { CodexTokenUsageNotification } from "@/types";
 import type { CodexThreadGoal } from "@/types";
 import { parseThreadGoal } from "@shared/lib/codex-goal";
+import { createSystemMessage } from "@/lib/message-factory";
+import { isRetryableUpstreamError } from "@/lib/session/retry";
+import type { TurnCompletedNotification } from "../../types/codex-protocol/v2/TurnCompletedNotification";
 
 /**
  * Process a Codex notification for a background session, mutating `state` in place.
@@ -58,7 +61,21 @@ export function handleCodexEvent(
     case "turn/completed":
       finalizeACPStreamingMsg(state); // reuse — same pattern
       state.isProcessing = false;
+      const turn = (params as TurnCompletedNotification).turn;
+      if (turn.status === "failed") {
+        const errorText = turn.error?.message || "Turn failed";
+        state.messages.push(createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)));
+      }
       return { processingChanged: true, isProcessing: false };
+
+    case "error": {
+      const errorParams = params as { error: { message?: string }; willRetry?: boolean };
+      if (errorParams.willRetry) return;
+      const errorText = errorParams.error.message || "Unknown error";
+      state.isProcessing = false;
+      state.messages.push(createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)));
+      return { processingChanged: true, isProcessing: false };
+    }
 
     case "item/started": {
       const { item } = params as ItemStartedNotification;

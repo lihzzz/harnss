@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UIMessage } from "@/types";
-import { getRetryRequest } from "./retry";
+import { getRetryRequest, isRetryableUpstreamError } from "./retry";
 
 function message(overrides: Partial<UIMessage>): UIMessage {
   return {
@@ -35,5 +35,19 @@ describe("getRetryRequest", () => {
     expect(getRetryRequest(messages, "error-1")).toBeNull();
     expect(getRetryRequest(messages, "missing")).toBeNull();
     expect(getRetryRequest([message({ id: "error-2" })], "error-2")).toBeNull();
+  });
+});
+
+describe("isRetryableUpstreamError", () => {
+  it("rejects errors that require authentication or configuration changes", () => {
+    expect(isRetryableUpstreamError("401 Unauthorized")).toBe(false);
+    expect(isRetryableUpstreamError("Missing bearer or basic authentication")).toBe(false);
+    expect(isRetryableUpstreamError("Invalid configuration option")).toBe(false);
+    expect(isRetryableUpstreamError("Session not found")).toBe(false);
+    expect(isRetryableUpstreamError("No active thread")).toBe(false);
+  });
+
+  it("allows transient upstream failures", () => {
+    expect(isRetryableUpstreamError("Upstream model timed out")).toBe(true);
   });
 });

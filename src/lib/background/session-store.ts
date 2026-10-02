@@ -100,10 +100,10 @@ export class BackgroundSessionStore {
   }
 
   /** Handle ACP turn completion — finalize streaming, close tools, reset processing. */
-  handleACPTurnComplete(sessionId: string): void {
+  handleACPTurnComplete(sessionId: string, stopReason?: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    acpTurnComplete(state);
+    acpTurnComplete(state, stopReason);
     this.onProcessingChange?.(sessionId, false);
   }
 

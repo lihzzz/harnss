@@ -6,6 +6,7 @@ import { imageAttachmentsToCodexInputs } from "../../lib/engine/codex-adapter";
 import { buildSdkContent } from "../../lib/engine/protocol";
 import { capture } from "../../lib/analytics/analytics";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
+import { isRetryableUpstreamError } from "../../lib/session/retry";
 import {
   DRAFT_ID,
   getEffectiveClaudePermissionMode,
@@ -53,7 +54,7 @@ export function useSessionRevival({
   } = refs;
 
   const reviveAcpSession = useCallback(
-    async (text: string, images?: ImageAttachment[], displayText?: string) => {
+    async (text: string, images?: ImageAttachment[], displayText?: string, userMessageAlreadyAdded = false) => {
       const oldId = activeSessionIdRef.current;
       if (!oldId || oldId === DRAFT_ID) return;
       const session = sessionsRef.current.find((s) => s.id === oldId);
@@ -73,7 +74,8 @@ export function useSessionRevival({
       });
 
       if (result.error || !result.sessionId) {
-        acp.setMessages((prev) => [...prev, createSystemMessage(result.error || "Failed to reconnect ACP session. Please start a new session.", true, true)]);
+        const errorText = result.error || "Failed to reconnect ACP session. Please start a new session.";
+        acp.setMessages((prev) => [...prev, createSystemMessage(errorText, true, isRetryableUpstreamError(errorText))]);
         return;
       }
 
@@ -103,7 +105,9 @@ export function useSessionRevival({
       setActiveSessionId(newId);
 
       await new Promise((resolve) => setTimeout(resolve, 50));
-      acp.setMessages((prev) => [...prev, createUserMessage(text, images, displayText)]);
+      if (!userMessageAlreadyAdded) {
+        acp.setMessages((prev) => [...prev, createUserMessage(text, images, displayText)]);
+      }
       acp.setIsProcessing(true);
       capture("message_sent", {
         engine: "acp",
@@ -113,7 +117,7 @@ export function useSessionRevival({
       });
       const promptResult = await window.claude.acp.prompt(newId, text, images);
       if (promptResult?.error) {
-        acp.setMessages((prev) => [...prev, createSystemMessage(`ACP error: ${promptResult.error}`, true, true)]);
+        acp.setMessages((prev) => [...prev, createSystemMessage(`ACP error: ${promptResult.error}`, true, isRetryableUpstreamError(promptResult.error ?? ""))]);
         acp.setIsProcessing(false);
       }
     },
@@ -122,7 +126,7 @@ export function useSessionRevival({
 
   /** Revive a dead Codex session — spawn new app-server + thread/resume */
   const reviveCodexSession = useCallback(
-    async (text: string, images?: ImageAttachment[]) => {
+    async (text: string, images?: ImageAttachment[], displayText?: string, userMessageAlreadyAdded = false) => {
       const oldId = activeSessionIdRef.current;
       if (!oldId || oldId === DRAFT_ID) return;
       const session = sessionsRef.current.find((s) => s.id === oldId);
@@ -153,7 +157,8 @@ export function useSessionRevival({
       });
 
       if (result.error || !result.sessionId) {
-        codex.setMessages((prev) => [...prev, createSystemMessage(result.error || "Failed to resume Codex session.", true, true)]);
+        const errorText = result.error || "Failed to resume Codex session.";
+        codex.setMessages((prev) => [...prev, createSystemMessage(errorText, true, isRetryableUpstreamError(errorText))]);
         return;
       }
 
@@ -185,7 +190,9 @@ export function useSessionRevival({
 
       // Small delay to let hook pick up new sessionId
       await new Promise((resolve) => setTimeout(resolve, 50));
-      codex.setMessages((prev) => [...prev, createUserMessage(text, images)]);
+      if (!userMessageAlreadyAdded) {
+        codex.setMessages((prev) => [...prev, createUserMessage(text, images, displayText)]);
+      }
       codex.setIsProcessing(true);
       let codexCollabMode: CollaborationMode | undefined;
       try {
@@ -203,7 +210,7 @@ export function useSessionRevival({
         codexCollabMode,
       );
       if (sendResult?.error) {
-        codex.setMessages((prev) => [...prev, createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true)]);
+        codex.setMessages((prev) => [...prev, createSystemMessage(`Unable to send message: ${sendResult.error}`, true, isRetryableUpstreamError(sendResult.error ?? ""))]);
         codex.setIsProcessing(false);
       }
     },
@@ -235,14 +242,18 @@ export function useSessionRevival({
       } catch (err) {
         engine.setMessages((prev) => [
           ...prev,
-          createSystemMessage(`Failed to resume session: ${err instanceof Error ? err.message : String(err)}`, true, true),
+          createSystemMessage(
+            `Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
+            true,
+            isRetryableUpstreamError(err instanceof Error ? err.message : String(err)),
+          ),
         ]);
         return;
       }
       if (result.error) {
         engine.setMessages((prev) => [
           ...prev,
-          createSystemMessage(result.error!, true, true),
+          createSystemMessage(result.error!, true, isRetryableUpstreamError(result.error!)),
         ]);
         return;
       }
@@ -294,7 +305,11 @@ export function useSessionRevival({
         liveSessionIdsRef.current.delete(newSessionId);
         engine.setMessages((prev) => [
           ...prev,
-          createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true),
+          createSystemMessage(
+            `Unable to send message: ${sendResult.error}`,
+            true,
+            isRetryableUpstreamError(sendResult.error ?? ""),
+          ),
         ]);
         return;
       }

@@ -34,6 +34,7 @@ import {
   buildSdkContent,
 } from "../lib/engine/protocol";
 import { createSystemMessage, createUserMessage, formatResultError, nextId } from "../lib/message-factory";
+import { isRetryableUpstreamError } from "../lib/session/retry";
 import { bgAgentStore } from "../lib/background/agent-store";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
 import { advancePermissionQueue, enqueuePermissionRequest } from "../lib/engine/permission-queue";
@@ -707,8 +708,9 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             const errorMsg = resultEvent.errors?.join("\n")
               || resultEvent.result
               || "An error occurred";
-            const canRetry = resultEvent.subtype === "error"
-              || resultEvent.subtype === "error_during_execution";
+            const canRetry = isRetryableUpstreamError(errorMsg)
+              && (resultEvent.subtype === "error"
+                || resultEvent.subtype === "error_during_execution");
             setMessages((prev) => [
               ...prev,
               createSystemMessage(formatResultError(resultEvent.subtype, errorMsg), true, canRetry),
@@ -965,7 +967,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
         const errorDetail = data.error || `Process exited with code ${data.code}`;
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorDetail, true, true),
+          createSystemMessage(errorDetail, true, isRetryableUpstreamError(errorDetail)),
         ]);
       }
     });

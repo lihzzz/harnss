@@ -21,6 +21,7 @@ import {
   normalizeToolResult,
 } from "@/lib/engine/protocol";
 import { createSystemMessage, formatResultError, nextId } from "@/lib/message-factory";
+import { isRetryableUpstreamError } from "@/lib/session/retry";
 import { bgAgentStore } from "./agent-store";
 import { mergeStreamingChunk } from "@/lib/engine/streaming-buffer";
 import { normalizeTodoToolInput } from "@/lib/chat/todo-utils";
@@ -382,7 +383,8 @@ export function handleClaudeEvent(
       if (resultEvt.is_error || resultEvt.subtype?.startsWith("error")) {
         const detail = resultEvt.errors?.join("; ") || resultEvt.result || "";
         const errorMsg = formatResultError(resultEvt.subtype, detail);
-        const canRetry = resultEvt.subtype === "error" || resultEvt.subtype === "error_during_execution";
+        const canRetry = isRetryableUpstreamError(detail)
+          && (resultEvt.subtype === "error" || resultEvt.subtype === "error_during_execution");
         state.messages.push(createSystemMessage(errorMsg, true, canRetry));
       }
       return { processingChanged: true, isProcessing: false };

@@ -18,6 +18,7 @@ import { extractTaskSubagentSteps, getTaskStatus, isTaskToolName } from "@/lib/e
 import { suppressNextSessionCompletion } from "@/lib/notification-utils";
 import { captureException } from "@/lib/analytics/analytics";
 import { createSystemMessage, createUserMessage, nextId } from "@/lib/message-factory";
+import { isRetryableUpstreamError } from "@/lib/session/retry";
 import { useEngineBase } from "./useEngineBase";
 
 interface UseACPOptions {
@@ -114,7 +115,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     scheduleRaf(flushStreamingToState);
   }, [scheduleRaf, flushStreamingToState]);
 
-  const pushSystemError = useCallback((content: string, retryable = true) => {
+  const pushSystemError = useCallback((content: string, retryable = false) => {
     setMessages((prev) => [
       ...prev,
       createSystemMessage(content, true, retryable),
@@ -480,6 +481,10 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       closePendingTools();
       setIsCompacting(false);
       setIsProcessing(false);
+      if (/(?:^|[-_:])(?:error|failed|failure)(?:$|[-_:])/i.test(data.stopReason)) {
+        const errorText = `ACP turn failed: ${data.stopReason}`;
+        pushSystemError(errorText, isRetryableUpstreamError(errorText));
+      }
     });
 
     const unsubExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null; error?: string }) => {
@@ -493,7 +498,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
         const errorDetail = data.error || `Agent process exited with code ${data.code}`;
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorDetail, true, true),
+          createSystemMessage(errorDetail, true, isRetryableUpstreamError(errorDetail)),
         ]);
       }
     });
@@ -504,24 +509,37 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
     };
   }, [closePendingTools, finalizeStreamingMessage, handleSessionUpdate, initialConfigOptions, sessionId]);
 
-  const send = useCallback(async (text: string, images?: ImageAttachment[], displayText?: string) => {
-    if (!sessionId) return;
+  const send = useCallback(async (
+    text: string,
+    images?: ImageAttachment[],
+    displayText?: string,
+    suppressError = false,
+  ): Promise<{ ok: boolean; error?: string; userMessageId?: string }> => {
+    if (!sessionId) return { ok: false, error: "ACP session not found." };
     acpLog("SEND", { session: sessionId.slice(0, 8), textLen: text.length, images: images?.length ?? 0 });
-    setMessages(prev => [...prev, createUserMessage(text, images, displayText)]);
+    const userMessage = createUserMessage(text, images, displayText);
+    setMessages(prev => [...prev, userMessage]);
     setIsProcessing(true);
     try {
       const result = await window.claude.acp.prompt(sessionId, text, images);
       if (result?.error) {
         acpLog("SEND_ERROR", { session: sessionId.slice(0, 8), error: result.error });
-        pushSystemError(`ACP prompt error: ${result.error}`);
+        if (!suppressError) {
+          pushSystemError(`ACP prompt error: ${result.error}`, isRetryableUpstreamError(result.error ?? ""));
+        }
         setIsProcessing(false);
+        return { ok: false, error: result.error, userMessageId: userMessage.id };
       }
+      return { ok: true, userMessageId: userMessage.id };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       acpLog("SEND_ERROR", { session: sessionId.slice(0, 8), error: msg });
       captureException(err instanceof Error ? err : new Error(msg), { label: "ACP_SEND_ERR" });
-      pushSystemError(`ACP prompt error: ${msg}`);
+      if (!suppressError) {
+        pushSystemError(`ACP prompt error: ${msg}`, isRetryableUpstreamError(msg));
+      }
       setIsProcessing(false);
+      return { ok: false, error: msg, userMessageId: userMessage.id };
     }
   }, [sessionId, pushSystemError]);
 
@@ -534,14 +552,14 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
       const result = await window.claude.acp.prompt(sessionId, text, images);
       if (result?.error) {
         acpLog("SEND_RAW_ERROR", { session: sessionId.slice(0, 8), error: result.error });
-        pushSystemError(`ACP prompt error: ${result.error}`);
+        pushSystemError(`ACP prompt error: ${result.error}`, isRetryableUpstreamError(result.error ?? ""));
         setIsProcessing(false);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       acpLog("SEND_RAW_ERROR", { session: sessionId.slice(0, 8), error: msg });
       captureException(err instanceof Error ? err : new Error(msg), { label: "ACP_SEND_RAW_ERR" });
-      pushSystemError(`ACP prompt error: ${msg}`);
+      pushSystemError(`ACP prompt error: ${msg}`, isRetryableUpstreamError(msg));
       setIsProcessing(false);
     }
   }, [sessionId, pushSystemError]);

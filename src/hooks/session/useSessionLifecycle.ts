@@ -3,6 +3,7 @@ import type { ImageAttachment, McpServerConfig, Project } from "@/types";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/engine/codex-adapter";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
+import { isRetryableUpstreamError } from "../../lib/session/retry";
 import { buildSdkContent } from "../../lib/engine/protocol";
 import { capture } from "../../lib/analytics/analytics";
 import { DRAFT_ID, buildCodexCollabMode } from "./types";
@@ -34,8 +35,8 @@ interface UseSessionLifecycleParams {
   materializeDraft: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<string>;
   // From revival
   reviveSession: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
-  reviveAcpSession: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
-  reviveCodexSession: (text: string, images?: ImageAttachment[]) => Promise<void>;
+  reviveAcpSession: (text: string, images?: ImageAttachment[], displayText?: string, userMessageAlreadyAdded?: boolean) => Promise<void>;
+  reviveCodexSession: (text: string, images?: ImageAttachment[], displayText?: string, userMessageAlreadyAdded?: boolean) => Promise<void>;
   // From message queue
   enqueueMessage: (text: string, images?: ImageAttachment[], displayText?: string) => void;
   clearQueue: () => void;
@@ -197,7 +198,11 @@ export function useSessionLifecycle({
           if (promptResult?.error) {
             acp.setMessages((prev) => [
               ...prev,
-              createSystemMessage(`ACP prompt error: ${promptResult.error}`, true, true),
+              createSystemMessage(
+                `ACP prompt error: ${promptResult.error}`,
+                true,
+                isRetryableUpstreamError(promptResult.error ?? ""),
+              ),
             ]);
             acp.setIsProcessing(false);
             refs.pendingAcpDraftPromptRef.current = null;
@@ -242,7 +247,11 @@ export function useSessionLifecycle({
             refs.liveSessionIdsRef.current.delete(sessionId);
             codex.setMessages((prev) => [
               ...prev,
-              createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true),
+              createSystemMessage(
+                `Unable to send message: ${sendResult.error}`,
+                true,
+                isRetryableUpstreamError(sendResult.error ?? ""),
+              ),
             ]);
             codex.setIsProcessing(false);
           }
@@ -265,7 +274,11 @@ export function useSessionLifecycle({
             refs.liveSessionIdsRef.current.delete(sessionId);
             claude.setMessages((prev) => [
               ...prev,
-              createSystemMessage(`Unable to send message: ${sendResult.error}`, true, true),
+              createSystemMessage(
+                `Unable to send message: ${sendResult.error}`,
+                true,
+                isRetryableUpstreamError(sendResult.error ?? ""),
+              ),
             ]);
             return;
           }
@@ -291,7 +304,16 @@ export function useSessionLifecycle({
         // ACP sessions: send through ACP hook if live
         if (refs.liveSessionIdsRef.current.has(activeId)) {
           trackMessageSent(activeId);
-          await acp.send(text, images, displayText);
+          const promptResult = await acp.send(text, images, displayText, true);
+          if (!promptResult.ok) {
+            refs.liveSessionIdsRef.current.delete(activeId);
+            const errorText = `ACP prompt error: ${promptResult.error || "Unable to send message."}`;
+            if (isRetryableUpstreamError(promptResult.error ?? "")) {
+              await reviveAcpSession(text, images, displayText, true);
+            } else {
+              acp.setMessages((prev) => [...prev, createSystemMessage(errorText, true)]);
+            }
+          }
           return;
         }
         // ACP session dead (app restarted) — attempt revival via session/load
@@ -315,11 +337,15 @@ export function useSessionLifecycle({
             ]);
             return;
           }
-          await codex.send(text, images, displayText, codexCollabMode);
+          const sendResult = await codex.send(text, images, displayText, codexCollabMode);
+          if (!sendResult.ok && isRetryableUpstreamError(sendResult.error ?? "")) {
+            refs.liveSessionIdsRef.current.delete(activeId);
+            await reviveCodexSession(text, images, displayText, true);
+          }
           return;
         }
         // Codex session dead — attempt revival via thread/resume
-        await reviveCodexSession(text, images);
+        await reviveCodexSession(text, images, displayText);
         return;
       }
 

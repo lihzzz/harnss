@@ -7,7 +7,8 @@ import {
   deriveToolName,
 } from "@/lib/engine/acp-adapter";
 import { extractTaskSubagentSteps, getTaskStatus, isTaskToolName } from "@/lib/engine/acp-task-adapter";
-import { nextId } from "@/lib/message-factory";
+import { createSystemMessage, nextId } from "@/lib/message-factory";
+import { isRetryableUpstreamError } from "@/lib/session/retry";
 
 // ── Shared ACP streaming helpers (also used by Codex handler) ──
 
@@ -225,9 +226,13 @@ export function handleACPEvent(state: InternalState, event: ACPSessionEvent): vo
  * Handle ACP turn completion — finalize streaming, close tools, reset processing.
  * Returns true so the caller knows to fire onProcessingChange.
  */
-export function handleACPTurnComplete(state: InternalState): void {
+export function handleACPTurnComplete(state: InternalState, stopReason?: string): void {
   finalizeACPStreamingMsg(state);
   closePendingACPTools(state);
   state.activeTask = null;
   state.isProcessing = false;
+  if (stopReason && /(?:^|[-_:])(?:error|failed|failure)(?:$|[-_:])/i.test(stopReason)) {
+    const errorText = `ACP turn failed: ${stopReason}`;
+    state.messages.push(createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)));
+  }
 }

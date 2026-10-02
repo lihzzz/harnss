@@ -4,7 +4,7 @@ import { toMcpStatusState } from "../lib/mcp-utils";
 import { toChatSession } from "../lib/session/records";
 import { BackgroundSessionStore } from "../lib/background/session-store";
 import { createSystemMessage } from "../lib/message-factory";
-import { getRetryRequest } from "../lib/session/retry";
+import { getRetryRequest, isRetryableUpstreamError } from "../lib/session/retry";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
 import {
   DRAFT_ID,
@@ -156,6 +156,7 @@ export function useSessionManager(
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageQueueRef = useRef<Map<string, QueuedMessage[]>>(new Map());
   const pendingAcpDraftPromptRef = useRef<PendingAcpDraftPrompt | null>(null);
+  const retryInFlightRef = useRef<Set<string>>(new Set());
   const acpAgentIdRef = useRef<string | null>(null);
   const acpAgentSessionIdRef = useRef<string | null>(null);
   const codexRawModelsRef = useRef(codexRawModels);
@@ -385,15 +386,21 @@ export function useSessionManager(
 
   const retryLastMessage = useCallback(async (errorMessageId: string) => {
     if (isProcessingRef.current) return;
+    if (retryInFlightRef.current.has(errorMessageId)) return;
     const request = getRetryRequest(messagesRef.current, errorMessageId);
     if (!request) return;
 
+    retryInFlightRef.current.add(errorMessageId);
     // Disable this action before sending so a slow upstream cannot receive
     // duplicate requests from repeated clicks.
     engine.setMessages((prev) => prev.map((message) =>
       message.id === errorMessageId ? { ...message, retryable: false } : message,
     ));
-    await send(request.content, request.images, request.displayContent);
+    try {
+      await send(request.content, request.images, request.displayContent);
+    } finally {
+      retryInFlightRef.current.delete(errorMessageId);
+    }
   }, [engine, send]);
 
   const seedDevExampleConversation = useCallback(async () => {
@@ -514,7 +521,11 @@ export function useSessionManager(
     if (promptResult?.error) {
       acp.setMessages((prev) => [
         ...prev,
-        createSystemMessage(`ACP prompt error: ${promptResult.error}`, true, true),
+        createSystemMessage(
+          `ACP prompt error: ${promptResult.error}`,
+          true,
+          isRetryableUpstreamError(promptResult.error ?? ""),
+        ),
       ]);
       acp.setIsProcessing(false);
     }

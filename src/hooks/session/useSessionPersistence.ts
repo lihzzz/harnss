@@ -5,6 +5,8 @@ import { canonicalizeModelValue } from "@/lib/model-utils";
 import { getSessionNotificationActor } from "@/lib/session-notifications";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { buildPersistedSession } from "../../lib/session/records";
+import { createSystemMessage } from "../../lib/message-factory";
+import { isRetryableUpstreamError } from "../../lib/session/retry";
 import { normalizeToolInput as acpNormalizeToolInput, pickAutoResponseOption } from "../../lib/engine/acp-adapter";
 import { DRAFT_ID } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks } from "./types";
@@ -203,7 +205,7 @@ export function useSessionPersistence({
 
   // Handle session exits across all engines
   useEffect(() => {
-    const handleSessionExit = (sid: string) => {
+    const handleSessionExit = (sid: string, code: number | null, error?: string) => {
       liveSessionIdsRef.current.delete(sid);
 
       // If the pre-started eager session crashed, clear it
@@ -224,6 +226,16 @@ export function useSessionPersistence({
 
       // Auto-save and mark disconnected for background sessions
       if (sid !== activeSessionIdRef.current && backgroundStoreRef.current.has(sid)) {
+        if (code !== 0 && code !== null) {
+          const errorText = error || `Session process exited with code ${code}`;
+          const backgroundState = backgroundStoreRef.current.get(sid);
+          if (backgroundState?.messages.at(-1)?.content !== errorText) {
+            backgroundStoreRef.current.updateMessages(sid, (messages) => [
+              ...messages,
+              createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)),
+            ]);
+          }
+        }
         backgroundStoreRef.current.markDisconnected(sid);
         const bgState = backgroundStoreRef.current.get(sid);
         const session = sessionsRef.current.find((s) => s.id === sid);
@@ -243,9 +255,13 @@ export function useSessionPersistence({
       }
     };
 
-    const unsubExit = window.claude.onExit((data) => handleSessionExit(data._sessionId));
-    const unsubAcpExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null }) => handleSessionExit(data._sessionId));
-    const unsubCodexExit = window.claude.codex.onExit((data) => handleSessionExit(data._sessionId));
+    const unsubExit = window.claude.onExit((data) => handleSessionExit(data._sessionId, data.code, data.error));
+    const unsubAcpExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null; error?: string }) => handleSessionExit(data._sessionId, data.code, data.error));
+    const unsubCodexExit = window.claude.codex.onExit((data) => handleSessionExit(
+      data._sessionId,
+      data.code,
+      data.signal ? `Codex process exited with ${data.signal}` : undefined,
+    ));
     return () => {
       unsubExit();
       unsubAcpExit();
@@ -333,7 +349,7 @@ export function useSessionPersistence({
     const unsubBgAcpTurn = window.claude.acp.onTurnComplete((data: ACPTurnCompleteEvent) => {
       const sid = data._sessionId;
       if (!sid || sid === activeSessionIdRef.current || visibleSplitSessionIdsRef.current.includes(sid)) return;
-      backgroundStoreRef.current.handleACPTurnComplete(sid);
+      backgroundStoreRef.current.handleACPTurnComplete(sid, data.stopReason);
     });
 
     // Route Codex events for non-active sessions to the background store

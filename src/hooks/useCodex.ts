@@ -32,8 +32,14 @@ import {
 import { suppressNextSessionCompletion } from "@/lib/notification-utils";
 import { captureException } from "@/lib/analytics/analytics";
 import { createSystemMessage, createUserMessage, nextId } from "@/lib/message-factory";
+import { isRetryableUpstreamError } from "@/lib/session/retry";
 import { useEngineBase } from "./useEngineBase";
 import { parseThreadGoal } from "@shared/lib/codex-goal";
+
+export interface CodexSendResult {
+  ok: boolean;
+  error?: string;
+}
 
 interface UseCodexOptions {
   sessionId: string | null;
@@ -413,7 +419,9 @@ export function useCodex({
       }
 
       case "error": {
-        const errorText = event.params.error.message || "Unknown error";
+        const errorParams = event.params;
+        if (errorParams.willRetry) break;
+        const errorText = errorParams.error.message || "Unknown error";
         if (
           /401\s+Unauthorized/i.test(errorText) ||
           /Missing bearer or basic authentication/i.test(errorText)
@@ -423,7 +431,7 @@ export function useCodex({
         setIsProcessing(false);
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorText, true, true),
+          createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)),
         ]);
         break;
       }
@@ -703,7 +711,7 @@ export function useCodex({
       const msg = turn.error?.message || "Turn failed";
       setMessages((prev) => [
         ...prev,
-        createSystemMessage(msg, true, true),
+        createSystemMessage(msg, true, isRetryableUpstreamError(msg)),
       ]);
     }
   }, [finalizeStreamingAssistant]);
@@ -855,7 +863,11 @@ export function useCodex({
     if (data.code !== 0 && data.code !== null) {
       setMessages((prev) => [
         ...prev,
-        createSystemMessage(`Codex process exited with code ${data.code}`, true, true),
+        createSystemMessage(
+          `Codex process exited with code ${data.code}`,
+          true,
+          isRetryableUpstreamError(data.signal ?? `Codex process exited with code ${data.code}`),
+        ),
       ]);
     }
   }, []);
@@ -932,8 +944,8 @@ export function useCodex({
 
   // ── Actions ──
   const sendRaw = useCallback(
-    async (text: string, images?: ImageAttachment[], collaborationMode?: CollaborationMode): Promise<boolean> => {
-      if (!sessionId) return false;
+    async (text: string, images?: ImageAttachment[], collaborationMode?: CollaborationMode): Promise<CodexSendResult> => {
+      if (!sessionId) return { ok: false, error: "Codex session not found." };
       setIsProcessing(true);
       try {
         const result = await window.claude.codex.send(
@@ -945,34 +957,39 @@ export function useCodex({
         );
         if (result?.error) {
           setIsProcessing(false);
-          return false;
+          return { ok: false, error: result.error };
         }
-        return true;
+        return { ok: true };
       } catch (err) {
-        captureException(err instanceof Error ? err : new Error(String(err)), { label: "CODEX_SEND_ERR" });
+        const error = err instanceof Error ? err.message : String(err);
+        captureException(err instanceof Error ? err : new Error(error), { label: "CODEX_SEND_ERR" });
         setIsProcessing(false);
-        return false;
+        return { ok: false, error };
       }
     },
     [sessionId, codexEffort],
   );
 
   const send = useCallback(
-    async (text: string, images?: ImageAttachment[], displayText?: string, collaborationMode?: CollaborationMode): Promise<boolean> => {
-      if (!sessionId) return false;
+    async (text: string, images?: ImageAttachment[], displayText?: string, collaborationMode?: CollaborationMode): Promise<CodexSendResult> => {
+      if (!sessionId) return { ok: false, error: "Codex session not found." };
       // Add user message to UI immediately
       setMessages((prev) => [
         ...prev,
         createUserMessage(text, images, displayText),
       ]);
-      const ok = await sendRaw(text, images, collaborationMode);
-      if (!ok) {
+      const result = await sendRaw(text, images, collaborationMode);
+      if (!result.ok) {
         setMessages((prev) => [
           ...prev,
-          createSystemMessage("Unable to send message.", true, true),
+          createSystemMessage(
+            result.error ? `Unable to send message: ${result.error}` : "Unable to send message.",
+            true,
+            isRetryableUpstreamError(result.error ?? ""),
+          ),
         ]);
       }
-      return ok;
+      return result;
     },
     [sessionId, sendRaw],
   );
