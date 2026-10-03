@@ -35,6 +35,8 @@ export interface EngineBaseState {
   setContextUsage: Dispatch<SetStateAction<ContextUsage | null>>;
   isCompacting: boolean;
   setIsCompacting: Dispatch<SetStateAction<boolean>>;
+  reconnectMessage: string | null;
+  setReconnectMessage: Dispatch<SetStateAction<string | null>>;
 
   // Refs
   sessionIdRef: React.RefObject<string | null>;
@@ -61,6 +63,7 @@ export function useEngineBase({
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(initialPermission ?? null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(initialMeta?.contextUsage ?? null);
   const [isCompacting, setIsCompacting] = useState(initialMeta?.isCompacting ?? false);
+  const [reconnectMessage, setReconnectMessage] = useState<string | null>(initialMeta?.reconnectMessage ?? null);
 
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
@@ -94,6 +97,7 @@ export function useEngineBase({
     }
     setPendingPermission(initialPermission ?? null);
     setIsCompacting(initialMeta?.isCompacting ?? false);
+    setReconnectMessage(initialMeta?.reconnectMessage ?? null);
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared rAF scheduling — engines provide their own flush function
@@ -131,6 +135,7 @@ export function useEngineBase({
     pendingPermission, setPendingPermission,
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,
+    reconnectMessage, setReconnectMessage,
     sessionIdRef,
     messagesRef,
     pendingFlush,

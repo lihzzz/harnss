@@ -9,6 +9,7 @@
 import type { ACPConfigOption, ClaudeEffort, ImageAttachment, SlashCommand, EngineId, InstalledAgent, McpServerConfig, McpServerStatus, ModelInfo, GrabbedElement, CodexThreadGoal } from "@/types";
 import type { TerminalTab } from "@/lib/terminal-tabs";
 import type { ResolvedTheme } from "@/hooks/useTheme";
+import type { AutoRetryState } from "@/lib/session/auto-retry";
 
 export interface PaneController {
   paneEngine: EngineId;
@@ -44,6 +45,9 @@ export interface PaneController {
   handlePaneRetry: (errorMessageId: string) => Promise<void>;
   handlePaneStop: () => Promise<void>;
   handlePaneAcpConfigChange: (key: string, value: string) => void;
+  /** Scheduled auto-retry of a failed turn (countdown UI), or null. */
+  autoRetry: AutoRetryState | null;
+  cancelAutoRetry: () => void;
 }
 
 /**

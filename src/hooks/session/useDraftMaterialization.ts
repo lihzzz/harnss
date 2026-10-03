@@ -580,6 +580,7 @@ export function useDraftMaterialization({
               totalCost: bgState.totalCost,
               contextUsage: bgState.contextUsage,
               isCompacting: bgState.isCompacting,
+              reconnectMessage: bgState.reconnectMessage,
             });
           }
         } else {

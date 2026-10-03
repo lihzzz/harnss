@@ -276,6 +276,9 @@ function SplitChatPaneInner({
             onFullRevert={onFullRevert}
             onTopScrollProgress={onTopScrollProgress}
             onRetry={paneController.handlePaneRetry}
+            autoRetry={paneController.autoRetry}
+            onCancelAutoRetry={paneController.cancelAutoRetry}
+            reconnectMessage={paneState.reconnectMessage}
           />
           <div
             className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] transition-opacity duration-200 ${isIsland ? "h-24" : "h-28"}`}

@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useState, useMemo, createContext, useContext, type ReactNode } from "react";
+import { lazy, memo, Suspense, useEffect, useState, useMemo, createContext, useContext, type ReactNode } from "react";
 import { AlertCircle, ChevronDown, ChevronUp, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +16,7 @@ import { guessLanguage } from "@/lib/languages";
 import { useStreamingTextReveal } from "@/hooks/useStreamingTextReveal";
 import { useChatPersistedState } from "@/components/chat-ui-state";
 import type { UIMessage, ImageAttachment } from "@/types";
+import type { AutoRetryState } from "@/lib/session/auto-retry";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { CopyButton } from "./CopyButton";
 import { ImageLightbox } from "./ImageLightbox";
@@ -28,6 +29,51 @@ import {
 // Stable references to avoid re-creating on every render
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
 const REHYPE_PLUGINS = [rehypeKatex];
+
+const AUTO_RETRY_BUTTON_CLASS = "rounded-full px-1.5 py-0.5 text-foreground/60 transition-colors hover:bg-foreground/[0.08] hover:text-foreground";
+
+/** Countdown shown on a retryable error while an auto-retry is scheduled. */
+function AutoRetryCountdown({
+  autoRetry,
+  onRetryNow,
+  onCancel,
+}: {
+  autoRetry: AutoRetryState;
+  onRetryNow: () => void;
+  onCancel?: () => void;
+}) {
+  const [remainingSeconds, setRemainingSeconds] = useState(() =>
+    Math.max(0, Math.ceil((autoRetry.runAt - Date.now()) / 1000)),
+  );
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRemainingSeconds(Math.max(0, Math.ceil((autoRetry.runAt - Date.now()) / 1000)));
+    }, 250);
+    return () => clearInterval(interval);
+  }, [autoRetry.runAt]);
+
+  return (
+    <span className="ms-1 inline-flex items-center gap-1 text-[11px] text-foreground/60">
+      <RotateCcw className="h-3 w-3 animate-spin [animation-duration:2.5s]" />
+      <span>
+        Auto-retry in {remainingSeconds}s ({autoRetry.attempt}/{autoRetry.maxAttempts})
+      </span>
+      <button type="button" className={AUTO_RETRY_BUTTON_CLASS} onClick={onRetryNow}>
+        Retry now
+      </button>
+      {onCancel && (
+        <button
+          type="button"
+          aria-label="Cancel auto-retry"
+          className={AUTO_RETRY_BUTTON_CLASS}
+          onClick={onCancel}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
+  );
+}
 
 function getFenceMarker(line: string): { char: "`" | "~"; length: number } | null {
   const match = /^( {0,3})(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(line);
@@ -297,6 +343,9 @@ interface MessageBubbleProps {
   onUnqueueQueued?: (messageId: string) => void;
   /** Called when a retryable system error should submit the failed user turn again. */
   onRetry?: (errorMessageId: string) => void | Promise<void>;
+  /** Scheduled auto-retry for this error — replaces the manual Retry button with a countdown. */
+  autoRetry?: AutoRetryState | null;
+  onCancelAutoRetry?: () => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -310,6 +359,8 @@ export const MessageBubble = memo(function MessageBubble({
   onSendQueuedNow,
   onUnqueueQueued,
   onRetry,
+  autoRetry,
+  onCancelAutoRetry,
 }: MessageBubbleProps) {
   // All hooks must be called before any early returns (Rules of Hooks)
   const isUser = message.role === "user";
@@ -348,14 +399,22 @@ export const MessageBubble = memo(function MessageBubble({
           {isError ? <AlertCircle className="h-3 w-3" /> : <Info className="h-3 w-3" />}
           {message.content}
           {isError && message.retryable && onRetry && (
-            <button
-              type="button"
-              className="ms-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] text-foreground/60 transition-colors hover:bg-foreground/[0.08] hover:text-foreground"
-              onClick={() => void onRetry(message.id)}
-            >
-              <RotateCcw className="h-3 w-3" />
-              Retry
-            </button>
+            autoRetry?.errorMessageId === message.id ? (
+              <AutoRetryCountdown
+                autoRetry={autoRetry}
+                onRetryNow={() => void onRetry(message.id)}
+                onCancel={onCancelAutoRetry}
+              />
+            ) : (
+              <button
+                type="button"
+                className="ms-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] text-foreground/60 transition-colors hover:bg-foreground/[0.08] hover:text-foreground"
+                onClick={() => void onRetry(message.id)}
+              >
+                <RotateCcw className="h-3 w-3" />
+                Retry
+              </button>
+            )
           )}
         </div>
       </div>
@@ -572,7 +631,9 @@ export const MessageBubble = memo(function MessageBubble({
   prev.onFullRevert === next.onFullRevert &&
   prev.onSendQueuedNow === next.onSendQueuedNow &&
   prev.onUnqueueQueued === next.onUnqueueQueued &&
-  prev.onRetry === next.onRetry,
+  prev.onRetry === next.onRetry &&
+  prev.autoRetry === next.autoRetry &&
+  prev.onCancelAutoRetry === next.onCancelAutoRetry,
 );
 
 /**

@@ -1546,6 +1546,9 @@ export function AppLayout() {
                 onRevert={manager.isConnected && manager.revertFiles ? handleRevert : undefined}
                 onFullRevert={manager.isConnected && manager.fullRevert ? handleFullRevert : undefined}
                 onRetry={activePaneCtrl?.handlePaneRetry}
+                autoRetry={activePaneCtrl?.autoRetry}
+                onCancelAutoRetry={activePaneCtrl?.cancelAutoRetry}
+                reconnectMessage={manager.reconnectMessage}
                 onTopScrollProgress={handleTopScrollProgress}
                 onSendQueuedNow={handleSendQueuedNow}
                 onUnqueueQueuedMessage={handleUnqueueMessage}

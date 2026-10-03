@@ -228,6 +228,7 @@ export function useSessionCrud({
             isCompacting: bgState.isCompacting,
             codexGoal: bgState.codexGoal,
             codexGoalSupported: bgState.codexGoalSupported,
+            reconnectMessage: bgState.reconnectMessage,
           });
           setInitialPermission(bgState.pendingPermission);
           setInitialRawAcpPermission(bgState.rawAcpPermission);

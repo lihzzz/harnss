@@ -554,9 +554,10 @@ export function useSessionPersistence({
         slashCommands,
         codexGoal: sessionEngine === "codex" ? codex.codexGoal : null,
         codexGoalSupported: sessionEngine === "codex" ? codex.codexGoalSupported : null,
+        reconnectMessage: sessionEngine === "codex" ? codex.reconnectMessage : null,
       });
     }
-  }, [claude.slashCommands, acp.slashCommands, codex.slashCommands, codex.codexGoal, codex.codexGoalSupported]);
+  }, [claude.slashCommands, acp.slashCommands, codex.slashCommands, codex.codexGoal, codex.codexGoalSupported, codex.reconnectMessage]);
 
   // AI-generated title via background utility prompt (SDK Haiku or ACP utility session)
   const generateSessionTitle = useCallback(

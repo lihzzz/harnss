@@ -36,6 +36,7 @@ export interface InitialMeta {
   isCompacting?: boolean;
   codexGoal?: CodexThreadGoal | null;
   codexGoalSupported?: boolean | null;
+  reconnectMessage?: string | null;
 }
 
 export interface QueuedMessage {

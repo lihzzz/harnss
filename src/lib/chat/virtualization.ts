@@ -54,6 +54,8 @@ function estimateLineCount(text: string): number {
 export function estimateRowHeight(row: RowDescriptor): number {
   if (row.kind === "processing") return 32;
 
+  if (row.kind === "reconnect") return 32;
+
   if (row.kind === "turn_summary") return 48;
 
   if (row.kind === "tool_group") {

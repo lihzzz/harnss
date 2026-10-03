@@ -34,6 +34,11 @@ export function handleCodexEvent(
 } | undefined {
   state.isConnected = true;
   const { method, params } = event;
+  // Streaming activity means the upstream is back — clear the transient
+  // reconnect status. (Not cleared by passive events like rate-limit updates.)
+  if (method.startsWith("item/") || method.startsWith("turn/")) {
+    state.reconnectMessage = null;
+  }
 
   switch (method) {
     case "thread/goal/updated": {
@@ -70,7 +75,11 @@ export function handleCodexEvent(
 
     case "error": {
       const errorParams = params as { error: { message?: string }; willRetry?: boolean };
-      if (errorParams.willRetry) return;
+      if (errorParams.willRetry) {
+        // Codex core is auto-retrying — keep it visible when switching back.
+        state.reconnectMessage = errorParams.error.message || "Reconnecting…";
+        return;
+      }
       const errorText = errorParams.error.message || "Unknown error";
       state.isProcessing = false;
       state.messages.push(createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)));

@@ -571,6 +571,7 @@ export function useSessionManager(
           isCompacting: backgroundState.isCompacting,
           codexGoal: backgroundState.codexGoal,
           codexGoalSupported: backgroundState.codexGoalSupported,
+          reconnectMessage: backgroundState.reconnectMessage,
         },
         initialPermission: backgroundState.pendingPermission,
         initialConfigOptions: [],
@@ -680,6 +681,7 @@ export function useSessionManager(
     respondPermission: engine.respondPermission,
     contextUsage: engine.contextUsage,
     isCompacting: "isCompacting" in engine ? !!engine.isCompacting : false,
+    reconnectMessage: engine.reconnectMessage ?? null,
     compact: engine.compact,
     slashCommands: isCodex
       ? codex.slashCommands

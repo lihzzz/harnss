@@ -15,6 +15,8 @@ export interface BackgroundSessionSnapshot {
   isCompacting?: boolean;
   codexGoal?: CodexThreadGoal | null;
   codexGoalSupported?: boolean | null;
+  /** Upstream reconnect in progress (Codex willRetry) — transient, not persisted. */
+  reconnectMessage?: string | null;
 }
 
 /**
@@ -34,6 +36,8 @@ export interface EngineHookState {
   setTotalCost: Dispatch<SetStateAction<number>>;
   contextUsage: ContextUsage | null;
   isCompacting?: boolean;
+  /** Upstream reconnect in progress (Codex willRetry retries) — shown as a chat status row. */
+  reconnectMessage?: string | null;
   pendingPermission: PermissionRequest | null;
   respondPermission: RespondPermissionFn;
 }

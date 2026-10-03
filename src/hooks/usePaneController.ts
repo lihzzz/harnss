@@ -16,6 +16,7 @@ import { buildCodexCollabMode, DEFAULT_PERMISSION_MODE } from "@/hooks/session/t
 import { canonicalizeModelValue, findEquivalentModel } from "@/lib/model-utils";
 import type { PaneController } from "@/types";
 import { getRetryRequest, isRetryableUpstreamError } from "@/lib/session/retry";
+import { useAutoRetry } from "./useAutoRetry";
 
 // ── Model catalog builders (moved from AppLayout) ──
 
@@ -110,7 +111,7 @@ export function usePaneController(
 ): PaneController {
   const retryInFlightRef = useRef<Set<string>>(new Set());
 
-  return useMemo(() => {
+  const controller = useMemo(() => {
     const paneEngine: EngineId = session?.engine
       ?? (isActiveSessionPane ? (ctx.selectedAgent?.engine ?? "claude") : "claude");
     const selectedPaneAgent = isActiveSessionPane
@@ -368,4 +369,19 @@ export function usePaneController(
     session,
     sessionId,
   ]);
+
+  // Auto-resend the last user turn (with backoff) when it ends in a retryable
+  // upstream error. Duplicate scheduling across controllers watching the same
+  // session is guarded downstream by retryInFlightRef in the retry path.
+  const { autoRetry, cancelAutoRetry } = useAutoRetry({
+    sessionId: sessionId || null,
+    messages: paneState.messages,
+    isProcessing: paneState.isProcessing,
+    onRetry: controller.handlePaneRetry,
+  });
+
+  return useMemo(
+    () => ({ ...controller, autoRetry, cancelAutoRetry }),
+    [controller, autoRetry, cancelAutoRetry],
+  );
 }

@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useState, startTransition, memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { motion } from "motion/react";
-import { Loader2, Minus } from "lucide-react";
+import { Loader2, Minus, WifiOff } from "lucide-react";
 import type { UIMessage } from "@/types";
+import type { AutoRetryState } from "@/lib/session/auto-retry";
 import { AgentIcon } from "./AgentIcon";
 import { getAgentIcon } from "@/lib/engine-icons";
 import { useAgentContext } from "./AgentContext";
@@ -33,7 +34,8 @@ export type RowDescriptor =
   | { kind: "message"; msg: UIMessage; originalIndex: number }
   | { kind: "tool_group"; group: ToolGroup; originalIndex: number; groupTurnSummary?: TurnSummary }
   | { kind: "turn_summary"; summary: TurnSummary }
-  | { kind: "processing" };
+  | { kind: "processing" }
+  | { kind: "reconnect"; message: string };
 
 const EMPTY_TOOL_GROUP_INFO: ToolGroupInfo = {
   groups: new Map(),
@@ -58,6 +60,7 @@ function buildRows(
   groupedIndices: Set<number>,
   turnSummaryByEndIndex: Map<number, TurnSummary>,
   showProcessingIndicator: boolean,
+  reconnectMessage: string | null,
 ): RowDescriptor[] {
   const rows: RowDescriptor[] = [];
 
@@ -93,7 +96,11 @@ function buildRows(
     }
   }
 
-  if (showProcessingIndicator) {
+  // A reconnect status supersedes the generic processing indicator — it is
+  // more specific about what the turn is waiting on.
+  if (reconnectMessage) {
+    rows.push({ kind: "reconnect", message: reconnectMessage });
+  } else if (showProcessingIndicator) {
     rows.push(PROCESSING_ROW);
   }
 
@@ -101,6 +108,7 @@ function buildRows(
 }
 
 function getRowKey(row: RowDescriptor): string {
+  if (row.kind === "reconnect") return "__reconnect__";
   if (row.kind === "processing") return "__processing__";
   if (row.kind === "turn_summary") return `ts-${row.summary.userMessageId}`;
   if (row.kind === "tool_group") return `group-${row.group.tools[0].id}`;
@@ -109,6 +117,10 @@ function getRowKey(row: RowDescriptor): string {
 
 function canReuseRowDescriptor(previous: RowDescriptor | undefined, next: RowDescriptor): boolean {
   if (!previous) return false;
+
+  if (next.kind === "reconnect") {
+    return previous.kind === "reconnect" && previous.message === next.message;
+  }
 
   if (next.kind === "processing") {
     return previous.kind === "processing";
@@ -144,6 +156,8 @@ interface ChatMessageRowProps {
   onSendQueuedNow?: (messageId: string) => void;
   onUnqueueQueuedMessage?: (messageId: string) => void;
   onRetry?: (errorMessageId: string) => void | Promise<void>;
+  autoRetry?: AutoRetryState | null;
+  onCancelAutoRetry?: () => void;
 }
 
 const ChatMessageRow = memo(function ChatMessageRow({
@@ -158,6 +172,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
   onSendQueuedNow,
   onUnqueueQueuedMessage,
   onRetry,
+  autoRetry,
+  onCancelAutoRetry,
 }: ChatMessageRowProps) {
   // ── Display preferences from Zustand store ──
   const autoExpandTools = useSettingsStore((s) => s.autoExpandTools);
@@ -171,6 +187,19 @@ const ChatMessageRow = memo(function ChatMessageRow({
           <Minus className="h-3 w-3 text-foreground/40" />
           <TextShimmer as="span" className="italic opacity-60" duration={1.8} spread={1.5}>
             Planning next moves
+          </TextShimmer>
+        </div>
+      </div>
+    );
+  }
+
+  if (row.kind === "reconnect") {
+    return (
+      <div className={`flex justify-start ${CHAT_ROW_CLASS}`}>
+        <div className="flex items-center gap-1.5 text-xs">
+          <WifiOff className="h-3 w-3 text-foreground/40" />
+          <TextShimmer as="span" className="italic opacity-60" duration={1.8} spread={1.5}>
+            {row.message}
           </TextShimmer>
         </div>
       </div>
@@ -241,6 +270,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
         onSendQueuedNow={onSendQueuedNow}
         onUnqueueQueued={onUnqueueQueuedMessage}
         onRetry={onRetry}
+        autoRetry={autoRetry}
+        onCancelAutoRetry={onCancelAutoRetry}
       />
     </div>
   );
@@ -255,7 +286,9 @@ const ChatMessageRow = memo(function ChatMessageRow({
   prev.onFullRevert === next.onFullRevert &&
   prev.onSendQueuedNow === next.onSendQueuedNow &&
   prev.onUnqueueQueuedMessage === next.onUnqueueQueuedMessage &&
-  prev.onRetry === next.onRetry,
+  prev.onRetry === next.onRetry &&
+  prev.autoRetry === next.autoRetry &&
+  prev.onCancelAutoRetry === next.onCancelAutoRetry,
 );
 
 // ── ChatViewProps ──
@@ -275,6 +308,11 @@ interface ChatViewProps {
   onUnqueueQueuedMessage?: (messageId: string) => void;
   sendNextId?: string | null;
   onRetry?: (errorMessageId: string) => void | Promise<void>;
+  /** Scheduled auto-retry of a failed turn — countdown shown on the error bubble. */
+  autoRetry?: AutoRetryState | null;
+  onCancelAutoRetry?: () => void;
+  /** Upstream reconnect in progress — transient status row at the bottom. */
+  reconnectMessage?: string | null;
   /** Current space ID — included in remount key so space switches show spinner immediately */
   spaceId?: string;
 }
@@ -361,7 +399,7 @@ function ChatViewContent({
   messages, isProcessing, showThinking, extraBottomPadding, scrollToMessageId, onScrolledToMessage,
   sessionId, onRevert, onFullRevert, onTopScrollProgress,
   onSendQueuedNow, onUnqueueQueuedMessage, sendNextId,
-  onRetry,
+  onRetry, autoRetry, onCancelAutoRetry, reconnectMessage,
 }: ChatViewProps) {
   // ── Display preferences from Zustand store (only those used directly in ChatViewContent) ──
   const autoGroupTools = useSettingsStore((s) => s.autoGroupTools);
@@ -559,6 +597,7 @@ function ChatViewContent({
       groupedIndices,
       turnSummaryByEndIndex,
       showProcessingIndicator,
+      reconnectMessage ?? null,
     );
     if (queuedMessages.length > 0) {
       builtRows.push(...queuedMessages.map((msg, index) => ({
@@ -586,6 +625,7 @@ function ChatViewContent({
     groupedIndices,
     nonQueuedMessages,
     queuedMessages,
+    reconnectMessage,
     showProcessingIndicator,
     toolGroups,
     turnSummaryByEndIndex,
@@ -874,6 +914,8 @@ function ChatViewContent({
                 onSendQueuedNow={onSendQueuedNow}
                 onUnqueueQueuedMessage={onUnqueueQueuedMessage}
                 onRetry={onRetry}
+                autoRetry={autoRetry}
+                onCancelAutoRetry={onCancelAutoRetry}
               />
             </div>
           ))}

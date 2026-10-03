@@ -108,6 +108,7 @@ export function useCodex({
     pendingPermission, setPendingPermission,
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,
+    reconnectMessage, setReconnectMessage,
     sessionIdRef, messagesRef,
     scheduleFlush: scheduleRaf,
     cancelPendingFlush,
@@ -323,6 +324,12 @@ export function useCodex({
   // ── Notification handler ──
   const handleNotification = useCallback((event: CodexSessionEvent) => {
     if (event._sessionId !== sessionIdRef.current) return;
+    // Streaming activity means the upstream is back — clear the transient
+    // reconnect status. (Not cleared by passive events like rate-limit updates,
+    // so the indicator doesn't flicker while Codex core waits between retries.)
+    if (event.method.startsWith("item/") || event.method.startsWith("turn/")) {
+      setReconnectMessage(null);
+    }
     switch (event.method) {
       case "thread/goal/updated": {
         const goal = parseThreadGoal((event.params as { goal?: unknown } | undefined)?.goal);
@@ -420,7 +427,12 @@ export function useCodex({
 
       case "error": {
         const errorParams = event.params;
-        if (errorParams.willRetry) break;
+        if (errorParams.willRetry) {
+          // Codex core is auto-retrying (stream dropped, network down) — surface
+          // it as a transient status instead of silently swallowing the event.
+          setReconnectMessage(errorParams.error.message || "Reconnecting…");
+          break;
+        }
         const errorText = errorParams.error.message || "Unknown error";
         if (
           /401\s+Unauthorized/i.test(errorText) ||
@@ -860,6 +872,7 @@ export function useCodex({
     if (data._sessionId !== sessionIdRef.current) return;
     setIsConnected(false);
     setIsProcessing(false);
+    setReconnectMessage(null);
     if (data.code !== 0 && data.code !== null) {
       setMessages((prev) => [
         ...prev,
@@ -1245,6 +1258,7 @@ export function useCodex({
     totalCost, setTotalCost,
     contextUsage,
     isCompacting,
+    reconnectMessage,
     send, sendRaw, stop, interrupt, compact,
     pendingPermission, respondPermission,
     setPermissionMode,

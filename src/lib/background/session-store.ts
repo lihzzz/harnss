@@ -27,6 +27,8 @@ export interface BackgroundSessionState {
   slashCommands: SlashCommand[];
   codexGoal?: CodexThreadGoal | null;
   codexGoalSupported?: boolean | null;
+  /** Upstream reconnect in progress (Codex willRetry) — restored on switch-back. */
+  reconnectMessage?: string | null;
 }
 
 export interface InternalState extends BackgroundSessionState {
@@ -69,6 +71,7 @@ export class BackgroundSessionStore {
         slashCommands: [],
         codexGoal: null,
         codexGoalSupported: null,
+        reconnectMessage: null,
         parentToolMap: new Map(),
         currentStreamingMsgId: null,
         codexPlanText: "",
@@ -154,6 +157,7 @@ export class BackgroundSessionStore {
       slashCommands: state.slashCommands ?? [],
       codexGoal: state.codexGoal,
       codexGoalSupported: state.codexGoalSupported,
+      reconnectMessage: state.reconnectMessage ?? null,
     };
   }
 
@@ -175,6 +179,7 @@ export class BackgroundSessionStore {
       slashCommands: state.slashCommands ?? [],
       codexGoal: state.codexGoal,
       codexGoalSupported: state.codexGoalSupported,
+      reconnectMessage: state.reconnectMessage ?? null,
     };
   }
 
@@ -254,6 +259,7 @@ export class BackgroundSessionStore {
       slashCommands: state.slashCommands ?? [],
       codexGoal: state.codexGoal ?? null,
       codexGoalSupported: state.codexGoalSupported ?? null,
+      reconnectMessage: state.reconnectMessage ?? null,
       parentToolMap,
       currentStreamingMsgId: streamingMsg?.id ?? null,
       codexPlanText,
