@@ -413,6 +413,7 @@ export function useSessionPersistence({
       const msgs = messagesRef.current.filter((m) => !m.isQueued);
       const data: PersistedSession = {
         id: activeSessionId,
+        conversationId: session.conversationId ?? activeSessionId,
         projectId: session.projectId,
         title: session.title,
         createdAt: session.createdAt,

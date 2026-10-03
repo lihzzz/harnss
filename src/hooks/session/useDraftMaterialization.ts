@@ -399,7 +399,7 @@ export function useDraftMaterialization({
             ];
 
             setSessions(prev => prev.map(s =>
-              s.id === DRAFT_ID ? { ...s, id: failedId, titleGenerating: false } : s,
+              s.id === DRAFT_ID ? { ...s, id: failedId, conversationId: s.conversationId ?? refs.startOptionsRef.current.conversationId ?? failedId, titleGenerating: false } : s,
             ));
             setInitialMessages(errorMessages);
             setInitialMeta({
@@ -414,6 +414,7 @@ export function useDraftMaterialization({
 
             window.claude.sessions.save({
               id: failedId,
+              conversationId: refs.startOptionsRef.current.conversationId ?? failedId,
               projectId: project.id,
               title: "New Chat",
               createdAt: Date.now(),
@@ -498,7 +499,7 @@ export function useDraftMaterialization({
             createUserMessage(text, images, displayText),
             createSystemMessage(errorMsg, true),
           ];
-          setSessions(prev => prev.map(s => s.id === DRAFT_ID ? { ...s, id: failedId, titleGenerating: false } : s));
+          setSessions(prev => prev.map(s => s.id === DRAFT_ID ? { ...s, id: failedId, conversationId: s.conversationId ?? refs.startOptionsRef.current.conversationId ?? failedId, titleGenerating: false } : s));
           setInitialMessages(errorMessages);
           setInitialMeta({
             isProcessing: false,
@@ -511,6 +512,7 @@ export function useDraftMaterialization({
           setDraftProjectId(null);
           window.claude.sessions.save({
             id: failedId,
+            conversationId: refs.startOptionsRef.current.conversationId ?? failedId,
             projectId: project.id,
             title: "New Chat",
             createdAt: Date.now(),
@@ -616,6 +618,7 @@ export function useDraftMaterialization({
       const currentBranch = refs.currentBranchRef.current;
       const newSession: ChatSession = {
         id: sessionId,
+        conversationId: refs.startOptionsRef.current.conversationId ?? sessionId,
         projectId: project.id,
         title: "New Chat",
         createdAt: now,

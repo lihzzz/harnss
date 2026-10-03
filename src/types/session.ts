@@ -92,6 +92,8 @@ export interface ChatFolder {
 
 /** Fields shared between live and persisted session representations. */
 export interface SessionBase {
+  /** Stable logical id shared by revived/forked runtime sessions. */
+  conversationId?: string;
   id: string;
   projectId: string;
   title: string;

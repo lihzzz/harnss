@@ -5,6 +5,7 @@
 import { parseThreadGoal } from "./codex-goal";
 
 export interface SessionMeta {
+  conversationId?: string;
   id: string;
   projectId: string;
   title: string;
@@ -53,6 +54,7 @@ export function getLastUserMessageTimestamp(
 export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt: number): SessionMeta {
   return {
     id: data.id as string,
+    conversationId: data.conversationId as string | undefined,
     projectId: data.projectId as string,
     title: (data.title as string) || "Untitled",
     createdAt: (data.createdAt as number) || 0,

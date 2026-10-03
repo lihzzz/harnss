@@ -19,7 +19,7 @@ import {
   TOOL_PICKER_WIDTH_ISLAND,
   equalWidthFractions,
 } from "@/lib/layout/constants";
-import type { InstalledAgent } from "@/types";
+import type { EngineId, HandoffPurpose, InstalledAgent } from "@/types";
 import { AppSidebar } from "./AppSidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatSearchBar } from "./ChatSearchBar";
@@ -80,6 +80,8 @@ import {
   isNearBottomDockZone,
 } from "@/lib/workspace/drag";
 import { AgentProvider, type AgentContextValue } from "./AgentContext";
+import { WorkflowCenter } from "./workflow/WorkflowCenter";
+import { makeWorkflowId } from "@/lib/workflow/workflow-store";
 import {
   getInputHistory,
   loadPersistedInputHistory,
@@ -169,6 +171,22 @@ export function AppLayout() {
     images?: Parameters<typeof handleSend>[1];
     displayText?: string;
   } | null>(null);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
+
+  const handleWorkflowHandoff = useCallback(async ({ targetEngine, prompt }: { targetEngine: EngineId; purpose: HandoffPurpose; prompt: string }) => {
+    if (!activeProjectId || !manager.activeSession) throw new Error("Open a project session before handing off work");
+    const targetConversationId = makeWorkflowId("conversation");
+    await manager.createSession(activeProjectId, {
+      conversationId: targetConversationId,
+      engine: targetEngine,
+      model: settings.getModelForEngine(targetEngine) || undefined,
+      permissionMode: settings.permissionMode,
+      planMode: false,
+      thinkingEnabled: settings.thinking,
+    });
+    await manager.send(prompt);
+    return { targetConversationId };
+  }, [activeProjectId, manager, settings.getModelForEngine, settings.permissionMode, settings.thinking]);
 
 
   // Wrap handleSend to clear grabbed elements after sending
@@ -1068,6 +1086,7 @@ export function AppLayout() {
           onReorderProject: projectManager.reorderProject,
           onCreateFolder: o.handleCreateFolder,
           onSetOrganizeByChatBranch: settings.setOrganizeByChatBranch,
+          onOpenWorkflow: () => setWorkflowOpen(true),
         }}
         spaceState={{
           spaces: spaceManager.spaces,
@@ -1098,6 +1117,18 @@ export function AppLayout() {
           canOpenSessionInSplitView: (sessionId) => splitView.canShowSessionSplitAction(sessionId, manager.activeSessionId),
         }}
       />
+
+      {workflowOpen && (
+        <WorkflowCenter
+          sessions={manager.sessions}
+          projects={projectManager.projects}
+          activeSessionId={manager.activeSessionId}
+          activeMessages={manager.messages}
+          onSelectSession={handleSidebarSelectSession}
+          onClose={() => setWorkflowOpen(false)}
+          onHandoff={handleWorkflowHandoff}
+        />
+      )}
 
       <div ref={contentRef} className={`flex min-w-0 flex-1 flex-col ${settings.islandLayout ? "m-[var(--island-gap)]" : sidebar.isOpen ? "flat-divider-s" : ""} ${isResizing ? "select-none" : ""}`}>
         {showSettings && (

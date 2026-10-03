@@ -115,7 +115,7 @@ export function useSessionRestart({
 
     setSessions(prev => prev.map(s =>
       s.id === currentId
-        ? { ...s, id: newId, ...(newAgentSessionId ? { agentSessionId: newAgentSessionId } : {}) }
+        ? { ...s, id: newId, conversationId: s.conversationId ?? currentId, ...(newAgentSessionId ? { agentSessionId: newAgentSessionId } : {}) }
         : s
     ));
     // Restore UI message history and config options through initialMessages -> useACP reset effect
@@ -183,7 +183,7 @@ export function useSessionRestart({
       liveSessionIdsRef.current.add(newId);
       setSessions((prev) => prev.map((s) =>
         s.id === currentId
-          ? { ...s, id: newId, codexThreadId: resumeResult.threadId ?? codexThreadId }
+          ? { ...s, id: newId, conversationId: s.conversationId ?? currentId, codexThreadId: resumeResult.threadId ?? codexThreadId }
           : s,
       ));
       setInitialMessages(messagesRef.current);
@@ -275,7 +275,7 @@ export function useSessionRestart({
 
     // 6. Map sidebar entry to new forked ID
     setSessions(prev => prev.map(s =>
-      s.id === currentId ? { ...s, id: newId } : s,
+      s.id === currentId ? { ...s, id: newId, conversationId: s.conversationId ?? currentId } : s,
     ));
 
     // 7. Provide truncated messages + system message via initialMessages -> reset effect
@@ -298,6 +298,7 @@ export function useSessionRestart({
       await window.claude.sessions.save({
         ...oldData,
         id: newId,
+        conversationId: session.conversationId ?? oldData.conversationId ?? currentId,
         messages: [...truncatedMessages, systemMsg],
       });
       await window.claude.sessions.delete(project.id, currentId);

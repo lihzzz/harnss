@@ -133,7 +133,13 @@ export function useSessionCrud({
       seedBackgroundStore();
       void saveCurrentSession();
       const draftEngine = options?.engine ?? "claude";
-      setStartOptions(options ?? {});
+      const nextStartOptions = options ?? {};
+      // Keep the ref-backed routing state in sync with the setters so a
+      // programmatic create-then-send cannot send through the old session.
+      startOptionsRef.current = nextStartOptions;
+      draftProjectIdRef.current = projectId;
+      activeSessionIdRef.current = DRAFT_ID;
+      setStartOptions(nextStartOptions);
       setDraftProjectId(projectId);
       setInitialMessages([]);
       setInitialMeta(null);
@@ -414,6 +420,7 @@ export function useSessionCrud({
       // Persist immediately so switchSession can load it later
       await window.claude.sessions.save({
         id: ccSessionId,
+        conversationId: ccSessionId,
         projectId: project.id,
         title: newSession.title,
         createdAt: newSession.createdAt,

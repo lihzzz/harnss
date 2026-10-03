@@ -18,6 +18,32 @@ describe("session records", () => {
     expect(meta.agentSessionId).toBe("ses_test");
   });
 
+  it("preserves the logical conversation ID across persisted records", () => {
+    const session: ChatSession = {
+      id: "runtime-session",
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      title: "Chat",
+      createdAt: 100,
+      totalCost: 0,
+      isActive: true,
+      engine: "claude",
+    };
+
+    expect(toChatSession({
+      id: session.id,
+      conversationId: session.conversationId,
+      projectId: session.projectId,
+      title: session.title,
+      createdAt: session.createdAt,
+      lastMessageAt: 100,
+      totalCost: session.totalCost,
+      engine: session.engine,
+    }, false).conversationId).toBe("conversation-1");
+    expect(buildPersistedSession(session, [], 0, null).conversationId).toBe("conversation-1");
+    expect(extractSessionMeta({ ...session }, 100).conversationId).toBe("conversation-1");
+  });
+
   it("keeps folder, pin, archive, and branch metadata when hydrating sidebar sessions", () => {
     const session = toChatSession({
       id: "session-1",

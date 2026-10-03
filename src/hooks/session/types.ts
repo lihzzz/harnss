@@ -7,6 +7,8 @@ export const DRAFT_ID = "__draft__";
 export const DEFAULT_PERMISSION_MODE = "default";
 
 export interface StartOptions {
+  /** Stable logical conversation ID for workflows that create a session programmatically. */
+  conversationId?: string;
   model?: string;
   permissionMode?: string;
   planMode?: boolean;

@@ -43,6 +43,18 @@ export type {
   CCSessionInfo,
 } from "./session";
 
+export type {
+  ConversationRef,
+  AttentionKind,
+  AttentionStatus,
+  AttentionItem,
+  ReviewRange,
+  ReviewComment,
+  ReviewSnapshot,
+  HandoffPurpose,
+  HandoffRecord,
+} from "./workflow";
+
 // ── Space types ──
 
 export type {

@@ -12,6 +12,7 @@ export function toChatSession(
 ): ChatSession {
   return {
     id: session.id,
+    conversationId: session.conversationId ?? session.id,
     projectId: session.projectId,
     title: session.title,
     createdAt: session.createdAt,
@@ -42,6 +43,7 @@ export function buildPersistedSession(
 ): PersistedSession {
   return {
     id: session.id,
+    conversationId: session.conversationId ?? session.id,
     projectId: session.projectId,
     title: session.title,
     createdAt: session.createdAt,

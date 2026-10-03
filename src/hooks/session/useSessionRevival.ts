@@ -86,7 +86,7 @@ export function useSessionRevival({
 
       setSessions((prev) => prev.map((s) =>
         s.id === oldId
-          ? { ...s, id: newId, agentSessionId: result.agentSessionId ?? s.agentSessionId }
+          ? { ...s, id: newId, conversationId: s.conversationId ?? oldId, agentSessionId: result.agentSessionId ?? s.agentSessionId }
           : s,
       ));
       setAcpMcpStatuses((result.mcpStatuses ?? []).map(s => ({
@@ -174,7 +174,7 @@ export function useSessionRevival({
           : result.goal ?? session.codexGoal ?? null;
 
       setSessions((prev) => prev.map((s) =>
-        s.id === oldId ? { ...s, id: newId, codexThreadId: result.threadId ?? codexThreadId, codexGoal: resumedGoal } : s,
+        s.id === oldId ? { ...s, id: newId, conversationId: s.conversationId ?? oldId, codexThreadId: result.threadId ?? codexThreadId, codexGoal: resumedGoal } : s,
       ));
       setInitialMessages(messagesRef.current);
       setInitialMeta({
@@ -278,6 +278,7 @@ export function useSessionRevival({
           await window.claude.sessions.save({
             ...oldData,
             id: newSessionId,
+            conversationId: session.conversationId ?? oldData.conversationId ?? oldId,
             messages: messagesRef.current,
             model: session.model ?? oldData.model,
           });

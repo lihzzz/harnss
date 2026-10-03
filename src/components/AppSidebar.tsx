@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, memo, type DragEvent } from "react";
-import { PanelLeft, Plus, Paintbrush } from "lucide-react";
+import { Inbox, PanelLeft, Plus, Paintbrush } from "lucide-react";
 import { isMac } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -107,6 +107,7 @@ interface AppSidebarProjectActions {
   onReorderProject: (projectId: string, targetProjectId: string) => void;
   onCreateFolder: (projectId: string) => void;
   onSetOrganizeByChatBranch: (on: boolean) => void;
+  onOpenWorkflow: () => void;
 }
 
 interface AppSidebarSpaceState {
@@ -179,6 +180,7 @@ export const AppSidebar = memo(function AppSidebar({
     onReorderProject,
     onCreateFolder,
     onSetOrganizeByChatBranch,
+    onOpenWorkflow,
   } = projectActions;
   const { spaces, activeSpaceId } = spaceState;
   const {
@@ -612,6 +614,14 @@ export const AppSidebar = memo(function AppSidebar({
             onNavigateToMessage={onNavigateToMessage}
             onSelectSession={onSelectSession}
           />
+          <button
+            type="button"
+            onClick={onOpenWorkflow}
+            className="mx-3 mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+          >
+            <Inbox className="h-3.5 w-3.5" />
+            Workflow center
+          </button>
 
           <div
             className="min-h-0 flex-1"
