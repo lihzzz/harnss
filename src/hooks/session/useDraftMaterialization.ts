@@ -5,6 +5,7 @@ import { toMcpStatusState } from "../../lib/mcp-utils";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { captureException } from "../../lib/analytics/analytics";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
+import { useSettingsStore } from "../../stores/settings-store";
 import {
   DRAFT_ID,
   getEffectiveClaudePermissionMode,
@@ -252,7 +253,11 @@ export function useDraftMaterialization({
         description: m.description,
       })));
 
-      const selected = pickCodexModel(preferredModel, models);
+      const selected = pickCodexModel(
+        preferredModel,
+        models,
+        useSettingsStore.getState().customModelsByEngine.codex,
+      );
       const selectedModel = selected
         ? models.find((m) => m.id === selected)
         : undefined;
@@ -472,7 +477,11 @@ export function useDraftMaterialization({
           agentId: options.agentId ?? "codex",
         }, ...prev.map(s => ({ ...s, isActive: false }))]);
 
-        const draftModel = pickCodexModel(options.model, codexRawModelsRef.current);
+        const draftModel = pickCodexModel(
+          options.model,
+          codexRawModelsRef.current,
+          useSettingsStore.getState().customModelsByEngine.codex,
+        );
         const approvalPolicy = getCodexApprovalPolicy(options);
         const sandbox = getCodexSandboxMode(options);
         const result = await window.claude.codex.start({
@@ -530,7 +539,11 @@ export function useDraftMaterialization({
               description: m.description,
             })));
             setCodexRawModels(models);
-            const selectedId = pickCodexModel(result.selectedModel ?? options.model, models);
+            const selectedId = pickCodexModel(
+              result.selectedModel ?? options.model,
+              models,
+              useSettingsStore.getState().customModelsByEngine.codex,
+            );
             const selectedModel = selectedId
               ? models.find((m) => m.id === selectedId)
               : undefined;

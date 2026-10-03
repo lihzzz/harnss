@@ -180,9 +180,13 @@ export function normalizeCodexModels(rawModels: unknown[]): CodexModelSummary[] 
 export function pickCodexModel(
   requestedModel: string | undefined,
   models: CodexModelSummary[],
+  customModelId?: string,
 ): string | undefined {
   const requested = typeof requestedModel === "string" ? requestedModel.trim() : "";
-  if (requested.length > 0 && models.some((m) => m.id === requested)) {
+  const custom = typeof customModelId === "string" ? customModelId.trim() : "";
+  // A user-entered custom model ID is always valid: custom providers accept
+  // model IDs that never appear in model/list.
+  if (requested.length > 0 && (requested === custom || models.some((m) => m.id === requested))) {
     return requested;
   }
   return models.find((m) => m.isDefault)?.id ?? models[0]?.id;

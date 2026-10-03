@@ -528,15 +528,14 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         let selectedModel: string | undefined;
         try {
           models = await listModelsWithConfigured(rpc);
-          selectedModel = pickModelId(options.model, models);
-          if (options.model && selectedModel !== options.model) {
-            log("codex", ` Requested model ${options.model} not found; using ${selectedModel ?? "server default"}`);
-          }
-          if (selectedModel) {
-            session.model = selectedModel;
-          }
         } catch (err) {
           reportError("CODEX_MODEL_LIST_ERR", err, { engine: "codex", sessionId: internalId });
+        }
+        // Honor explicitly requested models as-is: custom providers accept
+        // model IDs that never appear in the account catalog.
+        selectedModel = options.model?.trim() || pickModelId(undefined, models);
+        if (selectedModel) {
+          session.model = selectedModel;
         }
 
         // ── Start a thread ──
