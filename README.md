@@ -96,6 +96,10 @@ Every tool call renders as an interactive card. File edits show word-level diffs
 
 Connect any MCP server per project via stdio, SSE, or HTTP transport. OAuth flows are handled automatically. Server status and available tool counts are visible at a glance. Jira, Confluence, and other integrations render with dedicated UIs rather than raw JSON.
 
+### Long-term memory
+
+See [the Hindsight integration design](plans/hindsight-private-agent/design.md) for how Harnss can connect project-aware long-term memory to its agent sessions.
+
 ### Git integration
 
 Stage, unstage, commit, and push without leaving the app. Browse branches, view commit history, and manage git worktrees. AI-generated commit messages are available from the staged diff.
