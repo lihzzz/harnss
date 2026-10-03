@@ -3,6 +3,7 @@ import { ChevronRight, Clipboard, GitPullRequest, Inbox, MessageSquare, Send, X 
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { isMac } from "@/lib/utils";
 import type { AttentionItem, ChatSession, EngineId, HandoffPurpose, Project, ReviewComment, ReviewSnapshot } from "@/types";
 import { deriveAttentionItems } from "@/lib/workflow/attention";
 import { makeWorkflowId, workflowStore } from "@/lib/workflow/workflow-store";
@@ -198,12 +199,20 @@ export function WorkflowCenter({
     .filter((entry) => entry.conversationId === currentConversationId)
     .sort((a, b) => b.createdAt - a.createdAt)[0];
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="absolute inset-0 z-40 flex min-w-0 flex-col bg-background/95 backdrop-blur-sm">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border/60 px-5">
+    <div role="dialog" aria-modal="true" aria-label="Workflow center" className="absolute inset-0 z-40 flex min-w-0 flex-col bg-background/95 backdrop-blur-sm">
+      <header className={`drag-region flex h-[3.25rem] shrink-0 items-center gap-3 border-b border-border/60 px-5 ${isMac ? "ps-[84px]" : ""}`}>
         <Inbox className="h-4 w-4 text-primary" />
         <div className="flex-1"><h1 className="text-sm font-semibold">Workflow center</h1><p className="text-[10px] text-muted-foreground">Attention, review, and handoff in one place</p></div>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close workflow center"><X className="h-4 w-4" /></Button>
+        <Button variant="ghost" size="icon" className="no-drag" onClick={onClose} aria-label="Close workflow center"><X className="h-4 w-4" /></Button>
       </header>
       <div className="flex min-h-0 flex-1">
         <nav className="w-52 shrink-0 border-e border-border/50 p-3">
