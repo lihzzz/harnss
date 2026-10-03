@@ -184,8 +184,14 @@ export function AppLayout() {
       planMode: false,
       thinkingEnabled: settings.thinking,
     });
-    await manager.send(prompt);
-    return { targetConversationId };
+    const sendResult = await manager.send(prompt);
+    if (!sendResult?.sessionId) {
+      return {
+        targetConversationId,
+        error: sendResult?.error ?? "Target session did not start.",
+      };
+    }
+    return { targetConversationId, targetSessionId: sendResult.sessionId };
   }, [activeProjectId, manager, settings.getModelForEngine, settings.permissionMode, settings.thinking]);
 
 

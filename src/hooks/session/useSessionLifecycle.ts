@@ -187,7 +187,7 @@ export function useSessionLifecycle({
               refs.pendingAcpDraftPromptRef.current = null;
             }
             acp.setIsProcessing(false);
-            return;
+            return { error: "Unable to materialize the ACP session." };
           }
 
           trackMessageSent(sessionId);
@@ -206,16 +206,16 @@ export function useSessionLifecycle({
             ]);
             acp.setIsProcessing(false);
             refs.pendingAcpDraftPromptRef.current = null;
-            return;
+            return { sessionId, error: promptResult.error };
           }
           refs.pendingAcpDraftPromptRef.current = null;
-          return;
+          return { sessionId };
         }
 
         if (draftEngine === "codex") {
           trackMessageSent();
           const sessionId = await materializeDraft(text, images, displayText);
-          if (!sessionId) return;
+          if (!sessionId) return { error: "Unable to materialize the Codex session." };
           await new Promise((resolve) => setTimeout(resolve, 50));
 
           codex.setMessages((prev) => [
@@ -234,7 +234,7 @@ export function useSessionLifecycle({
               createSystemMessage(err instanceof Error ? err.message : String(err), true),
             ]);
             codex.setIsProcessing(false);
-            return;
+            return { sessionId, error: err instanceof Error ? err.message : String(err) };
           }
           const sendResult = await window.claude.codex.send(
             sessionId,
@@ -254,14 +254,15 @@ export function useSessionLifecycle({
               ),
             ]);
             codex.setIsProcessing(false);
+            return { sessionId, error: sendResult.error };
           }
-          return;
+          return { sessionId };
         }
 
         // Claude SDK path
         trackMessageSent();
         const sessionId = await materializeDraft(text);
-        if (!sessionId) return;
+        if (!sessionId) return { error: "Unable to materialize the Claude session." };
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         {
@@ -280,14 +281,14 @@ export function useSessionLifecycle({
                 isRetryableUpstreamError(sendResult.error ?? ""),
               ),
             ]);
-            return;
+            return { sessionId, error: sendResult.error };
           }
           claude.setMessages((prev) => [
             ...prev,
             createUserMessage(text, images, displayText),
           ]);
         }
-        return;
+        return { sessionId };
       }
 
       if (!activeId) return;

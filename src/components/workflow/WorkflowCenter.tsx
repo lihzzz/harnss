@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore, useState } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
 import { ChevronRight, Clipboard, GitPullRequest, Inbox, MessageSquare, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,7 @@ interface WorkflowCenterProps {
   activeMessages: Array<{ id: string; role: string; content: string; timestamp: number }>;
   onSelectSession: (sessionId: string) => void;
   onClose: () => void;
-  onHandoff?: (input: { targetEngine: EngineId; purpose: HandoffPurpose; prompt: string }) => Promise<{ targetConversationId?: string }>;
+  onHandoff?: (input: { targetEngine: EngineId; purpose: HandoffPurpose; prompt: string }) => Promise<{ targetConversationId?: string; targetSessionId?: string; error?: string }>;
 }
 
 function engineLabel(engine?: EngineId): string {
@@ -46,6 +46,7 @@ export function WorkflowCenter({
   const [targetEngine, setTargetEngine] = useState<EngineId>("codex");
   const [purpose, setPurpose] = useState<HandoffPurpose>("review");
   const [isSending, setIsSending] = useState(false);
+  const handoffProcessingSeen = useRef(new Set<string>());
   const workflow = useWorkflowState();
   const derivedAttention = deriveAttentionItems(sessions);
   const attention = useMemo(() => {
@@ -73,6 +74,28 @@ export function WorkflowCenter({
     (!comment.conversationId || comment.conversationId === currentConversationId),
   );
   const selectedCurrentCommentIds = selectedCommentIds.filter((id) => comments.some((comment) => comment.id === id));
+
+  useEffect(() => {
+    workflow.handoffs.forEach((handoff) => {
+      if (handoff.status !== "started" || !handoff.targetConversationId) return;
+      const target = sessions.find((session) =>
+        session.id === handoff.targetSessionId || session.conversationId === handoff.targetConversationId,
+      );
+      if (target?.isProcessing) handoffProcessingSeen.current.add(handoff.id);
+      if (!target) return;
+      const completed = target.hasUnreadCompletion ||
+        (handoffProcessingSeen.current.has(handoff.id) && !target.isProcessing);
+      const targetSessionId = handoff.targetSessionId ?? target.id;
+      if (targetSessionId !== handoff.targetSessionId || completed) {
+        workflowStore.saveHandoff({
+          ...handoff,
+          targetSessionId,
+          status: completed ? "completed" : handoff.status,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+  }, [sessions, workflow.handoffs]);
 
   const markAttentionRead = (item: AttentionItem) => {
     setSelectedAttentionId(item.id);
@@ -175,18 +198,26 @@ export function WorkflowCenter({
         sourceEngine: activeSession.engine ?? "claude",
         targetEngine,
         targetConversationId: handoffResult?.targetConversationId,
+        targetSessionId: handoffResult?.targetSessionId,
         purpose,
         objective: prompt,
         constraints: "Preserve existing behavior and keep the change scoped to this project.",
         verification: "Run relevant tests and report the exact commands and results.",
         commentIds: selectedCurrentCommentIds,
         snapshotId: currentSnapshot?.id,
-        status: onHandoff ? "started" : "ready",
+        status: handoffResult?.error ? "failed" : onHandoff ? "started" : "ready",
+        error: handoffResult?.error,
         createdAt: now,
         updatedAt: now,
       });
-      chosen.forEach((comment) => workflowStore.saveComment({ ...comment, status: "sent", updatedAt: now }));
-      toast.success(onHandoff ? `Handoff started in ${engineLabel(targetEngine)}` : "Handoff draft saved");
+      if (!handoffResult?.error) {
+        chosen.forEach((comment) => workflowStore.saveComment({ ...comment, status: "sent", updatedAt: now }));
+      }
+      if (handoffResult?.error) {
+        toast.error("Handoff failed", { description: handoffResult.error });
+      } else {
+        toast.success(onHandoff ? `Handoff started in ${engineLabel(targetEngine)}` : "Handoff draft saved");
+      }
       setTab("inbox");
     } catch (error) {
       toast.error("Handoff failed", { description: error instanceof Error ? error.message : String(error) });
@@ -246,7 +277,7 @@ export function WorkflowCenter({
             </div>
           )}
           {tab === "handoff" && (
-      <div className="mx-auto max-w-2xl space-y-5"><div><h2 className="text-lg font-semibold">Handoff work</h2><p className="text-xs text-muted-foreground">Send a reviewed, editable brief to another engine.</p></div><div className="space-y-4 rounded-lg border border-border/60 p-5"><label className="block text-xs font-medium">Target engine<select value={targetEngine} onChange={(event) => setTargetEngine(event.target.value as EngineId)} className="mt-1 block w-full rounded border border-border bg-background p-2 text-sm"><option value="claude">Claude</option><option value="codex">Codex</option></select></label><label className="block text-xs font-medium">Purpose<select value={purpose} onChange={(event) => setPurpose(event.target.value as HandoffPurpose)} className="mt-1 block w-full rounded border border-border bg-background p-2 text-sm"><option value="review">Review current implementation</option><option value="fix">Fix selected findings</option><option value="continue">Continue implementation</option></select></label><div className="rounded bg-muted/40 p-3 text-xs text-muted-foreground">{activeSession ? `Source: ${activeSession.title} · ${engineLabel(activeSession.engine)}` : "Open a session first."}<br />{selectedCurrentCommentIds.length} feedback item(s) selected.</div><Button className="w-full" onClick={() => void sendHandoff()} disabled={!activeSession || isSending}>{isSending ? "Starting…" : <><Send className="me-2 h-3.5 w-3.5" />Create handoff</>}</Button><Button variant="ghost" className="w-full" onClick={() => { const prompt = buildHandoffPrompt(); if (!prompt) return; void navigator.clipboard?.writeText(prompt); toast.success("Handoff brief copied"); }}><Clipboard className="me-2 h-3.5 w-3.5" />Copy handoff brief</Button></div></div>
+      <div className="mx-auto max-w-2xl space-y-5"><div><h2 className="text-lg font-semibold">Handoff work</h2><p className="text-xs text-muted-foreground">Send a reviewed, editable brief to another engine.</p></div><div className="space-y-4 rounded-lg border border-border/60 p-5"><label className="block text-xs font-medium">Target engine<select value={targetEngine} onChange={(event) => setTargetEngine(event.target.value as EngineId)} className="mt-1 block w-full rounded border border-border bg-background p-2 text-sm"><option value="claude">Claude</option><option value="codex">Codex</option></select></label><label className="block text-xs font-medium">Purpose<select value={purpose} onChange={(event) => setPurpose(event.target.value as HandoffPurpose)} className="mt-1 block w-full rounded border border-border bg-background p-2 text-sm"><option value="review">Review current implementation</option><option value="fix">Fix selected findings</option><option value="continue">Continue implementation</option></select></label><div className="rounded bg-muted/40 p-3 text-xs text-muted-foreground">{activeSession ? `Source: ${activeSession.title} · ${engineLabel(activeSession.engine)}` : "Open a session first."}<br />{selectedCurrentCommentIds.length} feedback item(s) selected.</div><Button className="w-full" onClick={() => void sendHandoff()} disabled={!activeSession || isSending}>{isSending ? "Starting…" : <><Send className="me-2 h-3.5 w-3.5" />Create handoff</>}</Button><Button variant="ghost" className="w-full" onClick={() => { const prompt = buildHandoffPrompt(); if (!prompt) return; void navigator.clipboard?.writeText(prompt); toast.success("Handoff brief copied"); }}><Clipboard className="me-2 h-3.5 w-3.5" />Copy handoff brief</Button></div><div className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">Handoff history</h3>{workflow.handoffs.length === 0 ? <div className="rounded border border-dashed p-4 text-xs text-muted-foreground">No handoffs yet.</div> : workflow.handoffs.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 8).map((handoff) => { const target = sessions.find((session) => session.id === handoff.targetSessionId || session.conversationId === handoff.targetConversationId); const status = handoff.status === "completed" ? "Completed" : handoff.status === "failed" ? "Failed" : handoff.status === "started" ? "In progress" : "Draft"; return <div key={handoff.id} className="rounded border border-border/60 p-3 text-xs"><div className="flex items-center gap-2"><span className="font-medium">{engineLabel(handoff.sourceEngine)} → {engineLabel(handoff.targetEngine)}</span><Badge variant={handoff.status === "failed" ? "destructive" : "outline"}>{status}</Badge>{target ? <Button variant="ghost" size="sm" className="ms-auto h-6 px-2 text-[11px]" onClick={() => onSelectSession(target.id)}>Open target</Button> : null}</div><p className="mt-1 line-clamp-2 text-muted-foreground">{handoff.objective}</p>{handoff.error ? <p className="mt-1 text-destructive">{handoff.error}</p> : null}</div>; })}</div></div>
           )}
         </main>
       </div>
