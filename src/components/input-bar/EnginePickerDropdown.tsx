@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronDown, Loader2, PencilLine, Settings } from "lucide-react";
+import { ChevronDown, Loader2, PencilLine, Settings, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -116,6 +116,7 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
   const customModelId = useSettingsStore((s) => s.customModelsByEngine[engine]);
   const setCustomModelForEngine = useSettingsStore((s) => s.setCustomModelForEngine);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const openCustomDialog = () => {
     // Defer until the dropdown has fully closed to avoid focus conflicts
@@ -135,6 +136,60 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
       onModelChange(modelId);
     }
   };
+
+  const handleCustomModelDelete = () => {
+    const deleted = customModelId;
+    setCustomModelForEngine(engine, "");
+    // Reset the selection when the deleted model was active, so the picker
+    // and session state don't reference a model that no longer exists.
+    if (!isACPAgent && deleted && selectedModelId === deleted) {
+      onModelChange("");
+    }
+  };
+
+  // Custom model row with hover-revealed edit/delete actions. Shared between
+  // the Claude/Codex model list and the ACP model config submenu.
+  const renderCustomModelRow = (isSelected: boolean, onSelect: () => void) => (
+    <DropdownMenuItem
+      onClick={onSelect}
+      className={`group ${isSelected ? "bg-accent" : ""}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-mono text-xs">{customModelId}</div>
+        <div className="text-[10px] text-muted-foreground">Custom model</div>
+      </div>
+      <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-data-[highlighted]:opacity-100">
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Edit custom model ID"
+          title="Edit custom model ID"
+          className="rounded p-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Close the menu first so the dialog doesn't fight it for focus.
+            setMenuOpen(false);
+            openCustomDialog();
+          }}
+        >
+          <PencilLine className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Delete custom model ID"
+          title="Delete custom model ID"
+          className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleCustomModelDelete();
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </DropdownMenuItem>
+  );
 
   // Engine-specific config items (model/effort/ACP config) -- shared between
   // multi-agent submenu and single-agent direct rendering
@@ -213,19 +268,10 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
           <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground">
             Custom
           </div>
-          {customModelId && (
-            <DropdownMenuItem
-              onClick={() => onModelChange(customModelId)}
-              className={customModelId === selectedModelId ? "bg-accent" : ""}
-            >
-              <div>
-                <div className="font-mono text-xs">{customModelId}</div>
-                <div className="text-[10px] text-muted-foreground">
-                  Custom model
-                </div>
-              </div>
-            </DropdownMenuItem>
-          )}
+          {customModelId &&
+            renderCustomModelRow(customModelId === selectedModelId, () =>
+              onModelChange(customModelId),
+            )}
           <DropdownMenuItem onClick={openCustomDialog}>
             <PencilLine className="h-3.5 w-3.5 text-muted-foreground" />
             {customModelId ? "Edit custom model ID…" : "Custom model ID…"}
@@ -305,23 +351,11 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
                   {isModelOption && (
                     <>
                       <DropdownMenuSeparator />
-                      {customModelId && (
-                        <DropdownMenuItem
-                          onClick={() => onACPConfigChange(opt.id, customModelId)}
-                          className={
-                            customModelId === opt.currentValue ? "bg-accent" : ""
-                          }
-                        >
-                          <div>
-                            <div className="font-mono text-xs">
-                              {customModelId}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground">
-                              Custom model
-                            </div>
-                          </div>
-                        </DropdownMenuItem>
-                      )}
+                      {customModelId &&
+                        renderCustomModelRow(
+                          customModelId === opt.currentValue,
+                          () => onACPConfigChange(opt.id, customModelId),
+                        )}
                       <DropdownMenuItem onClick={openCustomDialog}>
                         <PencilLine className="h-3.5 w-3.5 text-muted-foreground" />
                         {customModelId
@@ -461,7 +495,7 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
