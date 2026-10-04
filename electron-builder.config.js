@@ -93,6 +93,10 @@ module.exports = {
     "node_modules/@anthropic-ai/claude-agent-sdk/*.wasm",
     "node_modules/@anthropic-ai/claude-agent-sdk/vendor/**",
     "node_modules/@anthropic-ai/claude-agent-sdk/manifest*.json",
+    "node_modules/@trycua/cua-driver/**",
+    "node_modules/@trycua/cua-driver-*/**",
+    "node_modules/@ubjs/**",
+    "electron/dist/computer-use-mcp.js",
   ],
 
   npmRebuild: true,

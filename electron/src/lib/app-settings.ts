@@ -31,6 +31,8 @@ const DEFAULTS: AppSettings = {
   codexClientName: "Harnss",
   codexBinarySource: "auto",
   codexComputerUseEnabled: false,
+  computerUseEnabled: false,
+  computerUseBinaryPath: "",
   codexCustomBinaryPath: "",
   claudeBinarySource: "auto",
   claudeCustomBinaryPath: "",
@@ -62,9 +64,13 @@ export function getAppSettings(): AppSettings {
     // Deep-merge `notifications` so upgrading users get defaults for each event type
     // even if their settings.json has a partial or missing notifications object.
     const parsedNotif = parsed.notifications as Partial<NotificationSettings> | undefined;
+    const computerUseEnabled = typeof parsed.computerUseEnabled === "boolean"
+      ? parsed.computerUseEnabled
+      : parsed.codexComputerUseEnabled === true;
     cached = {
       ...DEFAULTS,
       ...parsed,
+      computerUseEnabled,
       notifications: {
         exitPlanMode: { ...NOTIFICATION_DEFAULTS.exitPlanMode, ...parsedNotif?.exitPlanMode },
         permissions: { ...NOTIFICATION_DEFAULTS.permissions, ...parsedNotif?.permissions },

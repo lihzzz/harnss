@@ -21,6 +21,8 @@ function mcpToolCallItem(overrides: {
 
 describe("isComputerUseMcpCall", () => {
   it("matches the Codex desktop computer-use MCP servers", () => {
+    expect(isComputerUseMcpCall("harnss_cua", "screenshot")).toBe(true);
+    expect(isComputerUseMcpCall("cua-driver", "click")).toBe(true);
     expect(isComputerUseMcpCall("node_repl", "js")).toBe(true);
     expect(isComputerUseMcpCall("cua_repl", "js")).toBe(true);
     expect(isComputerUseMcpCall("computer-use", "js")).toBe(true);

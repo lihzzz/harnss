@@ -128,7 +128,9 @@ const MCP_PATTERN_RENDERERS: Array<{ pattern: RegExp; renderer: McpRenderer }> =
   // Context7
   { pattern: /Context7[/_]+resolve-library-id$/, renderer: Context7LibraryList },
   { pattern: /Context7[/_]+query-docs$/, renderer: Context7DocsResult },
-  // Codex Computer Use (node_repl/cua_repl `js` execution)
+  // Harnss Cua Driver tools, plus the legacy node_repl bridge.
+  { pattern: /^mcp__(?:harnss_cua|cua-driver)__.+$/i, renderer: ComputerUseResult },
+  { pattern: /(?:^|[/_])(?:harnss_cua|cua-driver)(?:[/_]|$)/i, renderer: ComputerUseResult },
   { pattern: /^mcp__(?:node_repl|cua_repl|computer-use)__js$/i, renderer: ComputerUseResult },
 ];
 
@@ -191,8 +193,10 @@ export function getMcpCompactSummary(toolName: string, toolInput: Record<string,
   if (/query-docs$/.test(toolName)) {
     return String(toolInput.query ?? "").slice(0, 60);
   }
-  // Codex Computer Use — node_repl `js` calls carry a user-facing title
-  if (/^mcp__(?:node_repl|cua_repl|computer-use)__js$/i.test(toolName)) {
+  // Computer-use calls carry a user-facing action title.
+  if (/^mcp__(?:harnss_cua|cua-driver)__.+$/i.test(toolName)
+    || /(?:^|[/_])(?:harnss_cua|cua-driver)(?:[/_]|$)/i.test(toolName)
+    || /^mcp__(?:node_repl|cua_repl|computer-use)__js$/i.test(toolName)) {
     return String(toolInput.title ?? "").slice(0, 80);
   }
   return "";

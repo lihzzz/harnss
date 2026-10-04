@@ -49,6 +49,10 @@ export interface AppSettings {
   codexBinarySource: CodexBinarySource;
   /** Enable Codex's experimental desktop Computer Use feature for new sessions */
   codexComputerUseEnabled: boolean;
+  /** Enable the engine-independent Cua Driver MCP runtime for new sessions */
+  computerUseEnabled: boolean;
+  /** Optional absolute path to the Cua Driver executable; empty uses PATH */
+  computerUseBinaryPath: string;
   /** Absolute path used when codexBinarySource is custom */
   codexCustomBinaryPath: string;
   /** Which Claude binary source to use */

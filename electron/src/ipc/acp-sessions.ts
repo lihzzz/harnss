@@ -35,6 +35,7 @@ import { resolveACPFilePath, applyReadRange, ACP_CLIENT_CAPABILITIES } from "@sh
 import type { ACPTextFileParams } from "@shared/lib/acp-helpers";
 import type { McpServerInput } from "@shared/lib/mcp-config";
 import type { ACPAuthMethod, ACPAuthenticateResult } from "@shared/types/acp";
+import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
 
 type ACPReadTextFileParams = ACPTextFileParams & { content?: string; line?: number | null; limit?: number | null };
 type ACPWriteTextFileParams = ACPTextFileParams & { content: string };
@@ -541,7 +542,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       );
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
-      const acpMcpServers = await buildAcpMcpServers(options.mcpServers ?? []);
+      const sourceServers = withComputerUseMcpServer(options.mcpServers);
+      const acpMcpServers = await buildAcpMcpServers(sourceServers);
       const entry: ACPSessionEntry = {
         process: proc,
         connection,
@@ -556,7 +558,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         pendingStartRequest: {
           cwd: options.cwd,
           mcpServers: acpMcpServers,
-          sourceServers: options.mcpServers ?? [],
+          sourceServers,
         },
         isReloading: false,
       };
@@ -574,7 +576,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       void captureEvent("session_created", { engine: "acp", ...analyticsProperties });
 
-      return await finalizePendingAcpSession(entry, sessionResult, options.mcpServers ?? [], "ACP_SPAWN");
+      return await finalizePendingAcpSession(entry, sessionResult, sourceServers, "ACP_SPAWN");
     } catch (err) {
       const authMethods = connResult?.authMethods ?? [];
       const authRequiredMethods = extractAuthRequired(err, authMethods);
@@ -691,7 +693,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       );
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
-      const acpMcpServers = await buildAcpMcpServers(options.mcpServers ?? []);
+      const sourceServers = withComputerUseMcpServer(options.mcpServers);
+      const acpMcpServers = await buildAcpMcpServers(sourceServers);
 
       let acpSessionId: string;
       let usedLoad = false;
@@ -718,7 +721,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         log("ACP_REVIVE", `newSession fallback, session=${acpSessionId.slice(0, 12)}`);
       }
 
-      const mcpStatuses = (options.mcpServers ?? []).map(s => ({ name: s.name, status: "connected" as const }));
+      const mcpStatuses = sourceServers.map(s => ({ name: s.name, status: "connected" as const }));
       void captureEvent("session_revived", { engine: "acp", success: true, ...analyticsProperties });
       return { sessionId: internalId, agentSessionId: acpSessionId, usedLoad, configOptions, mcpStatuses };
     } catch (err) {
@@ -843,7 +846,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     const nextCwd = cwd ?? session.cwd;
     log("ACP_RELOAD", `session=${sessionId.slice(0, 8)} calling loadSession with ${mcpServers?.length ?? 0} MCP server(s) cwd=${nextCwd}`);
 
-    const acpMcpServers = await buildAcpMcpServers(mcpServers ?? []);
+    const acpMcpServers = await buildAcpMcpServers(withComputerUseMcpServer(mcpServers));
 
     try {
       // Suppress history replay notifications so the renderer doesn't get duplicates

@@ -4,7 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import type { AppSettings } from "@/types";
-import type { CodexComputerUseStatus } from "@shared/types/codex";
+import type { ComputerUseRuntimeStatus } from "@shared/types/computer-use";
 import { useI18n } from "@/lib/i18n";
 
 interface EngineSettingsProps {
@@ -25,7 +25,8 @@ export const EngineSettings = memo(function EngineSettings({
   const [codexCustomBinaryPath, setCodexCustomBinaryPath] = useState("");
   const [opencodeCustomBinaryPath, setOpencodeCustomBinaryPath] = useState("");
   const [computerUseEnabled, setComputerUseEnabled] = useState(false);
-  const [computerUseStatus, setComputerUseStatus] = useState<CodexComputerUseStatus | null>(null);
+  const [computerUseBinaryPath, setComputerUseBinaryPath] = useState("");
+  const [computerUseStatus, setComputerUseStatus] = useState<ComputerUseRuntimeStatus | null>(null);
   const [computerUseChecking, setComputerUseChecking] = useState(false);
 
   useEffect(() => {
@@ -35,7 +36,8 @@ export const EngineSettings = memo(function EngineSettings({
       setCodexBinarySource(appSettings.codexBinarySource || "auto");
       setCodexCustomBinaryPath(appSettings.codexCustomBinaryPath || "");
       setOpencodeCustomBinaryPath(appSettings.opencodeCustomBinaryPath || "");
-      setComputerUseEnabled(appSettings.codexComputerUseEnabled || false);
+      setComputerUseEnabled(appSettings.computerUseEnabled || false);
+      setComputerUseBinaryPath(appSettings.computerUseBinaryPath || "");
     }
   }, [appSettings]);
 
@@ -46,7 +48,7 @@ export const EngineSettings = memo(function EngineSettings({
     }
     let cancelled = false;
     setComputerUseChecking(true);
-    window.claude.codex
+    window.claude
       .computerUseStatus()
       .then((status) => {
         if (!cancelled) setComputerUseStatus(status);
@@ -57,7 +59,7 @@ export const EngineSettings = memo(function EngineSettings({
     return () => {
       cancelled = true;
     };
-  }, [computerUseEnabled]);
+  }, [computerUseEnabled, appSettings?.computerUseBinaryPath]);
 
   const handleClaudeBinarySourceChange = useCallback(
     async (source: "auto" | "managed" | "custom") => {
@@ -105,22 +107,30 @@ export const EngineSettings = memo(function EngineSettings({
   const handleComputerUseToggle = useCallback(
     async (checked: boolean) => {
       setComputerUseEnabled(checked);
-      await onUpdateAppSettings({ codexComputerUseEnabled: checked });
+      await onUpdateAppSettings({ computerUseEnabled: checked, codexComputerUseEnabled: checked });
+      if (checked) {
+        const permissions = await window.claude.computerUseRequestPermissions();
+        if (permissions) {
+          setComputerUseStatus((current) => current ? { ...current, permissions } : current);
+        }
+      }
     },
     [onUpdateAppSettings],
   );
 
   const computerUseStatusText = computerUseChecking
-    ? "Checking node_repl runtime…"
+    ? "Checking Cua Driver runtime…"
     : !computerUseStatus
       ? ""
       : computerUseStatus.error
         ? `Check failed: ${computerUseStatus.error}`
         : computerUseStatus.ready
-          ? `Ready — node_repl connected (tools: ${computerUseStatus.nodeReplTools.join(", ")})`
-          : !computerUseStatus.featureEnabled
-            ? "Codex computer_use feature is not enabled in the resolved config."
-            : "node_repl MCP server is not connected. Configure it in ~/.codex/config.toml.";
+          ? `Ready — Cua Driver available (${computerUseStatus.mode})`
+          : computerUseStatus.permissions && (!computerUseStatus.permissions.accessibility || !computerUseStatus.permissions.screenRecording)
+            ? "Grant Accessibility and Screen Recording permissions, then retry."
+          : computerUseStatus.mode === "internal"
+            ? "The bundled Cua native runtime could not start. Check the app log for native permission or loading errors."
+            : "The configured Cua Driver executable is unavailable.";
 
   return (
     <div className="flex h-full flex-col">
@@ -207,14 +217,35 @@ export const EngineSettings = memo(function EngineSettings({
             )}
 
             <SettingRow
-              label="Computer Use (experimental)"
-              description="Let Codex operate desktop apps through the node_repl runtime bundled with the Codex/ChatGPT desktop app. Applies to newly started sessions."
+              label="Computer Use runtime"
+              description="Let Claude, ACP agents, and Codex operate desktop apps through the independent Cua Driver MCP runtime. Applies to newly started sessions."
             >
               <Switch
                 checked={computerUseEnabled}
                 onCheckedChange={handleComputerUseToggle}
               />
             </SettingRow>
+
+            {computerUseEnabled && (
+              <SettingRow
+                label="External Cua Driver path"
+                description="Optional override for an external cua-driver executable. Leave empty to use the bundled native runtime."
+              >
+                <input
+                  type="text"
+                  value={computerUseBinaryPath}
+                  onChange={(e) => setComputerUseBinaryPath(e.target.value)}
+                  onBlur={(e) => {
+                    const next = e.currentTarget.value.trim();
+                    setComputerUseBinaryPath(next);
+                    void onUpdateAppSettings({ computerUseBinaryPath: next });
+                  }}
+                  spellCheck={false}
+                  className="h-8 w-80 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+                  placeholder="Bundled runtime"
+                />
+              </SettingRow>
+            )}
 
             {computerUseEnabled && computerUseStatusText && (
               <SettingRow

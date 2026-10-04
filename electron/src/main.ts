@@ -46,6 +46,7 @@ import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
 import { onSettingsChanged } from "./ipc/settings";
+import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./lib/computer-use-runtime";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // force GPU raster for all content
@@ -261,6 +262,9 @@ ipcMain.handle("app:getGlassSupported", () => {
 ipcMain.handle("app:get-mac-background-effect-support", () => {
   return getMacBackgroundEffectSupport();
 });
+
+ipcMain.handle("computer-use:status", () => getComputerUseRuntimeStatus());
+ipcMain.handle("computer-use:request-permissions", () => requestComputerUsePermissions());
 
 ipcMain.on("app:set-theme-source", (_event, themeSource: unknown) => {
   nativeTheme.themeSource = normalizeThemeSource(themeSource);

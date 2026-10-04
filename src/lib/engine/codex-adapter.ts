@@ -210,26 +210,26 @@ export function codexItemToToolResult(item: CodexThreadItem): ToolUseResult | un
 }
 
 /**
- * Codex desktop Computer Use is exposed through the bundled node_repl/cua_repl
- * MCP servers. Keep this check narrow so other MCP output continues to use the
- * existing generic result handling.
+ * Harnss Computer Use is exposed through the engine-independent Cua Driver
+ * MCP server. Keep legacy node_repl support for sessions created by older
+ * Harnss versions, while recognizing every Cua tool (not only `js`).
  */
 export function isComputerUseMcpCall(server: string, tool: string): boolean {
-  return /^(?:node_repl|cua_repl|computer-use)$/i.test(server) && tool === "js";
+  if (/^(?:harnss_cua|cua-driver|cua_repl|computer-use)$/i.test(server)) return true;
+  return /^node_repl$/i.test(server) && tool === "js";
 }
 
 /**
  * Preserve text and screenshot blocks from a node_repl `js` result instead of
  * dumping raw base64 into the chat transcript as JSON text.
  */
-function computerUseResult(result: {
-  content: Array<unknown>;
-  structuredContent: unknown;
-}): ToolUseResult {
+function computerUseResult(result: unknown): ToolUseResult {
   const images: ToolResultImage[] = [];
   const textBlocks: string[] = [];
+  const record = isRecord(result) ? result : {};
+  const contentBlocks = Array.isArray(record.content) ? record.content : [];
 
-  for (const block of result.content) {
+  for (const block of contentBlocks) {
     if (typeof block === "string") {
       textBlocks.push(block);
       continue;
@@ -246,8 +246,8 @@ function computerUseResult(result: {
   }
 
   const content = textBlocks.join("\n").trim();
-  const structuredContent = isRecord(result.structuredContent)
-    ? result.structuredContent
+  const structuredContent = isRecord(record.structuredContent)
+    ? record.structuredContent
     : undefined;
 
   return {

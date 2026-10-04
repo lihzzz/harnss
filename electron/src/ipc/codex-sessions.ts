@@ -16,6 +16,7 @@ import { getCodexBinaryPath, getCodexBinaryStatus, getCodexHome, getCodexVersion
 import { getAppSetting } from "../lib/app-settings";
 import { reportError } from "../lib/error-utils";
 import { captureEvent } from "../lib/posthog";
+import { COMPUTER_USE_MCP_SERVER_NAME, getComputerUseMcpServer, getComputerUseRuntimeStatus } from "../lib/computer-use-runtime";
 
 import type {
   CodexServerNotification,
@@ -82,8 +83,14 @@ function getAppServerClientInfo(): { name: string; title: string; version: strin
 
 function getCodexAppServerArgs(): string[] {
   const args = ["app-server"];
-  if (getAppSetting("codexComputerUseEnabled")) {
+  const computerUse = getComputerUseMcpServer();
+  if (computerUse) {
     args.push("--enable", "computer_use");
+    // Codex app-server supports -c overrides, so Harnss can inject the
+    // runtime without mutating the user's ~/.codex/config.toml.
+    args.push("-c", `mcp_servers.${COMPUTER_USE_MCP_SERVER_NAME}.command=${JSON.stringify(computerUse.command)}`);
+    args.push("-c", `mcp_servers.${COMPUTER_USE_MCP_SERVER_NAME}.args=${JSON.stringify(computerUse.args ?? [])}`);
+    args.push("-c", `mcp_servers.${COMPUTER_USE_MCP_SERVER_NAME}.enabled=true`);
   }
   return args;
 }
@@ -122,7 +129,8 @@ interface CodexMcpServerStatusResponse {
 }
 
 async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
-  const enabled = getAppSetting("codexComputerUseEnabled");
+  const runtime = await getComputerUseRuntimeStatus();
+  const enabled = runtime.enabled;
   const base: CodexComputerUseStatus = {
     enabled,
     featureEnabled: false,
@@ -130,6 +138,10 @@ async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
     nodeReplTools: [],
     ready: false,
   };
+
+  if (!enabled || !runtime.installed) {
+    return { ...base, error: runtime.error };
+  }
 
   try {
     const codexPath = await getCodexBinaryPath();
@@ -149,19 +161,19 @@ async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
         rpc.request<CodexConfigReadResponse>("config/read"),
         rpc.request<CodexMcpServerStatusResponse>("mcpServerStatus/list", {}, 120_000),
       ]);
-      const nodeRepl = (mcpResult.data ?? []).find((server) => server.name === "node_repl");
-      const nodeReplTools = nodeRepl?.tools && typeof nodeRepl.tools === "object"
-        ? Object.keys(nodeRepl.tools)
+      const cua = (mcpResult.data ?? []).find((server) => server.name === COMPUTER_USE_MCP_SERVER_NAME);
+      const cuaTools = cua?.tools && typeof cua.tools === "object"
+        ? Object.keys(cua.tools)
         : [];
       const featureEnabled = configResult.config?.features?.computer_use === true;
-      const nodeReplConnected = !!nodeRepl?.serverInfo && nodeRepl?.toolsError == null;
+      const nodeReplConnected = !!cua?.serverInfo && cua?.toolsError == null;
 
       return {
         ...base,
         featureEnabled,
         nodeReplConnected,
-        nodeReplTools,
-        ready: enabled && featureEnabled && nodeReplConnected && nodeReplTools.includes("js"),
+        nodeReplTools: cuaTools,
+        ready: enabled && featureEnabled && runtime.ready && nodeReplConnected && cuaTools.length > 0,
         codexPath,
         codexVersion,
         codexHome: initResult.codexHome,

@@ -109,6 +109,8 @@ contextBridge.exposeInMainWorld("claude", {
     ipcRenderer.invoke("claude:set-thinking", { sessionId, thinkingEnabled }),
   version: () => ipcRenderer.invoke("claude:version"),
   binaryStatus: () => ipcRenderer.invoke("claude:binary-status"),
+  computerUseStatus: () => ipcRenderer.invoke("computer-use:status"),
+  computerUseRequestPermissions: () => ipcRenderer.invoke("computer-use:request-permissions"),
   supportedModels: (sessionId: string) => ipcRenderer.invoke("claude:supported-models", sessionId),
   slashCommands: (sessionId: string) => ipcRenderer.invoke("claude:slash-commands", sessionId),
   modelsCacheGet: () => ipcRenderer.invoke("claude:models-cache:get"),

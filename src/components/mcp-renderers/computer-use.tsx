@@ -7,7 +7,7 @@ interface ComputerUseResultProps {
   images?: ToolResultImage[];
 }
 
-/** Renderer for Codex node_repl/cua_repl `js` results (desktop Computer Use). */
+/** Renderer for Cua Driver and legacy desktop Computer Use results. */
 export function ComputerUseResult({ rawText, images }: ComputerUseResultProps) {
   return (
     <div className="space-y-2">

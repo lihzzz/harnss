@@ -14,6 +14,7 @@ import { buildSdkMcpConfig } from "@shared/lib/mcp-config";
 import type { McpServerInput } from "@shared/lib/mcp-config";
 import { getClaudeBinaryMetadata, getClaudeBinaryPath, getClaudeBinaryStatus, getClaudeVersion } from "../lib/claude-binary";
 import { captureEvent } from "../lib/posthog";
+import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
 
 /** SDK options for file checkpointing — enables Write/Edit/NotebookEdit revert support */
 function fileCheckpointOptions(): Record<string, unknown> {
@@ -515,7 +516,7 @@ async function restartSession(
   }
 
   const opts = session.startOptions;
-  const mcpServers = mcpServersOverride ?? opts.mcpServers;
+  const mcpServers = withComputerUseMcpServer(mcpServersOverride ?? opts.mcpServers);
   const cwd = cwdOverride || opts.cwd || process.cwd();
   const query = await getSDK();
   const newChannel = new AsyncChannel<unknown>();
@@ -691,8 +692,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         queryOptions.effort = options.effort;
       }
 
-      if (options.mcpServers?.length) {
-        queryOptions.mcpServers = await buildSdkMcpConfig(options.mcpServers, mcpConfigOptions);
+      const mcpServers = withComputerUseMcpServer(options.mcpServers);
+      if (mcpServers.length) {
+        queryOptions.mcpServers = await buildSdkMcpConfig(mcpServers, mcpConfigOptions);
       }
 
       log("SPAWN", { sessionId, resume: options.resume || null, options: summarizeSpawnOptions(queryOptions) });

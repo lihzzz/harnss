@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     main: "electron/src/main.ts",
     preload: "electron/src/preload.ts",
+    "computer-use-mcp": "electron/src/computer-use-mcp.ts",
   },
   outDir: "electron/dist",
   format: ["cjs"],
@@ -17,7 +18,9 @@ export default defineConfig({
     "electron-liquid-glass",
     "@anthropic-ai/claude-agent-sdk",
     "posthog-node",
+    "@trycua/cua-driver",
+    "@trycua/cua-driver/electron",
   ],
-  noExternal: [],
+  noExternal: ["@modelcontextprotocol/sdk"],
   treeshake: true,
 });

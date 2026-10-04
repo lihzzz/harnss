@@ -152,6 +152,8 @@ declare global {
       ) => Promise<IpcResult>;
       version: () => Promise<{ version?: string | null; error?: string }>;
       binaryStatus: () => Promise<{ installed: boolean; installing: boolean }>;
+      computerUseStatus: () => Promise<import("@shared/types/computer-use").ComputerUseRuntimeStatus>;
+      computerUseRequestPermissions: () => Promise<import("@shared/types/computer-use").ComputerUseRuntimeStatus["permissions"]>;
       projects: {
         list: () => Promise<Project[]>;
         create: (spaceId?: string) => Promise<Project | null>;
