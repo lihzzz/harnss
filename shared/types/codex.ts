@@ -68,11 +68,11 @@ export interface CodexComputerUseStatus {
   enabled: boolean;
   /** Whether the launched app-server reports the feature as enabled. */
   featureEnabled: boolean;
-  /** Whether the configured node_repl MCP server completed startup. */
-  nodeReplConnected: boolean;
-  /** Tool names discovered from node_repl. */
-  nodeReplTools: string[];
-  /** True only when the feature and the node_repl executor are both ready. */
+  /** Whether the configured Computer Use MCP server completed startup. */
+  mcpConnected: boolean;
+  /** Tool names discovered from the Computer Use MCP server. */
+  mcpTools: string[];
+  /** True only when the feature and the Computer Use MCP server are both ready. */
   ready: boolean;
   codexPath?: string;
   codexVersion?: string | null;

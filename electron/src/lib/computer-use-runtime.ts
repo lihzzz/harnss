@@ -61,6 +61,20 @@ export function withComputerUseMcpServer(servers: McpServerInput[] | undefined):
   return [...existing, runtime];
 }
 
+/** Build Codex app-server overrides for a stdio MCP server without editing config.toml. */
+export function getCodexMcpServerOverrides(server: McpServerInput): string[] {
+  const prefix = `mcp_servers.${server.name}`;
+  const args = [
+    "-c", `${prefix}.command=${JSON.stringify(server.command ?? "")}`,
+    "-c", `${prefix}.args=${JSON.stringify(server.args ?? [])}`,
+  ];
+  for (const [name, value] of Object.entries(server.env ?? {})) {
+    args.push("-c", `${prefix}.env.${name}=${JSON.stringify(value)}`);
+  }
+  args.push("-c", `${prefix}.enabled=true`);
+  return args;
+}
+
 function readExternalVersion(command: string): { installed: boolean; version?: string; error?: string } {
   if (/[\\/]/.test(command) && !fs.existsSync(command)) {
     return { installed: false, error: "Cua Driver executable was not found at the configured path." };

@@ -16,7 +16,12 @@ import { getCodexBinaryPath, getCodexBinaryStatus, getCodexHome, getCodexVersion
 import { getAppSetting } from "../lib/app-settings";
 import { reportError } from "../lib/error-utils";
 import { captureEvent } from "../lib/posthog";
-import { COMPUTER_USE_MCP_SERVER_NAME, getComputerUseMcpServer, getComputerUseRuntimeStatus } from "../lib/computer-use-runtime";
+import {
+  COMPUTER_USE_MCP_SERVER_NAME,
+  getComputerUseMcpServer,
+  getComputerUseRuntimeStatus,
+  getCodexMcpServerOverrides,
+} from "../lib/computer-use-runtime";
 
 import type {
   CodexServerNotification,
@@ -88,9 +93,7 @@ function getCodexAppServerArgs(): string[] {
     args.push("--enable", "computer_use");
     // Codex app-server supports -c overrides, so Harnss can inject the
     // runtime without mutating the user's ~/.codex/config.toml.
-    args.push("-c", `mcp_servers.${COMPUTER_USE_MCP_SERVER_NAME}.command=${JSON.stringify(computerUse.command)}`);
-    args.push("-c", `mcp_servers.${COMPUTER_USE_MCP_SERVER_NAME}.args=${JSON.stringify(computerUse.args ?? [])}`);
-    args.push("-c", `mcp_servers.${COMPUTER_USE_MCP_SERVER_NAME}.enabled=true`);
+    args.push(...getCodexMcpServerOverrides(computerUse));
   }
   return args;
 }
@@ -134,8 +137,8 @@ async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
   const base: CodexComputerUseStatus = {
     enabled,
     featureEnabled: false,
-    nodeReplConnected: false,
-    nodeReplTools: [],
+    mcpConnected: false,
+    mcpTools: [],
     ready: false,
   };
 
@@ -166,14 +169,14 @@ async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
         ? Object.keys(cua.tools)
         : [];
       const featureEnabled = configResult.config?.features?.computer_use === true;
-      const nodeReplConnected = !!cua?.serverInfo && cua?.toolsError == null;
+      const mcpConnected = !!cua?.serverInfo && cua?.toolsError == null;
 
       return {
         ...base,
         featureEnabled,
-        nodeReplConnected,
-        nodeReplTools: cuaTools,
-        ready: enabled && featureEnabled && runtime.ready && nodeReplConnected && cuaTools.length > 0,
+        mcpConnected,
+        mcpTools: cuaTools,
+        ready: enabled && featureEnabled && runtime.ready && mcpConnected && cuaTools.length > 0,
         codexPath,
         codexVersion,
         codexHome: initResult.codexHome,

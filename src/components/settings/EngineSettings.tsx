@@ -1,5 +1,5 @@
-import { memo, useState, useCallback, useEffect } from "react";
-import { Server } from "lucide-react";
+import { memo, useState, useCallback, useEffect, useRef } from "react";
+import { RefreshCw, Server } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
@@ -28,6 +28,8 @@ export const EngineSettings = memo(function EngineSettings({
   const [computerUseBinaryPath, setComputerUseBinaryPath] = useState("");
   const [computerUseStatus, setComputerUseStatus] = useState<ComputerUseRuntimeStatus | null>(null);
   const [computerUseChecking, setComputerUseChecking] = useState(false);
+  const [computerUseStatusError, setComputerUseStatusError] = useState<string | null>(null);
+  const computerUseStatusRequestRef = useRef(0);
 
   useEffect(() => {
     if (appSettings) {
@@ -41,25 +43,36 @@ export const EngineSettings = memo(function EngineSettings({
     }
   }, [appSettings]);
 
-  useEffect(() => {
-    if (!computerUseEnabled) {
+  const refreshComputerUseStatus = useCallback(async (enabled = computerUseEnabled) => {
+    const requestId = ++computerUseStatusRequestRef.current;
+    if (!enabled) {
       setComputerUseStatus(null);
+      setComputerUseStatusError(null);
+      setComputerUseChecking(false);
       return;
     }
-    let cancelled = false;
+
     setComputerUseChecking(true);
-    window.claude
-      .computerUseStatus()
-      .then((status) => {
-        if (!cancelled) setComputerUseStatus(status);
-      })
-      .finally(() => {
-        if (!cancelled) setComputerUseChecking(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [computerUseEnabled, appSettings?.computerUseBinaryPath]);
+    setComputerUseStatusError(null);
+    try {
+      const status = await window.claude.computerUseStatus();
+      if (requestId !== computerUseStatusRequestRef.current) return;
+      setComputerUseStatus(status);
+    } catch (error) {
+      if (requestId !== computerUseStatusRequestRef.current) return;
+      setComputerUseStatusError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (requestId === computerUseStatusRequestRef.current) setComputerUseChecking(false);
+    }
+  }, [computerUseEnabled]);
+
+  useEffect(() => {
+    void refreshComputerUseStatus();
+  }, [refreshComputerUseStatus, appSettings?.computerUseBinaryPath]);
+
+  useEffect(() => () => {
+    computerUseStatusRequestRef.current += 1;
+  }, []);
 
   const handleClaudeBinarySourceChange = useCallback(
     async (source: "auto" | "managed" | "custom") => {
@@ -109,17 +122,17 @@ export const EngineSettings = memo(function EngineSettings({
       setComputerUseEnabled(checked);
       await onUpdateAppSettings({ computerUseEnabled: checked, codexComputerUseEnabled: checked });
       if (checked) {
-        const permissions = await window.claude.computerUseRequestPermissions();
-        if (permissions) {
-          setComputerUseStatus((current) => current ? { ...current, permissions } : current);
-        }
+        await window.claude.computerUseRequestPermissions();
       }
+      await refreshComputerUseStatus(checked);
     },
-    [onUpdateAppSettings],
+    [onUpdateAppSettings, refreshComputerUseStatus],
   );
 
   const computerUseStatusText = computerUseChecking
     ? "Checking Cua Driver runtime…"
+    : computerUseStatusError
+      ? `Check failed: ${computerUseStatusError}`
     : !computerUseStatus
       ? ""
       : computerUseStatus.error
@@ -251,7 +264,18 @@ export const EngineSettings = memo(function EngineSettings({
               <SettingRow
                 label="Computer Use status"
                 description={computerUseStatusText}
-              />
+              >
+                <button
+                  type="button"
+                  onClick={() => void refreshComputerUseStatus()}
+                  disabled={computerUseChecking}
+                  aria-label="Refresh Computer Use status"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-foreground/10 px-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${computerUseChecking ? "animate-spin" : ""}`} />
+                  Retry
+                </button>
+              </SettingRow>
             )}
           </SettingsSection>
 
