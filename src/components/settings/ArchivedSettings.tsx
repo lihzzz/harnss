@@ -1,5 +1,5 @@
-import { memo, useMemo } from "react";
-import { Archive, FolderOpen } from "lucide-react";
+import { memo, useCallback, useMemo, useState } from "react";
+import { Archive, ChevronRight, FolderOpen } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import { SessionItem } from "@/components/sidebar/SessionItem";
@@ -67,6 +67,20 @@ export const ArchivedSettings = memo(function ArchivedSettings({
     );
   }, [archivedSessions, projectById]);
 
+  const [collapsedProjects, setCollapsedProjects] = useState<ReadonlySet<string>>(() => new Set());
+
+  const toggleProjectCollapsed = useCallback((projectKey: string) => {
+    setCollapsedProjects((previous) => {
+      const next = new Set(previous);
+      if (next.has(projectKey)) {
+        next.delete(projectKey);
+      } else {
+        next.add(projectKey);
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <div className="flex h-full flex-col">
       <SettingsHeader
@@ -83,37 +97,51 @@ export const ArchivedSettings = memo(function ArchivedSettings({
               </div>
             ) : (
               <div className="space-y-4">
-                {groupedByProject.map((group) => (
-                  <div key={group.project?.id ?? group.sessions[0].projectId}>
-                    <div className="mb-1 flex items-center gap-1.5 px-2.5">
-                      <ProjectGlyph project={group.project} />
-                      <span className="min-w-0 truncate text-[12px] font-medium text-muted-foreground">
-                        {group.project?.name ?? t("unknownProject")}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground/60">
-                        {group.sessions.length}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      {group.sessions.map((session) => (
-                        <SessionItem
-                          key={session.id}
-                          islandLayout={islandLayout}
-                          surface="settings"
-                          session={session}
-                          isActive={session.id === activeSessionId}
-                          onSelect={() => onSelectSession(session.id)}
-                          onDelete={() => onDeleteSession(session.id)}
-                          onArchiveToggle={() => onArchiveSession(session.id, false)}
-                          onRename={(title) => onRenameSession(session.id, title)}
-                          agents={agents}
-                          onOpenInSplitView={onOpenInSplitView ? () => onOpenInSplitView(session.id) : undefined}
-                          canOpenInSplitView={canOpenInSplitView?.(session.id) ?? true}
+                {groupedByProject.map((group) => {
+                  const projectKey = group.project?.id ?? group.sessions[0].projectId;
+                  const collapsed = collapsedProjects.has(projectKey);
+                  return (
+                    <div key={projectKey}>
+                      <button
+                        type="button"
+                        onClick={() => toggleProjectCollapsed(projectKey)}
+                        aria-expanded={!collapsed}
+                        className="mb-1 flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-start transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                      >
+                        <ChevronRight
+                          className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed ? "" : "rotate-90"}`}
                         />
-                      ))}
+                        <ProjectGlyph project={group.project} />
+                        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground">
+                          {group.project?.name ?? t("unknownProject")}
+                        </span>
+                        <span className="shrink-0 text-[11px] text-muted-foreground/60">
+                          {group.sessions.length}
+                        </span>
+                      </button>
+                      {!collapsed && (
+                        <div className="space-y-1">
+                          {group.sessions.map((session) => (
+                            <SessionItem
+                              key={session.id}
+                              islandLayout={islandLayout}
+                              surface="settings"
+                              session={session}
+                              isActive={session.id === activeSessionId}
+                              onSelect={() => onSelectSession(session.id)}
+                              onDelete={() => onDeleteSession(session.id)}
+                              onArchiveToggle={() => onArchiveSession(session.id, false)}
+                              onRename={(title) => onRenameSession(session.id, title)}
+                              agents={agents}
+                              onOpenInSplitView={onOpenInSplitView ? () => onOpenInSplitView(session.id) : undefined}
+                              canOpenInSplitView={canOpenInSplitView?.(session.id) ?? true}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </SettingsSection>
