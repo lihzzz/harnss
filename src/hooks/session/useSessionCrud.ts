@@ -83,6 +83,7 @@ export function useSessionCrud({
     acpAgentIdRef,
     acpAgentSessionIdRef,
     messageQueueRef,
+    materializingRef,
     switchSessionRef,
     onSpaceChangeRef,
   } = refs;
@@ -187,8 +188,14 @@ export function useSessionCrud({
       if (id === activeSessionIdRef.current) return;
       const requestId = ++switchRequestIdRef.current;
 
-      abandonEagerSession("switch_session");
-      abandonDraftAcpSession("switch_session");
+      // A draft can be in the middle of materializing after its first prompt.
+      // Keep that startup alive so switching chats does not discard the only
+      // in-memory representation of the new conversation.
+      const materializingDraft = activeSessionIdRef.current === DRAFT_ID && materializingRef.current;
+      if (!materializingDraft) {
+        abandonEagerSession("switch_session");
+        abandonDraftAcpSession("switch_session");
+      }
       acpAgentIdRef.current = null;
       acpAgentSessionIdRef.current = null;
       seedBackgroundStore();

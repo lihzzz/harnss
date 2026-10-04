@@ -70,6 +70,7 @@ export function useSessionLifecycle({
   resetCodexEffortToModelDefault,
 }: UseSessionLifecycleParams) {
   const { claude, acp, codex } = engines;
+  const { backgroundStoreRef } = refs;
 
   // ── Session cache: LRU payload cache, session list loading, model hydration ──
   const {
@@ -195,18 +196,35 @@ export function useSessionLifecycle({
           // Session is live — send the prompt (user message already in UI)
           await new Promise((resolve) => setTimeout(resolve, 50));
           const promptResult = await window.claude.acp.prompt(sessionId, text, images);
+          const isActiveSession = refs.activeSessionIdRef.current === sessionId;
           if (promptResult?.error) {
-            acp.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(
-                `ACP prompt error: ${promptResult.error}`,
-                true,
-                isRetryableUpstreamError(promptResult.error ?? ""),
-              ),
-            ]);
-            acp.setIsProcessing(false);
+            const errorMessage = createSystemMessage(
+              `ACP prompt error: ${promptResult.error}`,
+              true,
+              isRetryableUpstreamError(promptResult.error ?? ""),
+            );
+            if (isActiveSession) {
+              acp.setMessages((prev) => [...prev, errorMessage]);
+            } else {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
+            if (isActiveSession) {
+              acp.setIsProcessing(false);
+            }
             refs.pendingAcpDraftPromptRef.current = null;
             return { sessionId, error: promptResult.error };
+          }
+          if (!isActiveSession) {
+            const userMessage = createUserMessage(text, images, displayText);
+            const backgroundState = backgroundStoreRef.current.get(sessionId);
+            const alreadyHasUserMessage = backgroundState?.messages.some((message) => (
+              message.role === "user" && message.content === userMessage.content
+            ));
+            if (!alreadyHasUserMessage) {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, userMessage]);
+            }
+            backgroundStoreRef.current.setProcessing(sessionId, true);
           }
           refs.pendingAcpDraftPromptRef.current = null;
           return { sessionId };
@@ -218,22 +236,38 @@ export function useSessionLifecycle({
           if (!sessionId) return { error: "Unable to materialize the Codex session." };
           await new Promise((resolve) => setTimeout(resolve, 50));
 
-          codex.setMessages((prev) => [
-            ...prev,
-            createUserMessage(text, images, displayText),
-          ]);
-          codex.setIsProcessing(true);
+          const userMessage = createUserMessage(text, images, displayText);
+          const wasActiveBeforeSend = refs.activeSessionIdRef.current === sessionId;
+          if (wasActiveBeforeSend) {
+            codex.setMessages((prev) => [...prev, userMessage]);
+            codex.setIsProcessing(true);
+          }
+
+          const ensureBackgroundUserMessage = () => {
+            const backgroundState = backgroundStoreRef.current.get(sessionId);
+            const alreadyHasUserMessage = backgroundState?.messages.some((message) => (
+              message.role === "user" && message.content === userMessage.content
+            ));
+            if (!alreadyHasUserMessage) {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, userMessage]);
+            }
+          };
 
           const codexSession = refs.sessionsRef.current.find((s) => s.id === sessionId);
           let codexCollabMode: CollaborationMode | undefined;
           try {
             codexCollabMode = buildCodexCollabMode(refs.startOptionsRef.current.planMode, codexSession?.model);
           } catch (err) {
-            codex.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(err instanceof Error ? err.message : String(err), true),
-            ]);
-            codex.setIsProcessing(false);
+            const isActiveSession = refs.activeSessionIdRef.current === sessionId;
+            const errorMessage = createSystemMessage(err instanceof Error ? err.message : String(err), true);
+            if (isActiveSession) {
+              codex.setMessages((prev) => [...prev, errorMessage]);
+              codex.setIsProcessing(false);
+            } else {
+              ensureBackgroundUserMessage();
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
             return { sessionId, error: err instanceof Error ? err.message : String(err) };
           }
           const sendResult = await window.claude.codex.send(
@@ -243,18 +277,27 @@ export function useSessionLifecycle({
             refs.codexEffortRef.current,
             codexCollabMode,
           );
+          const isActiveSession = refs.activeSessionIdRef.current === sessionId;
           if (sendResult?.error) {
             refs.liveSessionIdsRef.current.delete(sessionId);
-            codex.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(
-                `Unable to send message: ${sendResult.error}`,
-                true,
-                isRetryableUpstreamError(sendResult.error ?? ""),
-              ),
-            ]);
-            codex.setIsProcessing(false);
+            const errorMessage = createSystemMessage(
+              `Unable to send message: ${sendResult.error}`,
+              true,
+              isRetryableUpstreamError(sendResult.error ?? ""),
+            );
+            if (isActiveSession) {
+              codex.setMessages((prev) => [...prev, errorMessage]);
+              codex.setIsProcessing(false);
+            } else {
+              ensureBackgroundUserMessage();
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
             return { sessionId, error: sendResult.error };
+          }
+          if (!isActiveSession) {
+            ensureBackgroundUserMessage();
+            backgroundStoreRef.current.setProcessing(sessionId, true);
           }
           return { sessionId };
         }
@@ -271,22 +314,35 @@ export function useSessionLifecycle({
             type: "user",
             message: { role: "user", content },
           });
+          const isActiveSession = refs.activeSessionIdRef.current === sessionId;
           if (sendResult?.error) {
             refs.liveSessionIdsRef.current.delete(sessionId);
-            claude.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(
-                `Unable to send message: ${sendResult.error}`,
-                true,
-                isRetryableUpstreamError(sendResult.error ?? ""),
-              ),
-            ]);
+            const errorMessage = createSystemMessage(
+              `Unable to send message: ${sendResult.error}`,
+              true,
+              isRetryableUpstreamError(sendResult.error ?? ""),
+            );
+            if (isActiveSession) {
+              claude.setMessages((prev) => [...prev, errorMessage]);
+            } else {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
             return { sessionId, error: sendResult.error };
           }
-          claude.setMessages((prev) => [
-            ...prev,
-            createUserMessage(text, images, displayText),
-          ]);
+          const userMessage = createUserMessage(text, images, displayText);
+          if (isActiveSession) {
+            claude.setMessages((prev) => [...prev, userMessage]);
+          } else {
+            const backgroundState = backgroundStoreRef.current.get(sessionId);
+            const alreadyHasUserMessage = backgroundState?.messages.some((message) => (
+              message.role === "user" && message.content === userMessage.content
+            ));
+            if (!alreadyHasUserMessage) {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, userMessage]);
+            }
+            backgroundStoreRef.current.setProcessing(sessionId, true);
+          }
         }
         return { sessionId };
       }

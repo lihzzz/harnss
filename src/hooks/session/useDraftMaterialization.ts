@@ -5,6 +5,8 @@ import { toMcpStatusState } from "../../lib/mcp-utils";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { captureException } from "../../lib/analytics/analytics";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
+import { buildPersistedSession } from "../../lib/session/records";
+import type { BackgroundSessionState } from "../../lib/background/session-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import {
   DRAFT_ID,
@@ -352,6 +354,7 @@ export function useDraftMaterialization({
       let sessionModel = options.model;
       let codexThreadId: string | undefined;
       let reusedPreStarted = false;
+      let preStartedBackgroundState: BackgroundSessionState | undefined;
 
       // Load per-project MCP servers to pass to the session
       const mcpServers = await window.claude.mcp.list(project.id);
@@ -571,20 +574,10 @@ export function useDraftMaterialization({
           setPreStartedSessionId(null);
           reusedPreStarted = true;
 
-          // Consume background store state accumulated during draft
-          const bgState = backgroundStoreRef.current.consume(sessionId);
-          if (bgState) {
-            setInitialMessages(bgState.messages);
-            setInitialMeta({
-              isProcessing: bgState.isProcessing,
-              isConnected: bgState.isConnected,
-              sessionInfo: bgState.sessionInfo,
-              totalCost: bgState.totalCost,
-              contextUsage: bgState.contextUsage,
-              isCompacting: bgState.isCompacting,
-              reconnectMessage: bgState.reconnectMessage,
-            });
-          }
+          // Consume background store state accumulated during draft. If the
+          // user switches away while materialization is still running, this
+          // state is re-seeded below for the now-background session instead.
+          preStartedBackgroundState = backgroundStoreRef.current.consume(sessionId);
         } else {
           // Fallback: start normally (eager start failed or was cleaned up)
           let result;
@@ -642,39 +635,97 @@ export function useDraftMaterialization({
         } : {}),
       };
 
-      // Replace the DRAFT_ID placeholder (if any) with the real session entry
-      setSessions((prev) =>
-        [newSession, ...prev.filter(s => s.id !== DRAFT_ID).map((s) => ({ ...s, isActive: false }))],
+      // The draft may have been switched away while the engine was starting.
+      // In that case the new session still belongs in the sidebar, but it must
+      // stay in the background instead of taking focus back from the session
+      // the user selected.
+      const draftUserMessage = createUserMessage(text, images, displayText);
+
+      // Persist as soon as the engine session exists. The normal debounced
+      // save happens later, after the first event, which is too late if the
+      // user switches chats during startup.
+      await window.claude.sessions.save(
+        buildPersistedSession(newSession, [draftUserMessage], 0, null),
       );
-      if (!reusedPreStarted) {
-        if (draftEngine === "acp") {
-          // Preserve the user message + processing state through useACP's reset effect
-          // (which fires when sessionId changes from null → new ID).
-          // React 19 batches these setState calls with setActiveSessionId below.
-          setInitialMessages([createUserMessage(text, images, displayText)]);
+
+      // Re-check after persistence: switching chats can happen while the IPC
+      // save is in flight, and the completed session must then stay in the
+      // background instead of taking focus back.
+      const ownsDraft =
+        activeSessionIdRef.current === DRAFT_ID
+        && draftProjectIdRef.current === project.id;
+
+      // Replace the DRAFT_ID placeholder (if any) with the real session entry.
+      setSessions((prev) => {
+        const remaining = prev.filter(s => s.id !== DRAFT_ID);
+        return ownsDraft
+          ? [newSession, ...remaining.map((s) => ({ ...s, isActive: false }))]
+          : [{ ...newSession, isActive: false }, ...remaining];
+      });
+
+      if (ownsDraft) {
+        if (preStartedBackgroundState) {
+          setInitialMessages(preStartedBackgroundState.messages);
           setInitialMeta({
-            isProcessing: true,
-            isConnected: true,
-            sessionInfo: null,
-            totalCost: 0,
-            contextUsage: null,
+            isProcessing: preStartedBackgroundState.isProcessing,
+            isConnected: preStartedBackgroundState.isConnected,
+            sessionInfo: preStartedBackgroundState.sessionInfo,
+            totalCost: preStartedBackgroundState.totalCost,
+            contextUsage: preStartedBackgroundState.contextUsage,
+            isCompacting: preStartedBackgroundState.isCompacting,
+            reconnectMessage: preStartedBackgroundState.reconnectMessage,
           });
-        } else {
-          setInitialMessages([]);
-          setInitialMeta(null);
+        } else if (!reusedPreStarted) {
+          if (draftEngine === "acp") {
+            // Preserve the user message + processing state through useACP's
+            // reset effect when the session ID changes.
+            setInitialMessages([draftUserMessage]);
+            setInitialMeta({
+              isProcessing: true,
+              isConnected: true,
+              sessionInfo: null,
+              totalCost: 0,
+              contextUsage: null,
+            });
+          } else {
+            setInitialMessages([]);
+            setInitialMeta(null);
+          }
         }
         setInitialPermission(null);
         setInitialRawAcpPermission(null);
+        setActiveSessionId(sessionId);
+      } else {
+        const backgroundState = preStartedBackgroundState ?? backgroundStoreRef.current.consume(sessionId);
+        backgroundStoreRef.current.initFromState(sessionId, {
+          messages: backgroundState?.messages ?? [],
+          isProcessing: true,
+          isConnected: backgroundState?.isConnected ?? true,
+          isCompacting: backgroundState?.isCompacting ?? false,
+          sessionInfo: backgroundState?.sessionInfo ?? null,
+          totalCost: backgroundState?.totalCost ?? 0,
+          contextUsage: backgroundState?.contextUsage ?? null,
+          pendingPermission: backgroundState?.pendingPermission ?? null,
+          rawAcpPermission: backgroundState?.rawAcpPermission ?? null,
+          slashCommands: backgroundState?.slashCommands ?? [],
+          codexGoal: backgroundState?.codexGoal ?? null,
+          codexGoalSupported: backgroundState?.codexGoalSupported ?? null,
+          reconnectMessage: backgroundState?.reconnectMessage ?? null,
+        });
       }
-      setActiveSessionId(sessionId);
-      if (draftEngine === "acp") {
+
+      if (ownsDraft && draftEngine === "acp") {
         acp.clearAuthRequired();
         setDraftAcpSessionId(null);
+        setDraftProjectId(null);
+      } else if (ownsDraft) {
+        setDraftProjectId(null);
       }
-      setDraftProjectId(null);
 
       // Refresh MCP status since useClaude may have missed the system init event
-      setTimeout(() => { claude.refreshMcpStatus(); }, 500);
+      if (ownsDraft && draftEngine === "claude") {
+        setTimeout(() => { claude.refreshMcpStatus(); }, 500);
+      }
 
       // Fire-and-forget AI title generation — routes through ACP if that's the active engine
       if (text.trim()) {
