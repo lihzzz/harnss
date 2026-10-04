@@ -637,7 +637,7 @@ export const AppSidebar = memo(function AppSidebar({
             className="mx-3 mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
           >
             <Inbox className="h-3.5 w-3.5" />
-            Workflow center
+            {t("workflowCenter")}
             {attentionCount > 0 ? <span className="ms-auto min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-semibold leading-4 text-destructive-foreground">{attentionCount > 99 ? "99+" : attentionCount}</span> : null}
           </button>
 
