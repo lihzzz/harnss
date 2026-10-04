@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback, memo, type DragEvent } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useSyncExternalStore, memo, type DragEvent } from "react";
 import { Inbox, PanelLeft, Plus, Paintbrush } from "lucide-react";
 import { isMac } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ import { SidebarActionsProvider } from "./sidebar/SidebarActionsContext";
 import { useAgentContext } from "./AgentContext";
 import { clearSidebarDragPayload, isSidebarDragKind } from "@/lib/sidebar/dnd";
 import { useI18n } from "@/lib/i18n";
+import { deriveAttentionItems } from "@/lib/workflow/attention";
+import { workflowStore } from "@/lib/workflow/workflow-store";
 
 type ProjectDropPlacement = "before" | "after";
 
@@ -205,6 +207,21 @@ export const AppSidebar = memo(function AppSidebar({
     onOpenInSplitView,
     canOpenSessionInSplitView,
   } = sessionActions;
+  const workflowState = useSyncExternalStore(workflowStore.subscribe, workflowStore.getState, workflowStore.getState);
+  const attentionCount = useMemo(() => {
+    const ids = new Set(deriveAttentionItems(sessions).filter((item) => item.status === "open").map((item) => item.id));
+    workflowState.comments.forEach((comment) => {
+      if (comment.status !== "draft" && comment.status !== "pending" && comment.status !== "needs_review") return;
+      if (sessions.some((session) => session.conversationId === comment.conversationId || session.id === comment.conversationId)) ids.add(`review:${comment.id}`);
+    });
+    workflowState.handoffs.forEach((handoff) => {
+      if (handoff.status === "failed" && sessions.some((session) => session.id === handoff.sourceSessionId || session.conversationId === handoff.sourceConversationId)) ids.add(`handoff:${handoff.id}`);
+    });
+    workflowState.attention.forEach((item) => {
+      if (item.status === "open") ids.add(item.id);
+    });
+    return ids.size;
+  }, [sessions, workflowState]);
   const { agents } = useAgentContext();
   const { t } = useI18n();
   const isCreating = draftSpaceId !== null;
@@ -621,6 +638,7 @@ export const AppSidebar = memo(function AppSidebar({
           >
             <Inbox className="h-3.5 w-3.5" />
             Workflow center
+            {attentionCount > 0 ? <span className="ms-auto min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-semibold leading-4 text-destructive-foreground">{attentionCount > 99 ? "99+" : attentionCount}</span> : null}
           </button>
 
           <div

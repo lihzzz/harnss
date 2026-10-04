@@ -47,6 +47,8 @@ export type {
   ConversationRef,
   AttentionKind,
   AttentionStatus,
+  AttentionPriority,
+  ExecutionPhase,
   AttentionItem,
   ReviewRange,
   ReviewComment,
@@ -120,6 +122,7 @@ export type {
   NotificationSettings,
   AppSettings,
 } from "@shared/types/settings";
+export type { ComputerUseRuntimeStatus } from "@shared/types/computer-use";
 
 // ── Git types (shared) ──
 

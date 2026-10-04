@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveAttentionItems } from "./attention";
+import { deriveAttentionItems, deriveExecutionPhase } from "./attention";
 import type { ChatSession } from "@/types";
 
 const session = (patch: Partial<ChatSession> = {}): ChatSession => ({
@@ -29,5 +29,21 @@ describe("deriveAttentionItems", () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.kind).toBe("error");
     expect(items[0]?.title).toBe("Goal blocked");
+    expect(items[0]?.priority).toBe("high");
+    expect(items[0]?.isBlocking).toBe(true);
+  });
+
+  it("puts a permission request before a normal completion", () => {
+    const items = deriveAttentionItems([
+      session({ id: "done", conversationId: "done", hasUnreadCompletion: true, lastMessageAt: 900 }),
+      session({ id: "approval", conversationId: "approval", hasPendingPermission: true, lastMessageAt: 100 }),
+    ], 1_000);
+    expect(items.map((item) => item.id)).toEqual(["permission:approval", "result:done"]);
+  });
+
+  it("derives the state a user needs to understand at a glance", () => {
+    expect(deriveExecutionPhase(session({ isProcessing: true }))).toBe("running");
+    expect(deriveExecutionPhase(session({ hasPendingPermission: true, isProcessing: true }))).toBe("waiting_permission");
+    expect(deriveExecutionPhase(session({ hasUnreadCompletion: true }))).toBe("completed");
   });
 });

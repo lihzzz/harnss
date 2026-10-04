@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
-import { ChevronRight, Clipboard, GitPullRequest, Inbox, MessageSquare, Send, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, CircleDashed, Clipboard, Clock3, GitPullRequest, Inbox, LoaderCircle, MessageSquare, Send, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { isMac } from "@/lib/utils";
 import type { AttentionItem, ChatSession, EngineId, HandoffPurpose, Project, ReviewComment, ReviewSnapshot } from "@/types";
-import { deriveAttentionItems } from "@/lib/workflow/attention";
+import { deriveAttentionItems, deriveExecutionPhase, getAttentionPriority } from "@/lib/workflow/attention";
 import { makeWorkflowId, workflowStore } from "@/lib/workflow/workflow-store";
 import { parseUnifiedDiff } from "@/lib/workflow/unified-diff";
 
@@ -23,6 +23,27 @@ interface WorkflowCenterProps {
 
 function engineLabel(engine?: EngineId): string {
   return engine === "claude" ? "Claude" : engine === "codex" ? "Codex" : "ACP";
+}
+
+function priorityLabel(priority?: AttentionItem["priority"]): string {
+  return priority === "critical" ? "Now" : priority === "high" ? "High" : priority === "normal" ? "Soon" : "Watch";
+}
+
+function phaseLabel(phase: ReturnType<typeof deriveExecutionPhase>): string {
+  return phase === "waiting_permission" ? "Waiting for permission"
+    : phase === "waiting_user" ? "Waiting for your answer"
+      : phase === "blocked" ? "Blocked"
+        : phase === "completed" ? "Completed"
+          : phase === "failed" ? "Failed"
+            : phase === "running" ? "Working now" : "Idle";
+}
+
+function PhaseIcon({ phase }: { phase: ReturnType<typeof deriveExecutionPhase> }) {
+  if (phase === "waiting_permission") return <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />;
+  if (phase === "blocked" || phase === "failed") return <AlertCircle className="h-3.5 w-3.5 text-destructive" />;
+  if (phase === "completed") return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />;
+  if (phase === "running") return <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary" />;
+  return <CircleDashed className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
 function useWorkflowState() {
@@ -51,16 +72,67 @@ export function WorkflowCenter({
   const derivedAttention = deriveAttentionItems(sessions);
   const attention = useMemo(() => {
     const manualById = new Map(workflow.attention.map((item) => [item.id, item]));
-    const merged = derivedAttention.map((item) => {
+    const workflowDerived: AttentionItem[] = [];
+    workflow.comments
+      .filter((comment) => comment.status === "draft" || comment.status === "pending" || comment.status === "needs_review")
+      .forEach((comment) => {
+        const session = sessions.find((entry) => entry.conversationId === comment.conversationId || entry.id === comment.conversationId);
+        if (!session) return;
+        const snapshot = workflow.snapshots.find((entry) => entry.id === comment.snapshotId);
+        workflowDerived.push({
+          id: `review:${comment.id}`,
+          conversationId: session.conversationId ?? session.id,
+          sessionId: session.id,
+          projectId: snapshot?.projectId ?? session.projectId,
+          title: "Review feedback ready",
+          summary: `${comment.filePath}:${comment.range.start} · ${comment.body}`,
+          kind: "review",
+          status: "open",
+          priority: comment.category === "problem" ? "high" : "normal",
+          phase: "waiting_user",
+          actionLabel: "Open review",
+          createdAt: comment.createdAt,
+          updatedAt: comment.updatedAt,
+        });
+      });
+    workflow.handoffs
+      .filter((handoff) => handoff.status === "failed")
+      .forEach((handoff) => {
+        const session = sessions.find((entry) => entry.id === handoff.sourceSessionId || entry.conversationId === handoff.sourceConversationId);
+        if (!session) return;
+        workflowDerived.push({
+          id: `handoff:${handoff.id}`,
+          conversationId: handoff.sourceConversationId,
+          sessionId: session.id,
+          projectId: handoff.projectId,
+          title: "Handoff needs attention",
+          summary: handoff.error ?? `Could not start the ${engineLabel(handoff.targetEngine)} handoff.`,
+          kind: "handoff",
+          status: "open",
+          priority: "high",
+          phase: "failed",
+          actionLabel: "Open handoff",
+          isBlocking: true,
+          createdAt: handoff.createdAt,
+          updatedAt: handoff.updatedAt,
+        });
+      });
+    const merged = [...derivedAttention, ...workflowDerived].map((item) => {
       const persisted = manualById.get(item.id);
       return persisted
         ? { ...item, status: persisted.status, updatedAt: persisted.updatedAt }
         : item;
     });
-    const derivedIds = new Set(derivedAttention.map((item) => item.id));
+    const derivedIds = new Set([...derivedAttention, ...workflowDerived].map((item) => item.id));
     const manual = workflow.attention.filter((item) => !derivedIds.has(item.id));
-    return [...merged, ...manual].filter((item) => item.status !== "dismissed" && item.status !== "resolved");
-  }, [derivedAttention, workflow.attention]);
+    return [...merged, ...manual]
+      .filter((item) => item.status !== "dismissed" && item.status !== "resolved")
+      .sort((a, b) => getAttentionPriority(a) - getAttentionPriority(b) || b.updatedAt - a.updatedAt);
+  }, [derivedAttention, sessions, workflow.attention, workflow.comments, workflow.handoffs, workflow.snapshots]);
+  const actionItems = attention.filter((item) => item.status === "open" || (item.isBlocking && item.status === "read"));
+  const recentlyOpenedItems = attention.filter((item) => item.status === "read" && !item.isBlocking);
+  const runningSessions = sessions.filter((session) => session.isProcessing);
+  const blockedSessions = sessions.filter((session) => deriveExecutionPhase(session) === "blocked");
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const project = activeSession ? projects.find((entry) => entry.id === activeSession.projectId) : null;
   const currentConversationId = activeSession?.conversationId ?? activeSession?.id;
@@ -101,6 +173,17 @@ export function WorkflowCenter({
     setSelectedAttentionId(item.id);
     workflowStore.upsertAttention({ ...item, status: "read", updatedAt: Date.now() });
     onSelectSession(item.sessionId);
+  };
+
+  const openAttention = (item: AttentionItem) => {
+    markAttentionRead(item);
+    if (item.kind === "review") {
+      setTab("review");
+    } else if (item.kind === "handoff") {
+      setTab("handoff");
+    } else {
+      onClose();
+    }
   };
 
   const createReviewSnapshot = async (): Promise<ReviewSnapshot | null> => {
@@ -186,28 +269,33 @@ export function WorkflowCenter({
     if (!activeSession) return;
     const chosen = comments.filter((comment) => selectedCurrentCommentIds.includes(comment.id));
     const prompt = buildHandoffPrompt();
+    const handoffId = makeWorkflowId("handoff");
+    const createdAt = Date.now();
+    const handoffBase = {
+      id: handoffId,
+      sourceConversationId: activeSession.conversationId ?? activeSession.id,
+      sourceSessionId: activeSession.id,
+      projectId: activeSession.projectId,
+      sourceEngine: activeSession.engine ?? "claude",
+      targetEngine,
+      purpose,
+      objective: prompt,
+      constraints: "Preserve existing behavior and keep the change scoped to this project.",
+      verification: "Run relevant tests and report the exact commands and results.",
+      commentIds: selectedCurrentCommentIds,
+      snapshotId: currentSnapshot?.id,
+      createdAt,
+    };
     setIsSending(true);
     try {
       const handoffResult = onHandoff ? await onHandoff({ targetEngine, purpose, prompt }) : undefined;
       const now = Date.now();
       workflowStore.saveHandoff({
-        id: makeWorkflowId("handoff"),
-        sourceConversationId: activeSession.conversationId ?? activeSession.id,
-        sourceSessionId: activeSession.id,
-        projectId: activeSession.projectId,
-        sourceEngine: activeSession.engine ?? "claude",
-        targetEngine,
+        ...handoffBase,
         targetConversationId: handoffResult?.targetConversationId,
         targetSessionId: handoffResult?.targetSessionId,
-        purpose,
-        objective: prompt,
-        constraints: "Preserve existing behavior and keep the change scoped to this project.",
-        verification: "Run relevant tests and report the exact commands and results.",
-        commentIds: selectedCurrentCommentIds,
-        snapshotId: currentSnapshot?.id,
         status: handoffResult?.error ? "failed" : onHandoff ? "started" : "ready",
         error: handoffResult?.error,
-        createdAt: now,
         updatedAt: now,
       });
       if (!handoffResult?.error) {
@@ -220,7 +308,9 @@ export function WorkflowCenter({
       }
       setTab("inbox");
     } catch (error) {
-      toast.error("Handoff failed", { description: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      workflowStore.saveHandoff({ ...handoffBase, status: "failed", error: message, updatedAt: Date.now() });
+      toast.error("Handoff failed", { description: message });
     } finally {
       setIsSending(false);
     }
@@ -251,22 +341,39 @@ export function WorkflowCenter({
             <button key={item} className={`mb-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-start text-xs ${tab === item ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`} onClick={() => setTab(item)}>
               {item === "inbox" ? <Inbox className="h-3.5 w-3.5" /> : item === "review" ? <GitPullRequest className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
               {item === "inbox" ? "Task inbox" : item === "review" ? "Review changes" : "Handoff"}
-              {item === "inbox" && attention.length > 0 ? <Badge className="ms-auto px-1.5 text-[10px]">{attention.length}</Badge> : null}
+              {item === "inbox" && actionItems.length > 0 ? <Badge className="ms-auto px-1.5 text-[10px]">{actionItems.length}</Badge> : null}
             </button>
           ))}
         </nav>
         <main className="min-w-0 flex-1 overflow-auto p-6">
           {tab === "inbox" && (
-            <div className="mx-auto max-w-3xl space-y-3">
-              <div className="mb-5"><h2 className="text-lg font-semibold">Task inbox</h2><p className="text-xs text-muted-foreground">Sessions that need a decision, a review, or a follow-up.</p></div>
-              {attention.length === 0 ? <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">No tasks need your attention.</div> : attention.map((item) => {
+            <div className="mx-auto max-w-3xl space-y-6">
+              <div className="flex items-start justify-between gap-4">
+                <div><h2 className="text-lg font-semibold">Task inbox</h2><p className="text-xs text-muted-foreground">See what needs a decision before you scan the full execution log.</p></div>
+                <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground"><span className="rounded-full bg-amber-500/10 px-2 py-1 text-amber-700">{actionItems.length} to handle</span><span className="rounded-full bg-primary/10 px-2 py-1 text-primary">{runningSessions.length} running</span></div>
+              </div>
+
+              {actionItems.length > 0 ? <section className="space-y-2" aria-labelledby="needs-action-heading"><div className="flex items-center gap-2"><ShieldAlert className="h-3.5 w-3.5 text-amber-600" /><h3 id="needs-action-heading" className="text-xs font-semibold uppercase tracking-wide text-foreground">Needs your action</h3><Badge variant="secondary" className="px-1.5 text-[10px]">{actionItems.length}</Badge></div><div className="space-y-2">{actionItems.map((item) => {
                 const session = sessions.find((entry) => entry.id === item.sessionId);
-                return <button key={item.id} onClick={() => markAttentionRead(item)} className={`flex w-full items-center gap-3 rounded-lg border p-4 text-start transition-colors hover:bg-muted/50 ${selectedAttentionId === item.id ? "border-primary/50 bg-primary/5" : "border-border/60"}`}>
-                  <span className={`h-2 w-2 rounded-full ${item.kind === "error" ? "bg-destructive" : item.kind === "permission" ? "bg-amber-500" : "bg-primary"}`} />
-                  <span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-medium">{item.title}<Badge variant="outline" className="text-[10px]">{engineLabel(session?.engine)}</Badge></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.summary}</span></span>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                const phase = item.phase ?? (session ? deriveExecutionPhase(session) : "idle");
+                return <button key={item.id} onClick={() => openAttention(item)} aria-label={`${item.title}: ${item.actionLabel ?? "Open session"}`} className={`flex w-full items-center gap-3 rounded-lg border p-4 text-start transition-colors hover:bg-muted/50 ${selectedAttentionId === item.id ? "border-primary/50 bg-primary/5" : "border-border/60"}`}>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/70"><PhaseIcon phase={phase} /></span>
+                  <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2 text-sm font-medium"><span>{item.title}</span><Badge variant={item.priority === "critical" ? "destructive" : "outline"} className="text-[10px]">{priorityLabel(item.priority)}</Badge><Badge variant="outline" className="text-[10px]">{engineLabel(session?.engine)}</Badge></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.summary}</span><span className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"><span>{phaseLabel(phase)}</span>{session ? <span>· {session.title}</span> : null}</span></span>
+                  <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-primary">{item.actionLabel ?? "Open session"}<ChevronRight className="h-4 w-4" /></span>
                 </button>;
-              })}
+              })}</div></section> : null}
+
+              {runningSessions.length > 0 ? <section className="space-y-2" aria-labelledby="running-heading"><div className="flex items-center gap-2"><LoaderCircle className="h-3.5 w-3.5 text-primary" /><h3 id="running-heading" className="text-xs font-semibold uppercase tracking-wide text-foreground">Running now</h3><Badge variant="secondary" className="px-1.5 text-[10px]">{runningSessions.length}</Badge></div><div className="grid gap-2 sm:grid-cols-2">{runningSessions.map((session) => {
+                const phase = deriveExecutionPhase(session);
+                const projectName = projects.find((entry) => entry.id === session.projectId)?.name;
+                return <button key={session.id} onClick={() => onSelectSession(session.id)} className="flex min-w-0 items-start gap-3 rounded-lg border border-border/60 p-3 text-start transition-colors hover:bg-muted/50"><span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10"><PhaseIcon phase={phase} /></span><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-xs font-medium"><span className="truncate">{session.title}</span><Badge variant="outline" className="shrink-0 text-[10px]">{engineLabel(session.engine)}</Badge></span><span className="mt-1 block truncate text-[11px] text-muted-foreground">{projectName ?? "Current project"} · {phaseLabel(phase)}</span></span><ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>;
+              })}</div></section> : null}
+
+              {blockedSessions.length > 0 && actionItems.length === 0 ? <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="h-3.5 w-3.5" />{blockedSessions.length} session(s) are blocked. Open the session to resolve the blocker.</div> : null}
+
+              {recentlyOpenedItems.length > 0 ? <section className="space-y-2" aria-labelledby="recent-heading"><div className="flex items-center gap-2"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" /><h3 id="recent-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recently opened</h3></div><div className="space-y-1">{recentlyOpenedItems.slice(0, 5).map((item) => <button key={item.id} onClick={() => openAttention(item)} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-start text-xs text-muted-foreground hover:bg-muted/50"><CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /><span className="min-w-0 flex-1 truncate">{item.title}</span><span className="shrink-0">Open again</span></button>)}</div></section> : null}
+
+              {actionItems.length === 0 && runningSessions.length === 0 && recentlyOpenedItems.length === 0 ? <div className="rounded-lg border border-dashed border-border p-10 text-center"><CheckCircle2 className="mx-auto mb-2 h-5 w-5 text-emerald-600" /><p className="text-sm font-medium">All clear</p><p className="mt-1 text-xs text-muted-foreground">No session is waiting for a decision or follow-up.</p></div> : null}
             </div>
           )}
           {tab === "review" && (

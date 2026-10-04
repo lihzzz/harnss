@@ -7,8 +7,17 @@ export interface ConversationRef {
   projectId: string;
 }
 
-export type AttentionKind = "permission" | "question" | "error" | "result" | "review" | "handoff";
+export type AttentionKind = "permission" | "question" | "error" | "result" | "review" | "handoff" | "blocked" | "waiting_input";
 export type AttentionStatus = "open" | "read" | "resolved" | "dismissed";
+export type AttentionPriority = "critical" | "high" | "normal" | "low";
+export type ExecutionPhase =
+  | "idle"
+  | "running"
+  | "waiting_permission"
+  | "waiting_user"
+  | "blocked"
+  | "completed"
+  | "failed";
 
 export interface AttentionItem {
   id: string;
@@ -19,6 +28,10 @@ export interface AttentionItem {
   summary: string;
   kind: AttentionKind;
   status: AttentionStatus;
+  priority?: AttentionPriority;
+  phase?: ExecutionPhase;
+  actionLabel?: string;
+  isBlocking?: boolean;
   createdAt: number;
   updatedAt: number;
   runId?: string;
