@@ -176,6 +176,12 @@ export const MemorySettings = memo(function MemorySettings({ appSettings, onUpda
             <SettingRow label="Model" description="Model used for extraction and recall.">
               <Input className="w-56" value={memory.llmModel ?? "claude-sonnet-4-20250514"} onChange={(event) => void updateMemory({ llmModel: event.target.value })} />
             </SettingRow>
+            <SettingRow label="Base URL in use" description="The endpoint reported by the daemon status; empty means the provider default.">
+              <code className="max-w-[20rem] truncate rounded-sm bg-muted/60 px-2 py-1 text-xs text-foreground/70">{status?.llmBaseUrl || "Provider default"}</code>
+            </SettingRow>
+            <SettingRow label="Base URL" description="Custom OpenAI-compatible endpoint; leave empty for the provider default.">
+              <Input className="w-72" placeholder="https://api.example.com/v1" value={memory.llmBaseUrl ?? ""} onChange={(event) => void updateMemory({ llmBaseUrl: event.target.value.trim() })} />
+            </SettingRow>
             <SettingRow label="API key" description={status?.hasLlmKey ? "A key is stored in the encrypted main-process store." : "The key is never exposed to the renderer after saving."}>
               <div className="flex gap-2"><Input className="w-44" type="password" placeholder={status?.hasLlmKey ? "••••••••" : "Paste key"} value={key} onChange={(event) => setKey(event.target.value)} /><Button size="sm" variant="outline" onClick={() => void saveKey()} disabled={busy}>{key ? "Save" : "Clear"}</Button></div>
             </SettingRow>

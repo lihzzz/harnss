@@ -9,6 +9,7 @@ export interface MemorySettings {
   localPort: number;
   llmProvider?: string;
   llmModel?: string;
+  llmBaseUrl?: string;
   injectionPolicy: MemoryInjectionPolicy;
   autoRetain: boolean;
   clientSideRedact: boolean;
@@ -34,6 +35,7 @@ export interface MemoryDaemonStatus {
   hasLlmKey: boolean;
   provider?: string;
   model?: string;
+  llmBaseUrl?: string;
   error?: string;
 }
 

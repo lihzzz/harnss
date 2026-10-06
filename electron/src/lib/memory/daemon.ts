@@ -12,6 +12,7 @@ import { getDataDir } from "../data-dir";
 
 let server: HindsightServer | null = null;
 let serverKey = "";
+let effectiveLlm: Pick<MemoryDaemonStatus, "provider" | "model" | "llmBaseUrl"> | null = null;
 let startPromise: Promise<void> | null = null;
 let lastError: string | undefined;
 let daemonReady = false;
@@ -110,6 +111,7 @@ function settingsKey(): string {
     port: settings.localPort,
     provider: settings.llmProvider,
     model: settings.llmModel,
+    baseUrl: settings.llmBaseUrl,
     key: getMemoryLlmKey(),
   });
 }
@@ -157,6 +159,7 @@ export async function startMemoryDaemon(): Promise<void> {
       env: {
         HINDSIGHT_API_LLM_PROVIDER: settings.llmProvider,
         HINDSIGHT_API_LLM_MODEL: settings.llmModel,
+        HINDSIGHT_API_LLM_BASE_URL: settings.llmBaseUrl,
         HINDSIGHT_API_MCP_ENABLED: "true",
         HINDSIGHT_API_HOST: "127.0.0.1",
         // hindsight-embed resolves its profile and pg0 paths from HOME. Keep
@@ -204,6 +207,7 @@ export async function startMemoryDaemon(): Promise<void> {
     // in Harnss, while the already-running daemon keeps its process env.
     removeProfileApiKey(profileEnv);
     serverKey = nextKey;
+    effectiveLlm = { provider: settings.llmProvider, model: settings.llmModel, llmBaseUrl: settings.llmBaseUrl };
     daemonReady = true;
     lastError = undefined;
   })().catch((error) => {
@@ -223,6 +227,7 @@ export async function stopMemoryDaemon(): Promise<void> {
   if (pending) await pending.catch(() => undefined);
   const current = server;
   server = null;
+  effectiveLlm = null;
   daemonReady = false;
   serverKey = "";
   if (current) await current.stop().catch((error) => log("MEMORY_DAEMON_STOP", error));
@@ -249,8 +254,7 @@ export async function getMemoryDaemonStatus(): Promise<MemoryDaemonStatus> {
     port: settings.localPort,
     uv: getUvStatus(),
     hasLlmKey: hasMemoryLlmKey(),
-    provider: settings.llmProvider,
-    model: settings.llmModel,
+    ...(server && effectiveLlm ? effectiveLlm : { provider: settings.llmProvider, model: settings.llmModel, llmBaseUrl: settings.llmBaseUrl }),
     ...(lastError ? { error: lastError } : {}),
   };
 }

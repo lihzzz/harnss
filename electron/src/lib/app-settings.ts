@@ -29,6 +29,7 @@ const MEMORY_DEFAULTS: MemorySettings = {
   localPort: 8888,
   llmProvider: "anthropic",
   llmModel: "claude-sonnet-4-20250514",
+  llmBaseUrl: "",
   injectionPolicy: "first-turn",
   autoRetain: false,
   clientSideRedact: true,
