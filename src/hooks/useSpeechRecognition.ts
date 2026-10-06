@@ -5,9 +5,9 @@
  *    - macOS: Cocoa `startDictation:` selector — OS handles everything.
  *    - Windows/Linux: Not available, shows keyboard shortcut hint.
  *
- * 2. "whisper": Local AI speech recognition via @huggingface/transformers.
+ * 2. "whisper": Local AI speech recognition via Transformers.js.
  *    - Captures mic audio with MediaRecorder, transcribes with Whisper tiny.en.
- *    - ~40MB model download on first use (cached in IndexedDB).
+ *    - Runtime + model are downloaded on first use (browser-cached).
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -44,10 +44,11 @@ interface UseSpeechRecognitionReturn {
   error: string | null;
 }
 
+const TRANSFORMERS_CDN_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+
 // ── Module-level Whisper pipeline cache (persists across re-mounts) ──
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Transformers.js pipeline type is complex and version-dependent
-let whisperPipeline: any = null;
+let whisperPipeline: ((audio: Float32Array) => Promise<{ text?: string }>) | null = null;
 let whisperLoadingPromise: Promise<void> | null = null;
 
 // ── Audio helpers ──
@@ -124,7 +125,14 @@ export function useSpeechRecognition({
 
     whisperLoadingPromise = (async () => {
       try {
-        const { pipeline } = await import("@huggingface/transformers");
+        const transformersModule = await import(/* @vite-ignore */ TRANSFORMERS_CDN_URL);
+        const { pipeline } = transformersModule as {
+          pipeline: (
+            task: "automatic-speech-recognition",
+            model: string,
+            options: Record<string, unknown>,
+          ) => Promise<typeof whisperPipeline>;
+        };
         whisperPipeline = await pipeline(
           "automatic-speech-recognition",
           "onnx-community/whisper-tiny.en",
@@ -197,8 +205,9 @@ export function useSpeechRecognition({
         try {
           const blob = new Blob(chunks, { type: recorder.mimeType });
           const audioData = await blobToFloat32Audio(blob);
-          // Run Whisper inference
-          const result = await whisperPipeline(audioData);
+          const pipeline = whisperPipeline;
+          if (!pipeline) throw new Error("Speech model is not loaded");
+          const result = await pipeline(audioData);
           const text = (result?.text ?? "").trim();
           if (text) {
             onResultRef.current?.(text);
