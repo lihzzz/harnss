@@ -351,7 +351,7 @@ contextBridge.exposeInMainWorld("claude", {
     getStatus: () => ipcRenderer.invoke("memory:get-status"),
     setLlmKey: (key: string) => ipcRenderer.invoke("memory:set-llm-key", key),
     clearLlmKey: () => ipcRenderer.invoke("memory:clear-llm-key"),
-    testConnection: () => ipcRenderer.invoke("memory:test-connection"),
+    testConnection: (key?: string) => ipcRenderer.invoke("memory:test-connection", key),
     daemonStart: () => ipcRenderer.invoke("memory:daemon-start"),
     daemonStop: () => ipcRenderer.invoke("memory:daemon-stop"),
     daemonInstallDeps: () => ipcRenderer.invoke("memory:daemon-install-deps"),

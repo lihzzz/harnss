@@ -22,6 +22,7 @@ export const MemorySettings = memo(function MemorySettings({ appSettings, onUpda
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const [projectConfig, setProjectConfig] = useState<MemoryProjectConfig | null>(null);
   const [documents, setDocuments] = useState<MemoryDocument[]>([]);
   const [facts, setFacts] = useState<MemoryFact[]>([]);
@@ -42,6 +43,8 @@ export const MemorySettings = memo(function MemorySettings({ appSettings, onUpda
   }, []);
 
   useEffect(() => { void refreshStatus(); }, [refreshStatus, memory?.enabled]);
+
+  useEffect(() => { setConnectionMessage(null); }, [key, memory?.llmProvider, memory?.llmModel, memory?.llmBaseUrl]);
 
   useEffect(() => {
     if (!projectId) {
@@ -104,16 +107,16 @@ export const MemorySettings = memo(function MemorySettings({ appSettings, onUpda
 
   const testConnection = useCallback(async () => {
     setBusy(true);
+    setConnectionMessage("Testing model connection…");
     try {
-      const result = await window.claude.memory.testConnection();
-      setMessage(result.ok ? "Hindsight LLM connection is healthy." : (result.error ?? "Connection failed."));
-      await refreshStatus();
+      const result = await window.claude.memory.testConnection(key.trim() || undefined);
+      setConnectionMessage(result.ok ? (key.trim() ? "Model connection succeeded. Save the API key before enabling long-term memory." : "Model connection succeeded. You can now enable long-term memory.") : (result.error ?? "Connection failed."));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setConnectionMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
-  }, [refreshStatus]);
+  }, [key]);
 
   const updateProjectConfig = useCallback(async (patch: Partial<MemoryProjectConfig>) => {
     if (!projectId) return;
@@ -185,7 +188,8 @@ export const MemorySettings = memo(function MemorySettings({ appSettings, onUpda
             <SettingRow label="API key" description={status?.hasLlmKey ? "A key is stored in the encrypted main-process store." : "The key is never exposed to the renderer after saving."}>
               <div className="flex gap-2"><Input className="w-44" type="password" placeholder={status?.hasLlmKey ? "••••••••" : "Paste key"} value={key} onChange={(event) => setKey(event.target.value)} /><Button size="sm" variant="outline" onClick={() => void saveKey()} disabled={busy}>{key ? "Save" : "Clear"}</Button></div>
             </SettingRow>
-            <div className="flex justify-end gap-2 pb-2"><Button size="sm" variant="outline" onClick={() => void testConnection()} disabled={busy || !memory.enabled}><Server className="me-1 h-3.5 w-3.5" /> Test connection</Button><Button size="sm" variant="ghost" onClick={() => void refreshStatus()} disabled={busy}><RefreshCw className="me-1 h-3.5 w-3.5" /> Refresh</Button></div>
+            <div className="flex justify-end gap-2 pb-2"><Button size="sm" variant="outline" onClick={() => void testConnection()} disabled={busy}><Server className="me-1 h-3.5 w-3.5" /> Test connection</Button><Button size="sm" variant="ghost" onClick={() => void refreshStatus()} disabled={busy}><RefreshCw className="me-1 h-3.5 w-3.5" /> Refresh</Button></div>
+            <p className="pb-2 text-xs text-muted-foreground" role="status">{connectionMessage ?? "Test the model connection before enabling long-term memory. Testing does not save the API key."}</p>
           </SettingsSection>
 
           <SettingsSection icon={Database} label="Recall and retention">

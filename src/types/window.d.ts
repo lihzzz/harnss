@@ -409,7 +409,7 @@ declare global {
         getStatus: () => Promise<MemoryStatusResult>;
         setLlmKey: (key: string) => Promise<IpcResult & { hasLlmKey?: boolean }>;
         clearLlmKey: () => Promise<IpcResult>;
-        testConnection: () => Promise<{ ok: boolean; error?: string }>;
+        testConnection: (key?: string) => Promise<{ ok: boolean; error?: string }>;
         daemonStart: () => Promise<{ ok?: boolean; error?: string; status?: MemoryStatusResult }>;
         daemonStop: () => Promise<{ ok?: boolean; error?: string }>;
         daemonInstallDeps: () => Promise<{ ok?: boolean; error?: string; status?: MemoryStatusResult }>;

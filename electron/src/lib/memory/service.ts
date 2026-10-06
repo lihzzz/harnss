@@ -7,7 +7,7 @@ import { getMemoryDaemonStatus, getMemoryBaseUrl, isMemoryDaemonReady, startMemo
 import { getMemoryLlmKey, hasMemoryLlmKey, setMemoryLlmKey, clearMemoryLlmKey } from "./secrets";
 import { getMemoryProjectConfig, setMemoryProjectConfig } from "./project-config";
 import { banksForProject, memoryMcpUrl, projectBankId, tagsForBank, MEMORY_USER_BANK } from "./bank-router";
-import { deleteMemoryDocument, ensureMemoryBank, listMemoryBanks, listMemoryDocuments, listMemoryUnits, recallMemory, retainMemory, resetMemoryClient, testMemoryLlm, updateMemoryUnit, type MemoryUpdatePatch } from "./client";
+import { deleteMemoryDocument, ensureMemoryBank, listMemoryBanks, listMemoryDocuments, listMemoryUnits, recallMemory, retainMemory, resetMemoryClient, updateMemoryUnit, type MemoryUpdatePatch } from "./client";
 import { runMemoryGoldenSet } from "./golden-set";
 import type { McpServerInput } from "@shared/lib/mcp-config";
 
@@ -246,5 +246,5 @@ export function setMemoryKey(key: string): void { setMemoryLlmKey(key); resetMem
 export function clearMemoryKey(): void { clearMemoryLlmKey(); resetMemoryClient(); }
 export function memoryHasKey(): boolean { return hasMemoryLlmKey(); }
 export function getMemoryKeyForDaemon(): string | undefined { return getMemoryLlmKey(); }
-export { getMemoryProjectConfig, setMemoryProjectConfig, listMemoryDocuments, listMemoryUnits, deleteMemoryDocument, ensureMemoryBank, testMemoryLlm, updateMemoryUnit, runMemoryGoldenSet, getMemoryBaseUrl };
+export { getMemoryProjectConfig, setMemoryProjectConfig, listMemoryDocuments, listMemoryUnits, deleteMemoryDocument, ensureMemoryBank, updateMemoryUnit, runMemoryGoldenSet, getMemoryBaseUrl };
 export type { MemoryUpdatePatch };

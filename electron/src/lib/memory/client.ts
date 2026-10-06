@@ -186,17 +186,3 @@ export async function deleteMemoryDocument(bankId: string, documentId: string): 
     return false;
   }
 }
-
-export async function testMemoryLlm(bankId: string): Promise<{ ok: boolean; error?: string }> {
-  const status = await ensureMemoryBank(bankId);
-  if (!status) return { ok: false, error: "Hindsight daemon is not ready" };
-  const lowLevel = getRawMemoryClient();
-  if (!lowLevel) return { ok: false, error: "Hindsight client is not ready" };
-  try {
-    const response = await sdk.testBankLlm({ client: lowLevel, path: { bank_id: bankId } });
-    if (!response.data) return { ok: false, error: "LLM health check returned no status" };
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
-}

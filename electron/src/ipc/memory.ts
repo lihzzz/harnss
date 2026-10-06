@@ -15,12 +15,11 @@ import {
   setMemoryEnabled,
   setMemoryKey,
   setMemoryProjectConfig,
-  testMemoryLlm,
   updateMemoryUnit,
   runMemoryGoldenSet,
 } from "../lib/memory/service";
-import { MEMORY_USER_BANK } from "../lib/memory/bank-router";
 import { installMemoryDependencies } from "../lib/memory/daemon";
+import { testMemoryLlm } from "../lib/memory/llm-connection";
 
 function normalizeProjectPatch(patch: Partial<MemoryProjectConfig>): Partial<MemoryProjectConfig> {
   const next: Partial<MemoryProjectConfig> = {};
@@ -59,8 +58,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
   });
 
-  ipcMain.handle("memory:test-connection", async () => {
-    const result = await testMemoryLlm(MEMORY_USER_BANK);
+  ipcMain.handle("memory:test-connection", async (_event, key?: unknown) => {
+    if (key !== undefined && typeof key !== "string") return { ok: false, error: "LLM key must be a string" };
+    const result = await testMemoryLlm(key);
     return result;
   });
 
