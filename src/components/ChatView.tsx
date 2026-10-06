@@ -913,7 +913,17 @@ function ChatViewContent({
           )}
           {/* Only render hydrated rows — initial mount: ~20 divs instead of 500 */}
           {rows.slice(effectiveHydratedFrom).map((row) => (
-            <div key={getRowKey(row)} className="flow-root">
+            // content-visibility lets the browser skip layout+paint for offscreen
+            // rows; contain-intrinsic-size seeds an estimate until first render
+            // (`auto` retains the measured size afterwards).
+            <div
+              key={getRowKey(row)}
+              className="flow-root"
+              style={{
+                contentVisibility: "auto",
+                containIntrinsicSize: `auto ${estimateRowHeight(row)}px`,
+              }}
+            >
               <ChatMessageRow
                 row={row}
                 showThinking={showThinking}

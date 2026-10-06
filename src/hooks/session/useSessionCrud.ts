@@ -4,6 +4,7 @@ import type { ChatSession, McpServerConfig, PersistedSession, Project, ACPConfig
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { capture } from "../../lib/analytics/analytics";
 import { bgAgentStore } from "../../lib/background/agent-store";
+import { invalidatePersistedCursor, saveSessionSmart } from "../../lib/session/persistence";
 import {
   DRAFT_ID,
   DEFAULT_PERMISSION_MODE,
@@ -101,7 +102,7 @@ export function useSessionCrud({
 
     window.claude.sessions.load(session.projectId, session.id).then((data) => {
       if (!data?.planMode) return;
-      return window.claude.sessions.save({ ...data, planMode: false });
+      return saveSessionSmart({ ...data, planMode: false });
     }).catch(() => { /* session may have been deleted */ });
 
     if ((session.engine ?? "claude") !== "claude" || !liveSessionIdsRef.current.has(session.id)) {
@@ -323,6 +324,7 @@ export function useSessionCrud({
       backgroundStoreRef.current.delete(id);
       messageQueueRef.current.delete(id);
       bgAgentStore.clearSession(id);
+      invalidatePersistedCursor(id);
       // Dismiss any permission toast for this session
       toast.dismiss(`permission-${id}`);
       await window.claude.sessions.delete(session.projectId, id);
@@ -370,7 +372,7 @@ export function useSessionCrud({
     );
     window.claude.sessions.load(session.projectId, id).then((data) => {
       if (data) {
-        window.claude.sessions.save({ ...data, title });
+        void saveSessionSmart({ ...data, title });
       }
     }).catch(() => { /* session may have been deleted */ });
   }, []);

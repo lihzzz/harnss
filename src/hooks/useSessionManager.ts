@@ -21,6 +21,7 @@ import {
 import { useSessionPane } from "./session/useSessionPane";
 import { useMessageQueue } from "./session/useMessageQueue";
 import { useSessionPersistence } from "./session/useSessionPersistence";
+import { useBackgroundReaper } from "./session/useBackgroundReaper";
 import { useDraftMaterialization } from "./session/useDraftMaterialization";
 import { useSessionRevival } from "./session/useSessionRevival";
 import { useSessionLifecycle } from "./session/useSessionLifecycle";
@@ -276,6 +277,8 @@ export function useSessionManager(
     continueQueuedBackgroundSession,
     sendNextId,
   } = useMessageQueue({ refs, setters, engines, activeSessionId });
+
+  useBackgroundReaper({ refs });
 
   const { saveCurrentSession, seedBackgroundStore, generateSessionTitle } = useSessionPersistence({
     refs,

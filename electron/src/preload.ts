@@ -148,6 +148,7 @@ contextBridge.exposeInMainWorld("claude", {
   },
   sessions: {
     save: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:save", data, previousSessionId),
+    append: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:append", data, previousSessionId),
     load: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:load", projectId, sessionId),
     list: (projectId: string) => ipcRenderer.invoke("sessions:list", projectId),
     delete: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:delete", projectId, sessionId),

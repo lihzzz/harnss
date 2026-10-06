@@ -169,6 +169,11 @@ declare global {
       };
       sessions: {
         save: (data: PersistedSession, previousSessionId?: string) => Promise<IpcResult>;
+        append: (data: Omit<PersistedSession, "messages"> & {
+          appendedMessages: UIMessage[];
+          messageCount: number;
+          lastMessageAt: number;
+        }, previousSessionId?: string) => Promise<IpcResult>;
         load: (projectId: string, sessionId: string) => Promise<PersistedSession | null>;
         list: (projectId: string) => Promise<SessionListItem[]>;
         delete: (projectId: string, sessionId: string) => Promise<IpcResult>;

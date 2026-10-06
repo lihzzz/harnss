@@ -119,6 +119,8 @@ interface GlobalSettingsState {
   coloredToolIcons: boolean;
   /** Per-engine user-defined model IDs, kept independent of preset model selections */
   customModelsByEngine: Record<EngineId, string>;
+  /** Max live background engine processes (0 = unlimited). Excess idle ones are reaped. */
+  backgroundProcessLimit: number;
 }
 
 /** Actions (setters) — excluded from persistence via partialize */
@@ -144,6 +146,7 @@ interface SettingsActions {
   setShowToolIcons: (on: boolean) => void;
   setColoredToolIcons: (on: boolean) => void;
   setCustomModelForEngine: (engine: EngineId, model: string) => void;
+  setBackgroundProcessLimit: (n: number) => void;
 
   // Per-project setters (all take projectId as first arg)
   setModelForEngine: (projectId: string, engine: EngineId, model: string) => void;
@@ -333,6 +336,7 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
     showToolIcons: readLegacyBool("harnss-show-tool-icons", true),
     coloredToolIcons: readLegacyBool("harnss-colored-tool-icons", false),
     customModelsByEngine: DEFAULT_CUSTOM_ENGINE_MODELS,
+    backgroundProcessLimit: 4,
   };
 }
 
@@ -463,6 +467,7 @@ export const useSettingsStore = create<SettingsStore>()(
       showToolIcons: true,
       coloredToolIcons: false,
       customModelsByEngine: DEFAULT_CUSTOM_ENGINE_MODELS,
+      backgroundProcessLimit: 4,
 
       projects: {},
 
@@ -524,6 +529,8 @@ export const useSettingsStore = create<SettingsStore>()(
       setShowToolIcons: (on) => set({ showToolIcons: on }),
 
       setColoredToolIcons: (on) => set({ coloredToolIcons: on }),
+
+      setBackgroundProcessLimit: (n) => set({ backgroundProcessLimit: Math.max(0, Math.floor(n)) }),
 
       setCustomModelForEngine: (engine, model) => {
         const normalized = model.trim();
@@ -663,6 +670,7 @@ export const useSettingsStore = create<SettingsStore>()(
         showToolIcons: state.showToolIcons,
         coloredToolIcons: state.coloredToolIcons,
         customModelsByEngine: state.customModelsByEngine,
+        backgroundProcessLimit: state.backgroundProcessLimit,
         // Per-project
         projects: state.projects,
       }),

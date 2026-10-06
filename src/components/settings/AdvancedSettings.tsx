@@ -3,6 +3,7 @@ import { Server } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsHeader, SettingsSection } from "@/components/settings/shared";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { AppSettings } from "@/types";
 import { useI18n } from "@/lib/i18n";
 
@@ -21,6 +22,8 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   onReplayWelcome,
 }: AdvancedSettingsProps) {
   const { t } = useI18n();
+  const backgroundProcessLimit = useSettingsStore((s) => s.backgroundProcessLimit);
+  const setBackgroundProcessLimit = useSettingsStore((s) => s.setBackgroundProcessLimit);
   const [codexClientName, setCodexClientName] = useState("Harnss");
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
   const [showJiraBoard, setShowJiraBoard] = useState(false);
@@ -100,6 +103,20 @@ export const AdvancedSettings = memo(function AdvancedSettings({
                 />
               </SettingRow>
             )}
+
+            <SettingRow
+              label="Background process limit"
+              description="Idle background sessions keep their engine process alive (100-130MB each). Beyond this limit, the least recently active idle sessions are stopped and revived on demand. Set to 0 to disable reaping."
+            >
+              <input
+                type="number"
+                min={0}
+                max={32}
+                value={backgroundProcessLimit}
+                onChange={(e) => setBackgroundProcessLimit(Number(e.target.value))}
+                className="h-8 w-20 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
+              />
+            </SettingRow>
 
             <SettingRow
               label="Enable Jira board"

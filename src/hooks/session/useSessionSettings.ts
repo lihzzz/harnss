@@ -4,6 +4,7 @@ import type { PersistedSession, ClaudeEffort } from "../../types";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { capture, captureException } from "../../lib/analytics/analytics";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
+import { saveSessionSmart } from "../../lib/session/persistence";
 import {
   DRAFT_ID,
   DEFAULT_PERMISSION_MODE,
@@ -70,7 +71,7 @@ export function useSessionSettings({
 
     window.claude.sessions.load(session.projectId, sessionId).then((data) => {
       if (data) {
-        window.claude.sessions.save({ ...data, ...patch });
+        void saveSessionSmart({ ...data, ...patch });
       }
     }).catch(() => { /* session may have been deleted */ });
   }, [sessionsRef, setSessions]);

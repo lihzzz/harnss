@@ -14,17 +14,10 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          "vendor-markdown": ["react-markdown", "remark-gfm"],
-          "vendor-syntax": ["react-syntax-highlighter", "refractor"],
-          "vendor-xterm": ["@xterm/xterm", "@xterm/addon-fit"],
-          "vendor-diff": ["diff"],
-          "vendor-konva": ["konva", "react-konva"],
-        },
-      },
-    },
+    // No manualChunks: object-form manualChunks hoisted shared deps (e.g. `scheduler`)
+    // into vendor chunks, forcing lazily-imported vendors (konva, syntax highlighter)
+    // into the eager entry graph. Rollup's automatic chunking respects dynamic import
+    // boundaries and keeps them lazy.
   },
   server: {
     port: 5173,

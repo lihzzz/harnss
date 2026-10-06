@@ -26,6 +26,10 @@ function invoke(channel: string, ...args: unknown[]) {
   return handler(undefined, ...args);
 }
 
+function jsonlPath(id: string) {
+  return getSessionFilePath("project", id).replace(/\.json$/, ".jsonl");
+}
+
 function session(id: string, timestamp = 100) {
   return {
     id,
@@ -56,7 +60,7 @@ describe("session persistence across runtime restarts", () => {
     await invoke("sessions:save", session("resumed-again", 300), "resumed");
 
     expect((await fs.promises.readdir(getProjectSessionsDir("project"))).sort()).toEqual([
-      "resumed-again.json", "resumed-again.meta.json",
+      "resumed-again.jsonl", "resumed-again.meta.json",
     ]);
     expect(await invoke("sessions:load", "project", "resumed-again")).toMatchObject(session("resumed-again", 300));
   });
@@ -105,7 +109,7 @@ describe("session persistence across runtime restarts", () => {
       expect.objectContaining({ id: "separate" }),
     ]);
     // Listing only chooses a snapshot; it does not remove historical files.
-    expect(fs.existsSync(getSessionFilePath("project", "original"))).toBe(true);
+    expect(fs.existsSync(jsonlPath("original"))).toBe(true);
   });
 
   it("uses the most recently saved snapshot when user activity timestamps are equal", async () => {
@@ -143,7 +147,8 @@ describe("session persistence across runtime restarts", () => {
 
     expect(await invoke("sessions:delete", "project", "latest")).toEqual({ ok: true });
     expect(await invoke("sessions:list", "project")).toEqual([expect.objectContaining({ id: "separate" })]);
-    expect(fs.existsSync(getSessionFilePath("project", "original"))).toBe(false);
+    expect(fs.existsSync(jsonlPath("original"))).toBe(false);
+    expect(fs.existsSync(jsonlPath("latest"))).toBe(false);
   });
 
   it("searches the newest snapshot only", async () => {
@@ -156,5 +161,88 @@ describe("session persistence across runtime restarts", () => {
     expect(await invoke("sessions:search", { projectIds: ["project"], query: "Same title" })).toMatchObject({
       sessionResults: [expect.objectContaining({ sessionId: "latest" })],
     });
+  });
+});
+
+
+describe("incremental JSONL append", () => {
+  function appendPayload(id: string, appendedMessages: unknown[], extra: Record<string, unknown> = {}) {
+    return {
+      projectId: "project",
+      id,
+      conversationId: "original",
+      title: "Same title",
+      engine: "codex",
+      codexThreadId: "thread",
+      createdAt: 1,
+      messageCount: 2,
+      lastMessageAt: 500,
+      appendedMessages,
+      ...extra,
+    };
+  }
+
+  it("rejects append when no snapshot exists so the renderer falls back to a full save", async () => {
+    expect(await invoke("sessions:append", appendPayload("new", [{ id: "m1", role: "user", content: "hi", timestamp: 500 }])))
+      .toEqual({ error: "append-before-save" });
+    expect(fs.existsSync(jsonlPath("new"))).toBe(false);
+  });
+
+  it("appends new messages and folds edits by id on load", async () => {
+    await invoke("sessions:save", session("s1"));
+    const toolCall = { id: "t1", role: "tool_call", toolName: "Bash", timestamp: 300 };
+    const toolCallWithResult = { ...toolCall, toolResult: { content: "ok" } };
+
+    expect(await invoke("sessions:append", appendPayload("s1", [toolCall]))).toEqual({ ok: true });
+    expect(await invoke("sessions:append", appendPayload("s1", [toolCallWithResult, { id: "a1", role: "assistant", content: "done", timestamp: 400 }]))).toEqual({ ok: true });
+
+    const loaded = await invoke("sessions:load", "project", "s1") as { messages: Array<Record<string, unknown>> };
+    expect(loaded.messages.map((m) => m.id)).toEqual(["user", "t1", "a1"]);
+    expect(loaded.messages[1]).toMatchObject({ toolResult: { content: "ok" } });
+  });
+
+  it("migrates a legacy .json snapshot on first append and retires the legacy file", async () => {
+    await fs.promises.writeFile(getSessionFilePath("project", "legacy"), JSON.stringify(session("legacy")));
+
+    expect(await invoke("sessions:append", appendPayload("legacy", [{ id: "m2", role: "assistant", content: "new", timestamp: 600 }]))).toEqual({ ok: true });
+
+    expect(fs.existsSync(getSessionFilePath("project", "legacy"))).toBe(false);
+    expect(fs.existsSync(jsonlPath("legacy"))).toBe(true);
+    const loaded = await invoke("sessions:load", "project", "legacy") as { messages: Array<Record<string, unknown>> };
+    expect(loaded.messages.map((m) => m.id)).toEqual(["user", "m2"]);
+  });
+
+  it("patches meta on jsonl via header fold, including unpin with explicit null", async () => {
+    await invoke("sessions:save", session("s2"));
+    await invoke("sessions:update-meta", { projectId: "project", sessionId: "s2", patch: { pinned: true } });
+    let loaded = await invoke("sessions:load", "project", "s2") as Record<string, unknown>;
+    expect(loaded.pinned).toBe(true);
+
+    await invoke("sessions:update-meta", { projectId: "project", sessionId: "s2", patch: { pinned: false } });
+    loaded = await invoke("sessions:load", "project", "s2") as Record<string, unknown>;
+    expect(loaded.pinned).toBeFalsy();
+  });
+
+  it("searches jsonl snapshots without the legacy size cap path", async () => {
+    await invoke("sessions:save", session("s3"));
+    await invoke("sessions:append", appendPayload("s3", [{ id: "m9", role: "assistant", content: "needle in jsonl", timestamp: 700 }]));
+
+    expect(await invoke("sessions:search", { projectIds: ["project"], query: "needle in jsonl" })).toMatchObject({
+      messageResults: [expect.objectContaining({ sessionId: "s3" })],
+    });
+  });
+
+  it("compacts the file once overridden lines dwarf live messages", async () => {
+    await invoke("sessions:save", session("s4"));
+    const edit = (n: number) => ({ id: "t1", role: "tool_call", toolName: "Bash", toolResult: { content: `v${n}` }, timestamp: 300 });
+    for (let i = 0; i < 5; i++) {
+      await invoke("sessions:append", appendPayload("s4", [edit(i)], { messageCount: 2 }));
+    }
+    const lines = (await fs.promises.readFile(jsonlPath("s4"), "utf-8")).split("\n").filter(Boolean);
+    // 5 appends × 2 lines (header + msg) would be 12 lines uncompacted; compaction
+    // at 3× live messages (2) rewrites to exactly header + 2 messages.
+    expect(lines.length).toBeLessThanOrEqual(4);
+    const loaded = await invoke("sessions:load", "project", "s4") as { messages: Array<Record<string, unknown>> };
+    expect(loaded.messages.find((m) => m.id === "t1")).toMatchObject({ toolResult: { content: "v4" } });
   });
 });

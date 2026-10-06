@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useEffect, useLayoutEffect, useState } from "react";
+import React, { lazy, Suspense, useCallback, useMemo, useRef, useEffect, useLayoutEffect, useState } from "react";
 import { LayoutGroup, motion } from "motion/react";
 import { PanelLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -29,13 +29,19 @@ import { ToolPicker } from "./ToolPicker";
 import { PANEL_TOOLS_MAP } from "./ToolPicker";
 import type { ToolId } from "@/types/tools";
 import { WelcomeScreen } from "./WelcomeScreen";
-import { WelcomeWizard } from "./welcome/WelcomeWizard";
+const WelcomeWizard = lazy(() =>
+  import("./welcome/WelcomeWizard").then((m) => ({ default: m.WelcomeWizard })),
+);
 import { PanelDockPreview } from "./PanelDockPreview";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
-import { SettingsView } from "./SettingsView";
+const SettingsView = lazy(() =>
+  import("./SettingsView").then((m) => ({ default: m.SettingsView })),
+);
 import { CodexAuthDialog } from "./CodexAuthDialog";
 import { ACPAuthDialog } from "./ACPAuthDialog";
-import { JiraBoardPanel } from "./JiraBoardPanel";
+const JiraBoardPanel = lazy(() =>
+  import("./JiraBoardPanel").then((m) => ({ default: m.JiraBoardPanel })),
+);
 import { isMac, isWindows } from "@/lib/utils";
 import { SplitHandle } from "./split/SplitHandle";
 import { SplitDropZone } from "./split/SplitDropZone";
@@ -1138,6 +1144,7 @@ export function AppLayout() {
 
       <div ref={contentRef} className={`flex min-w-0 flex-1 flex-col ${settings.islandLayout ? "m-[var(--island-gap)]" : sidebar.isOpen ? "flat-divider-s" : ""} ${isResizing ? "select-none" : ""}`}>
         {showSettings && (
+          <Suspense fallback={null}>
           <SettingsView
             onClose={() => setShowSettings(false)}
             glassSupported={glassSupported}
@@ -1160,6 +1167,7 @@ export function AppLayout() {
             }}
             canOpenInSplitView={(sessionId) => splitView.canShowSessionSplitAction(sessionId, manager.activeSessionId)}
           />
+          </Suspense>
         )}
         {/* Keep chat area mounted (hidden) when settings is open to avoid
             destroying/recreating the entire ChatView DOM tree on toggle */}
@@ -1510,6 +1518,7 @@ export function AppLayout() {
                 }) as React.CSSProperties}
           >
             {jiraBoardProject ? (
+              <Suspense fallback={null}>
               <JiraBoardPanel
                 projectId={jiraBoardProject.id}
                 projectName={jiraBoardProject.name}
@@ -1519,6 +1528,7 @@ export function AppLayout() {
                 onToggleSidebar={sidebar.toggle}
                 onCreateTask={handleCreateTaskFromJiraIssue}
               />
+              </Suspense>
             ) : manager.activeSessionId ? (
               <>
               {/* Top fade: only visible when chat is scrolled down. Island mode uses dark shadow; flat mode fades content into bg */}
@@ -1864,6 +1874,7 @@ export function AppLayout() {
       />
       {/* Welcome wizard — full-screen overlay on first run */}
       {!welcomeCompleted && (
+        <Suspense fallback={null}>
         <WelcomeWizard
           glassSupported={glassSupported}
           permissionMode={settings.permissionMode}
@@ -1872,6 +1883,7 @@ export function AppLayout() {
           hasProjects={hasProjects}
           onComplete={handleWelcomeComplete}
         />
+        </Suspense>
       )}
     </div>
     </AgentProvider>

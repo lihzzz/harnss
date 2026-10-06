@@ -5,6 +5,7 @@ import { canonicalizeModelValue } from "@/lib/model-utils";
 import { getSessionNotificationActor } from "@/lib/session-notifications";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { buildPersistedSession } from "../../lib/session/records";
+import { saveSessionSmart } from "../../lib/session/persistence";
 import { createSystemMessage } from "../../lib/message-factory";
 import { isRetryableUpstreamError } from "../../lib/session/retry";
 import { normalizeToolInput as acpNormalizeToolInput, pickAutoResponseOption } from "../../lib/engine/acp-adapter";
@@ -70,7 +71,7 @@ export function useSessionPersistence({
         // Best-effort fallback only.
       }
     }
-    await window.claude.sessions.save(payload);
+    await saveSessionSmart(payload);
   }, []);
 
   const persistCodexGoalMutation = useCallback(async (sessionId: string, goal: PersistedSession["codexGoal"]) => {
@@ -101,7 +102,7 @@ export function useSessionPersistence({
     try {
       const persisted = await window.claude.sessions.load(session.projectId, sessionId);
       if (persisted) {
-        await window.claude.sessions.save({ ...persisted, codexGoal: goal });
+        await saveSessionSmart({ ...persisted, codexGoal: goal });
       }
     } catch {
       // Goal persistence is best effort; the next session load can refresh it from Codex.
@@ -250,7 +251,7 @@ export function useSessionPersistence({
             bgState.totalCost,
             bgState.contextUsage,
           );
-          window.claude.sessions.save(persisted);
+          void saveSessionSmart(persisted);
         }
       }
     };
@@ -601,7 +602,7 @@ export function useSessionPersistence({
           sessionId,
         );
         if (data) {
-          await window.claude.sessions.save({ ...data, title });
+          await saveSessionSmart({ ...data, title });
         }
       } catch {
         setSessions((prev) =>

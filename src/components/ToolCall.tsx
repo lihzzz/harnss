@@ -103,7 +103,11 @@ const RegularTool = memo(function RegularTool({
   const isPlanTool = message.toolName === "ExitPlanMode";
   const isInteractive = isPlanTool || message.toolName === "AskUserQuestion";
   const isEditToolCall = message.toolName === "Edit" || message.toolName === "Write";
-  const defaultExpanded = isPlanTool || (isEditToolCall && expandEditToolCallsByDefault);
+  // Restored history mounts with the result already present — keep it collapsed so
+  // loading a large session doesn't render every Edit/Write diff. Live tools mount
+  // result-less and still expand per the user's setting.
+  const hasResult = !!message.toolResult;
+  const defaultExpanded = isPlanTool || (isEditToolCall && expandEditToolCallsByDefault && !hasResult);
   const skipAutoExpandOnResult = isEditToolCall || isInteractive;
   const isWideTool = message.toolName === "Edit" || message.toolName === "Write" || message.toolName === "NotebookEdit";
   const [storedExpanded, setExpanded, hasStoredExpanded] = useChatPersistedState(
@@ -111,7 +115,6 @@ const RegularTool = memo(function RegularTool({
     defaultExpanded,
   );
   const expanded = isPlanTool || storedExpanded;
-  const hasResult = !!message.toolResult;
   const isRunning = !hasResult;
   const isError = !!message.toolError;
   const Icon = getToolIcon(message.toolName ?? "");
