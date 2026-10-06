@@ -59,6 +59,19 @@ describe("settings store", () => {
     expect(selectProjectSettings(useSettingsStore.getState(), "project-1").toolOrder).toContain("fingerprint");
   });
 
+  it("adds missing tools to already persisted project orders", async () => {
+    localStorage.setItem(
+      "harnss-settings-store",
+      JSON.stringify({
+        state: { projects: { "project-1": { toolOrder: ["terminal", "git"] } } },
+        version: 0,
+      }),
+    );
+    const { selectProjectSettings, useSettingsStore } = await import("./settings-store");
+
+    expect(selectProjectSettings(useSettingsStore.getState(), "project-1").toolOrder).toContain("fingerprint");
+  });
+
   it("defaults to Chinese and persists language changes", async () => {
     const { useSettingsStore } = await import("./settings-store");
 

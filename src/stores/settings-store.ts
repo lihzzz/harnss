@@ -410,6 +410,20 @@ function validateToolOrder(stored: ToolId[]): ToolId[] {
   return result;
 }
 
+function normalizePersistedProjects(
+  projects: Record<string, ProjectSettings>,
+): Record<string, ProjectSettings> {
+  return Object.fromEntries(
+    Object.entries(projects).map(([projectId, project]) => [
+      projectId,
+      {
+        ...project,
+        toolOrder: validateToolOrder(project.toolOrder ?? DEFAULT_TOOL_ORDER),
+      },
+    ]),
+  );
+}
+
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
@@ -661,7 +675,7 @@ export const useSettingsStore = create<SettingsStore>()(
           ...incoming,
           language: incoming.language === "en-US" ? "en-US" : "zh-CN",
           // Ensure projects is always an object, never undefined
-          projects: incoming.projects ?? current.projects,
+          projects: normalizePersistedProjects(incoming.projects ?? current.projects),
         };
       },
     },
