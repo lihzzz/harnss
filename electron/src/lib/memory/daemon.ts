@@ -57,6 +57,25 @@ function writeProfileApiKey(profileEnv: string, apiKey: string): void {
   fs.writeFileSync(profileEnv, `${filtered.filter(Boolean).join("\n")}\n`, { mode: 0o600 });
 }
 
+function configureSharedUvEnvironment(): void {
+  const home = os.homedir();
+  const cacheRoot = process.env.XDG_CACHE_HOME ?? path.join(home, ".cache");
+  const dataRoot = process.env.XDG_DATA_HOME ?? path.join(home, ".local", "share");
+  const localAppData = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
+  const uvRoot = process.platform === "win32" ? path.join(localAppData, "uv") : path.join(dataRoot, "uv");
+  process.env.UV_CACHE_DIR ??= process.platform === "win32" ? path.join(uvRoot, "cache") : path.join(cacheRoot, "uv");
+  process.env.UV_PYTHON_INSTALL_DIR ??= path.join(uvRoot, "python");
+  process.env.UV_TOOL_DIR ??= path.join(uvRoot, "tools");
+  process.env.UV_HTTP_TIMEOUT ??= "300";
+  process.env.HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT ??= "900";
+  process.env.HF_HOME ??= path.join(cacheRoot, "huggingface");
+  process.env.HINDSIGHT_API_MODEL_INIT_TIMEOUT ??= "900";
+  if (process.platform === "darwin") {
+    process.env.LANG = "en_US.UTF-8";
+    process.env.LC_ALL = "en_US.UTF-8";
+  }
+}
+
 export function getUvStatus(): MemoryDaemonStatus["uv"] {
   let uvVersion: string | undefined;
   for (const command of ["uv", ...uvCandidates()]) {
@@ -146,6 +165,7 @@ export async function startMemoryDaemon(): Promise<void> {
     server = null;
   }
   startPromise = (async () => {
+    configureSharedUvEnvironment();
     const hindsight = await import("@vectorize-io/hindsight-all");
     const llmKey = getMemoryLlmKey();
     const hindsightHome = path.join(getDataDir(), "hindsight");
@@ -181,18 +201,8 @@ export async function startMemoryDaemon(): Promise<void> {
       },
     });
     try {
+      if (llmKey) writeProfileApiKey(profileEnv, llmKey);
       await server.start();
-      if (stopRequested) return;
-      if (llmKey) {
-        // hindsight-all forwards userEnv as --env arguments. Start once with
-        // provider settings only, then place the key in the profile env file
-        // for the daemon restart; this keeps the key out of both argv and the
-        // Electron process environment.
-        await server.stop();
-        if (stopRequested) return;
-        writeProfileApiKey(profileEnv, llmKey);
-        await server.start();
-      }
     } finally {
       removeProfileApiKey(profileEnv);
     }
