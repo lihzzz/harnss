@@ -13,7 +13,7 @@ import { getStoredProjectGitCwd } from "@/lib/session/space-projects";
 import { PanelDockControls } from "@/components/PanelDockControls";
 import { ToolIslandContent } from "@/components/workspace/ToolIslandContent";
 import { SplitPaneHost } from "@/components/split/SplitPaneHost";
-import type { ToolId } from "@/types/tools";
+import type { PanelToolId } from "@/types/tools";
 import type { ChatSession, Project } from "@/types";
 import type { SessionPaneState } from "@/hooks/session/useSessionPane";
 import type { SessionPaneBootstrap } from "@/hooks/session/types";
@@ -130,7 +130,7 @@ function renderIslandContent(
       }}
     >
       <ToolIslandContent
-        toolId={island.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">}
+        toolId={island.toolId as PanelToolId}
         persistKey={island.persistKey}
         headerControls={controls}
         projectPath={paneProjectPath}

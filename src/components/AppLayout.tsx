@@ -529,7 +529,7 @@ export function AppLayout() {
       if (drag.islandId) {
         mainToolWorkspace.moveToolIslandToTopColumn(drag.islandId, drag.targetColumnId, drag.targetIndex ?? undefined);
       } else if (drag.toolId in PANEL_TOOLS_MAP) {
-        mainToolWorkspace.openToolIslandInTopColumn(drag.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">, drag.targetColumnId, drag.targetIndex ?? undefined);
+        mainToolWorkspace.openToolIslandInTopColumn(drag.toolId as PanelToolId, drag.targetColumnId, drag.targetIndex ?? undefined);
       }
     } else {
       const targetDock = drag.targetArea;
@@ -537,7 +537,7 @@ export function AppLayout() {
         if (drag.islandId) {
           mainToolWorkspace.moveToolIsland(drag.islandId, targetDock, drag.targetIndex ?? undefined);
         } else {
-          mainToolWorkspace.openToolIsland(drag.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">, targetDock, drag.targetIndex ?? undefined);
+          mainToolWorkspace.openToolIsland(drag.toolId as PanelToolId, targetDock, drag.targetIndex ?? undefined);
         }
       }
     }
@@ -555,7 +555,7 @@ export function AppLayout() {
     if (found) return found;
     // Fallback for picker-initiated drags (no islandId, no sourceSessionId)
     if (mainToolDrag && !mainToolDrag.islandId && mainToolDrag.toolId in PANEL_TOOLS_MAP) {
-      return mainToolWorkspace.getToolIsland(mainToolDrag.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">);
+      return mainToolWorkspace.getToolIsland(mainToolDrag.toolId as PanelToolId);
     }
     return null;
   }, [mainToolDrag, mainToolWorkspace]);
@@ -1011,7 +1011,7 @@ export function AppLayout() {
   });
 
   const renderMainWorkspaceToolContent = useCallback((
-    toolId: Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">,
+    toolId: PanelToolId,
     controls: React.ReactNode,
   ) => (
     <ToolIslandContent

@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Terminal, Globe, GitBranch, FileText, FolderTree, ListTodo, Bot, Plug, SquareArrowOutUpRight, ArrowDown, ArrowRight } from "lucide-react";
+import { Terminal, Globe, GitBranch, FileText, FolderTree, ListTodo, Bot, Plug, Fingerprint, SquareArrowOutUpRight, ArrowDown, ArrowRight } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -64,6 +64,7 @@ const TOOL_TINTS: Record<string, { idle: string; hover: string; active: string }
   files:           { idle: "text-amber-600/70 dark:text-amber-200/50",      hover: "hover:text-amber-600/90 dark:hover:text-amber-200/70",     active: "text-amber-600 dark:text-amber-200/90" },
   "project-files": { idle: "text-teal-600/70 dark:text-teal-200/50",       hover: "hover:text-teal-600/90 dark:hover:text-teal-200/70",       active: "text-teal-600 dark:text-teal-200/90" },
   mcp:             { idle: "text-violet-600/70 dark:text-violet-200/50",    hover: "hover:text-violet-600/90 dark:hover:text-violet-200/70",   active: "text-violet-600 dark:text-violet-200/90" },
+  fingerprint:     { idle: "text-fuchsia-600/70 dark:text-fuchsia-200/50",  hover: "hover:text-fuchsia-600/90 dark:hover:text-fuchsia-200/70", active: "text-fuchsia-600 dark:text-fuchsia-200/90" },
   tasks:           { idle: "text-blue-600/70 dark:text-blue-200/50",        hover: "hover:text-blue-600/90 dark:hover:text-blue-200/70",       active: "text-blue-600 dark:text-blue-200/90" },
   agents:          { idle: "text-indigo-600/70 dark:text-indigo-200/50",    hover: "hover:text-indigo-600/90 dark:hover:text-indigo-200/70",   active: "text-indigo-600 dark:text-indigo-200/90" },
 };
@@ -75,6 +76,7 @@ export const PANEL_TOOLS_MAP: Record<string, ToolDef> = {
   files: { id: "files", label: "Open Files", icon: FileText },
   "project-files": { id: "project-files", label: "Project Files", icon: FolderTree },
   mcp: { id: "mcp", label: "MCP Servers", icon: Plug },
+  fingerprint: { id: "fingerprint", label: "Fingerprint Probe", icon: Fingerprint },
 };
 
 const CONTEXTUAL_TOOLS: ToolDef[] = [

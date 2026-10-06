@@ -293,6 +293,7 @@ contextBridge.exposeInMainWorld("claude", {
     listSkills: (sessionId: string) => ipcRenderer.invoke("codex:list-skills", sessionId),
     listApps: (sessionId: string) => ipcRenderer.invoke("codex:list-apps", sessionId),
     listModels: () => ipcRenderer.invoke("codex:list-models"),
+    fingerprintProbe: (model: string) => ipcRenderer.invoke("codex:fingerprint-probe", { model }),
     authStatus: () => ipcRenderer.invoke("codex:auth-status"),
     login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) =>
       ipcRenderer.invoke("codex:login", { sessionId, type, apiKey }),

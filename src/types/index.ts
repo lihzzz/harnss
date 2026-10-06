@@ -203,6 +203,17 @@ export type {
   CodexThreadGoalUpdatedNotification,
   CodexThreadGoalClearedNotification,
 } from "./codex";
+export type {
+  CodexFingerprintProbeRequest,
+  CodexFingerprintSamplePrompt,
+  CodexFingerprintSample,
+  CodexFingerprintCandidate,
+  CodexFingerprintDiagnostic,
+  CodexFingerprintCalibration,
+  CodexFingerprintAnalysis,
+  CodexFingerprintVerdict,
+  CodexFingerprintProbeResult,
+} from "./codex-fingerprint";
 
 // ── Tool types ──
 

@@ -22,6 +22,17 @@ export type { RequestId as CodexRequestId } from "./codex-protocol/RequestId";
 export type { ThreadItem as CodexThreadItem } from "./codex-protocol/v2/ThreadItem";
 export type { ThreadStartParams as CodexThreadStartParams } from "./codex-protocol/v2/ThreadStartParams";
 export type { ThreadStartResponse as CodexThreadStartResponse } from "./codex-protocol/v2/ThreadStartResponse";
+export type {
+  CodexFingerprintProbeRequest,
+  CodexFingerprintSamplePrompt,
+  CodexFingerprintSample,
+  CodexFingerprintCandidate,
+  CodexFingerprintDiagnostic,
+  CodexFingerprintCalibration,
+  CodexFingerprintAnalysis,
+  CodexFingerprintVerdict,
+  CodexFingerprintProbeResult,
+} from "./codex-fingerprint";
 export type { ThreadResumeParams as CodexThreadResumeParams } from "./codex-protocol/v2/ThreadResumeParams";
 export type { ThreadResumeResponse as CodexThreadResumeResponse } from "./codex-protocol/v2/ThreadResumeResponse";
 export type { ThreadListParams as CodexThreadListParams } from "./codex-protocol/v2/ThreadListParams";
