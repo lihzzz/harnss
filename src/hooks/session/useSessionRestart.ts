@@ -3,6 +3,8 @@ import type { McpServerConfig, Project } from "../../types";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { createSystemMessage } from "../../lib/message-factory";
+import { buildPersistedSession } from "../../lib/session/records";
+import { persistSessionReplacement } from "../../lib/session/persistence";
 import {
   DRAFT_ID,
   getEffectiveClaudePermissionMode,
@@ -130,6 +132,12 @@ export function useSessionRestart({
     });
     if ("configOptions" in result && result.configOptions?.length) setInitialConfigOptions(result.configOptions);
     setActiveSessionId(newId);
+    await persistSessionReplacement(currentId, buildPersistedSession(
+      { ...session, id: newId, conversationId: session.conversationId ?? currentId, agentSessionId: newAgentSessionId ?? session.agentSessionId },
+      currentMessages.filter((message) => !message.isQueued),
+      currentCost,
+      contextUsageRef.current,
+    ));
     return { ok: true };
   }, [findProject, getProjectCwd]);
 
@@ -197,6 +205,13 @@ export function useSessionRestart({
         contextUsage: contextUsageRef.current,
       });
       setActiveSessionId(newId);
+
+      await persistSessionReplacement(currentId, buildPersistedSession(
+        { ...session, id: newId, conversationId: session.conversationId ?? currentId, codexThreadId: resumeResult.threadId ?? codexThreadId },
+        messagesRef.current.filter((message) => !message.isQueued),
+        totalCostRef.current,
+        contextUsageRef.current,
+      ));
 
       suppressNextSessionCompletion(currentId);
       await window.claude.codex.stop(currentId);
@@ -298,13 +313,12 @@ export function useSessionRestart({
     // 9. Persist: save under new forked ID, delete old session file
     const oldData = await window.claude.sessions.load(project.id, currentId);
     if (oldData) {
-      await window.claude.sessions.save({
+      await persistSessionReplacement(currentId, {
         ...oldData,
         id: newId,
         conversationId: session.conversationId ?? oldData.conversationId ?? currentId,
         messages: [...truncatedMessages, systemMsg],
       });
-      await window.claude.sessions.delete(project.id, currentId);
     }
   }, [findProject, claude.flushNow, claude.resetStreaming, claude.setMessages]);
 

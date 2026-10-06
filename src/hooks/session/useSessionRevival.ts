@@ -7,6 +7,8 @@ import { buildSdkContent } from "../../lib/engine/protocol";
 import { capture } from "../../lib/analytics/analytics";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
 import { isRetryableUpstreamError } from "../../lib/session/retry";
+import { buildPersistedSession } from "../../lib/session/records";
+import { persistSessionReplacement } from "../../lib/session/persistence";
 import {
   DRAFT_ID,
   getEffectiveClaudePermissionMode,
@@ -105,6 +107,13 @@ export function useSessionRevival({
       if (result.configOptions?.length) setInitialConfigOptions(result.configOptions);
       setActiveSessionId(newId);
 
+      await persistSessionReplacement(oldId, buildPersistedSession(
+        { ...session, id: newId, conversationId: session.conversationId ?? oldId, agentSessionId: result.agentSessionId ?? session.agentSessionId },
+        messagesRef.current.filter((message) => !message.isQueued),
+        totalCostRef.current,
+        contextUsageRef.current,
+      ));
+
       await new Promise((resolve) => setTimeout(resolve, 50));
       if (!userMessageAlreadyAdded) {
         acp.setMessages((prev) => [...prev, createUserMessage(text, images, displayText)]);
@@ -190,6 +199,13 @@ export function useSessionRevival({
       });
       setActiveSessionId(newId);
 
+      await persistSessionReplacement(oldId, buildPersistedSession(
+        { ...session, id: newId, conversationId: session.conversationId ?? oldId, codexThreadId: result.threadId ?? codexThreadId, codexGoal: resumedGoal },
+        messagesRef.current.filter((message) => !message.isQueued),
+        totalCostRef.current,
+        contextUsageRef.current,
+      ));
+
       // Small delay to let hook pick up new sessionId
       await new Promise((resolve) => setTimeout(resolve, 50));
       if (!userMessageAlreadyAdded) {
@@ -271,21 +287,20 @@ export function useSessionRevival({
         setSessions((prev) =>
           prev.map((s) =>
             s.id === oldId
-              ? { ...s, id: newSessionId, isActive: true }
+              ? { ...s, id: newSessionId, conversationId: s.conversationId ?? oldId, isActive: true }
               : { ...s, isActive: false },
           ),
         );
 
         const oldData = await window.claude.sessions.load(project.id, oldId);
         if (oldData) {
-          await window.claude.sessions.save({
+          await persistSessionReplacement(oldId, {
             ...oldData,
             id: newSessionId,
             conversationId: session.conversationId ?? oldData.conversationId ?? oldId,
             messages: messagesRef.current,
             model: session.model ?? oldData.model,
           });
-          await window.claude.sessions.delete(project.id, oldId);
         }
 
         setActiveSessionId(newSessionId);

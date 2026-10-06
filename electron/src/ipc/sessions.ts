@@ -48,8 +48,71 @@ function isMissingFileError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
+function conversationKey(session: SessionMeta): string {
+  const engine = session.engine ?? "claude";
+  const identity = engine === "codex" && session.codexThreadId
+    ? session.codexThreadId
+    : session.conversationId ?? session.id;
+  return JSON.stringify([session.projectId, engine, identity]);
+}
+
+async function readSessionSnapshots(projectId: string): Promise<SessionMeta[]> {
+  const dir = getProjectSessionsDir(projectId);
+  const allFiles = await fs.promises.readdir(dir);
+  const metaFiles = allFiles.filter((file) => file.endsWith(".meta.json"));
+  const metaBasenames = new Set(metaFiles.map((file) => file.replace(/\.meta\.json$/, "")));
+  const fullParseFiles = allFiles.filter((file) =>
+    file.endsWith(".json") && !file.endsWith(".meta.json") && !metaBasenames.has(file.replace(/\.json$/, "")),
+  );
+
+  const snapshots = await Promise.all([...metaFiles, ...fullParseFiles].map(async (file) => {
+    try {
+      const filePath = path.join(dir, file);
+      const [raw, stat] = await Promise.all([
+        fs.promises.readFile(filePath, "utf-8"),
+        fs.promises.stat(filePath),
+      ]);
+      const data: Record<string, unknown> = JSON.parse(raw);
+      const lastMessageAt = getLastUserMessageTimestamp(Array.isArray(data.messages) ? data.messages : undefined)
+        ?? (typeof data.lastMessageAt === "number" ? data.lastMessageAt : undefined)
+        ?? (typeof data.createdAt === "number" ? data.createdAt : 0);
+      return { meta: extractSessionMeta(data, lastMessageAt), modifiedAt: stat.mtimeMs };
+    } catch {
+      // Skip unreadable snapshots, as in the legacy listing path.
+      return null;
+    }
+  }));
+
+  // A resumed runtime may have the same last user message as its predecessor.
+  // Break ties by save time so the latest assistant output is retained.
+  return snapshots.filter((snapshot) => snapshot !== null)
+    .sort((a, b) => b.meta.lastMessageAt - a.meta.lastMessageAt || b.modifiedAt - a.modifiedAt)
+    .map((snapshot) => snapshot.meta);
+}
+
+function latestConversations(snapshots: SessionMeta[]): SessionMeta[] {
+  const seen = new Set<string>();
+  return snapshots.filter((session) => {
+    const key = conversationKey(session);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function deleteSessionSnapshot(projectId: string, sessionId: string): Promise<void> {
+  await sessionWriteQueue.enqueue(sessionKey(projectId, sessionId), async () => {
+    await Promise.all([
+      getSessionFilePath(projectId, sessionId),
+      getMetaFilePath(projectId, sessionId),
+    ].map((filePath) => fs.promises.unlink(filePath).catch((error: unknown) => {
+      if (!isMissingFileError(error)) throw error;
+    })));
+  });
+}
+
 export function register(): void {
-  ipcMain.handle("sessions:save", async (_event, data: { projectId: string; id: string; createdAt?: number; messages?: Array<{ role?: string; timestamp?: number }> }) => {
+  ipcMain.handle("sessions:save", async (_event, data: { projectId: string; id: string; createdAt?: number; messages?: Array<{ role?: string; timestamp?: number }> }, previousSessionId?: string) => {
     try {
       await sessionWriteQueue.enqueue(sessionKey(data.projectId, data.id), async () => {
         const filePath = getSessionFilePath(data.projectId, data.id);
@@ -69,6 +132,10 @@ export function register(): void {
         const meta = extractSessionMeta(enriched as unknown as Record<string, unknown>, lastMessageAt);
         await writeJsonAtomically(getMetaFilePath(data.projectId, data.id), meta);
       }, "save");
+      // Only retire the previous runtime after both replacement files are safe.
+      if (previousSessionId && previousSessionId !== data.id) {
+        await deleteSessionSnapshot(data.projectId, previousSessionId);
+      }
       return { ok: true };
     } catch (err) {
       const message = reportError("SESSIONS:SAVE_ERR", err, { sessionId: data.id });
@@ -93,54 +160,7 @@ export function register(): void {
 
   ipcMain.handle("sessions:list", async (_event, projectId: string) => {
     try {
-      const dir = getProjectSessionsDir(projectId);
-      const allFiles = await fs.promises.readdir(dir);
-
-      // Prefer .meta.json sidecar files for fast listing
-      const metaFiles = allFiles.filter((f) => f.endsWith(".meta.json"));
-      const metaBasenames = new Set(metaFiles.map((f) => f.replace(/\.meta\.json$/, "")));
-
-      // Find .json files that lack a .meta.json sidecar (migration path)
-      const fullParseFiles = allFiles.filter(
-        (f) => f.endsWith(".json") && !f.endsWith(".meta.json") && !metaBasenames.has(f.replace(/\.json$/, ""))
-      );
-
-      const items = await Promise.all([
-        // Fast path: read small sidecar files
-        ...metaFiles.map(async (file): Promise<SessionMeta | null> => {
-          try {
-            const raw = await fs.promises.readFile(path.join(dir, file), "utf-8");
-            const data = JSON.parse(raw) as Record<string, unknown>;
-            const lastMessageAt = typeof data.lastMessageAt === "number"
-              ? data.lastMessageAt
-              : typeof data.createdAt === "number" ? data.createdAt : 0;
-            return extractSessionMeta(data, lastMessageAt);
-          } catch {
-            return null;
-          }
-        }),
-        // Fallback: full-file parse for sessions without sidecar
-        ...fullParseFiles.map(async (file): Promise<SessionMeta | null> => {
-          try {
-            const raw = await fs.promises.readFile(path.join(dir, file), "utf-8");
-            const data = JSON.parse(raw) as Record<string, unknown>;
-            const lastMessageAt: number =
-              getLastUserMessageTimestamp(data.messages as Array<{ role?: string; timestamp?: number }>) ??
-              (typeof data.lastMessageAt === "number" ? data.lastMessageAt : undefined) ??
-              (data.createdAt as number) ??
-              0;
-
-            return extractSessionMeta(data, lastMessageAt);
-          } catch {
-            return null;
-          }
-        }),
-      ]);
-
-      const list: SessionMeta[] = items.filter((item): item is SessionMeta => item !== null);
-      // Sort by most recent user activity, not creation time.
-      list.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
-      return list;
+      return latestConversations(await readSessionSnapshots(projectId));
     } catch (err) {
       reportError("SESSIONS:LIST_ERR", err, { projectId });
       return [];
@@ -193,19 +213,13 @@ export function register(): void {
 
   ipcMain.handle("sessions:delete", async (_event, projectId: string, sessionId: string) => {
     try {
-      await sessionWriteQueue.enqueue(sessionKey(projectId, sessionId), async () => {
-        const filePath = getSessionFilePath(projectId, sessionId);
-        const metaPath = getMetaFilePath(projectId, sessionId);
-
-        await Promise.all([
-          fs.promises.unlink(filePath).catch((err: NodeJS.ErrnoException) => {
-            if (err.code !== "ENOENT") throw err;
-          }),
-          fs.promises.unlink(metaPath).catch((err: NodeJS.ErrnoException) => {
-            if (err.code !== "ENOENT") throw err;
-          }),
-        ]);
-      });
+      const snapshots = await readSessionSnapshots(projectId);
+      const target = snapshots.find((session) => session.id === sessionId);
+      const ids = target
+        ? snapshots.filter((session) => conversationKey(session) === conversationKey(target)).map((session) => session.id)
+        : [sessionId];
+      // Retire legacy copies too, otherwise deleting the visible entry revives an older one.
+      await Promise.all(ids.map((id) => deleteSessionSnapshot(projectId, id)));
       return { ok: true };
     } catch (err) {
       const message = reportError("SESSIONS:DELETE_ERR", err, { projectId, sessionId });
@@ -227,10 +241,9 @@ export function register(): void {
           continue;
         }
 
-        const allFiles = await fs.promises.readdir(dir);
-        const files = allFiles.filter((f) => f.endsWith(".json") && !f.endsWith(".meta.json"));
-        for (const file of files) {
-          const filePath = path.join(dir, file);
+        const sessions = latestConversations(await readSessionSnapshots(projectId));
+        for (const session of sessions) {
+          const filePath = getSessionFilePath(projectId, session.id);
           try {
             const stat = await fs.promises.stat(filePath);
             if (stat.size > 5 * 1024 * 1024) continue;

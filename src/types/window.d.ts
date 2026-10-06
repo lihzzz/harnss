@@ -168,7 +168,7 @@ declare global {
         reorder: (projectId: string, targetProjectId: string) => Promise<IpcResult>;
       };
       sessions: {
-        save: (data: PersistedSession) => Promise<IpcResult>;
+        save: (data: PersistedSession, previousSessionId?: string) => Promise<IpcResult>;
         load: (projectId: string, sessionId: string) => Promise<PersistedSession | null>;
         list: (projectId: string) => Promise<SessionListItem[]>;
         delete: (projectId: string, sessionId: string) => Promise<IpcResult>;

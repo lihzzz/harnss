@@ -147,7 +147,7 @@ contextBridge.exposeInMainWorld("claude", {
     reorder: (projectId: string, targetProjectId: string) => ipcRenderer.invoke("projects:reorder", projectId, targetProjectId),
   },
   sessions: {
-    save: (data: unknown) => ipcRenderer.invoke("sessions:save", data),
+    save: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:save", data, previousSessionId),
     load: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:load", projectId, sessionId),
     list: (projectId: string) => ipcRenderer.invoke("sessions:list", projectId),
     delete: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:delete", projectId, sessionId),
