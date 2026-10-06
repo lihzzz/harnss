@@ -18,6 +18,7 @@ interface PreloadGlobals {
 }
 
 import type { ThemeOption as ThemeSource, MacBackgroundEffect } from "@shared/types/settings";
+import type { MemoryProjectConfig } from "@shared/types/memory";
 
 function readStoredThemeSource(storage: PreloadStorage | undefined): ThemeSource {
   const stored = storage?.getItem("harnss-theme");
@@ -120,8 +121,8 @@ contextBridge.exposeInMainWorld("claude", {
     ipcRenderer.invoke("claude:mcp-reconnect", { sessionId, serverName }),
   revertFiles: (sessionId: string, checkpointId: string) =>
     ipcRenderer.invoke("claude:revert-files", { sessionId, checkpointId }),
-  restartSession: (sessionId: string, mcpServers?: unknown[], cwd?: string, effort?: string, model?: string) =>
-    ipcRenderer.invoke("claude:restart-session", { sessionId, mcpServers, cwd, effort, model }),
+  restartSession: (sessionId: string, mcpServers?: unknown[], cwd?: string, effort?: string, model?: string, memoryContext?: { projectId: string }) =>
+    ipcRenderer.invoke("claude:restart-session", { sessionId, mcpServers, cwd, effort, model, memoryContext }),
   readFile: (filePath: string) => ipcRenderer.invoke("file:read", filePath),
   renameFile: (oldPath: string, newPath: string) => ipcRenderer.invoke("file:rename", { oldPath, newPath }),
   trashItem: (filePath: string) => ipcRenderer.invoke("file:trash", filePath),
@@ -344,6 +345,23 @@ contextBridge.exposeInMainWorld("claude", {
       ipcRenderer.on("settings:changed", listener);
       return () => ipcRenderer.removeListener("settings:changed", listener);
     },
+  },
+  memory: {
+    getStatus: () => ipcRenderer.invoke("memory:get-status"),
+    setLlmKey: (key: string) => ipcRenderer.invoke("memory:set-llm-key", key),
+    clearLlmKey: () => ipcRenderer.invoke("memory:clear-llm-key"),
+    testConnection: () => ipcRenderer.invoke("memory:test-connection"),
+    daemonStart: () => ipcRenderer.invoke("memory:daemon-start"),
+    daemonStop: () => ipcRenderer.invoke("memory:daemon-stop"),
+    daemonInstallDeps: () => ipcRenderer.invoke("memory:daemon-install-deps"),
+    listDocuments: (bankId: string) => ipcRenderer.invoke("memory:list-documents", bankId),
+    listMemories: (bankId: string) => ipcRenderer.invoke("memory:list-memories", bankId),
+    updateMemory: (bankId: string, memoryId: string, patch: Record<string, unknown>) => ipcRenderer.invoke("memory:update-memory", { bankId, memoryId, patch }),
+    runGoldenSet: (bankId: string) => ipcRenderer.invoke("memory:run-golden-set", bankId),
+    deleteDocument: (bankId: string, documentId: string) => ipcRenderer.invoke("memory:delete-document", { bankId, documentId }),
+    retainManual: (sessionId: string, content: string) => ipcRenderer.invoke("memory:retain-manual", { sessionId, content }),
+    getProjectConfig: (projectId: string) => ipcRenderer.invoke("memory:get-project-config", projectId),
+    setProjectConfig: (projectId: string, patch: Partial<MemoryProjectConfig>) => ipcRenderer.invoke("memory:set-project-config", { projectId, patch }),
   },
   jira: {
     getConfig: (projectId: string) => ipcRenderer.invoke("jira:get-config", projectId),

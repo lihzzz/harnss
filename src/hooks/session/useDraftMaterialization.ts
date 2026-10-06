@@ -88,6 +88,7 @@ export function useDraftMaterialization({
         thinkingEnabled: options?.thinkingEnabled,
         effort: options?.effort,
         mcpServers,
+        memoryContext: { projectId },
       });
     } catch (err) {
       captureException(err instanceof Error ? err : new Error(String(err)), { label: "EAGER_START_ERR" });
@@ -144,6 +145,7 @@ export function useDraftMaterialization({
         agentId,
         cwd: getProjectCwd(project),
         mcpServers,
+        memoryContext: { projectId },
       });
     } catch (err) {
       captureException(err instanceof Error ? err : new Error(String(err)), { label: "ACP_EAGER_START_ERR" });
@@ -387,6 +389,7 @@ export function useDraftMaterialization({
             agentId: options.agentId,
             cwd: getProjectCwd(project),
             mcpServers,
+            memoryContext: { projectId: project.id },
           });
           if ("cancelled" in result && result.cancelled) {
             setSessions(prev => prev.filter(s => s.id !== DRAFT_ID));
@@ -493,6 +496,7 @@ export function useDraftMaterialization({
           ...(draftModel ? { model: draftModel } : {}),
           ...(approvalPolicy ? { approvalPolicy } : {}),
           ...(sandbox ? { sandbox } : {}),
+          memoryContext: { projectId: project.id },
         });
 
         if (result.error || !result.sessionId) {
@@ -589,6 +593,7 @@ export function useDraftMaterialization({
               thinkingEnabled: options.thinkingEnabled,
               effort: options.effort,
               mcpServers,
+              memoryContext: { projectId: project.id },
             });
           } catch (err) {
             captureException(err instanceof Error ? err : new Error(String(err)), { label: "MATERIALIZE_START_ERR" });

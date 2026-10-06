@@ -71,6 +71,7 @@ export function useSessionRevival({
         cwd: getProjectCwd(project),
         agentSessionId: session.agentSessionId,
         mcpServers,
+        memoryContext: { projectId: session.projectId },
       });
 
       if (result.error || !result.sessionId) {
@@ -154,6 +155,7 @@ export function useSessionRevival({
         model: session.model,
         approvalPolicy: getCodexApprovalPolicy(startOptionsRef.current),
         sandbox: getCodexSandboxMode(startOptionsRef.current),
+        memoryContext: { projectId: session.projectId },
       });
 
       if (result.error || !result.sessionId) {
@@ -234,6 +236,7 @@ export function useSessionRevival({
         thinkingEnabled: startOptionsRef.current.thinkingEnabled,
         effort: startOptionsRef.current.effort,
         resume: oldId, // Resume the SDK session to restore conversation context
+        memoryContext: { projectId: session.projectId },
       };
 
       let result;

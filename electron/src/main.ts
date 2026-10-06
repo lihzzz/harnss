@@ -45,6 +45,7 @@ import * as codexSessionsIpc from "./ipc/codex-sessions";
 import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
 import * as jiraIpc from "./ipc/jira";
+import * as memoryIpc from "./ipc/memory";
 import { onSettingsChanged } from "./ipc/settings";
 import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./lib/computer-use-runtime";
 
@@ -382,6 +383,7 @@ codexSessionsIpc.register(getMainWindow);
 mcpIpc.register();
 settingsIpc.register(getMainWindow);
 jiraIpc.register();
+memoryIpc.register(getMainWindow);
 
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;
@@ -504,6 +506,15 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  // Restore an explicitly enabled memory daemon in the background. If its
+  // dependency is unavailable, the memory service remains fail-safe and the
+  // settings panel exposes the installation/retry action.
+  if (getAppSettings().memory.enabled) {
+    void import("./lib/memory/daemon").then(({ startMemoryDaemon }) => startMemoryDaemon()).catch((error) => {
+      reportError("MEMORY_DAEMON_STARTUP", error);
+    });
+  }
+
   // Initialize PostHog analytics (if enabled in settings) — fire-and-forget to avoid blocking startup
   initPostHog().catch((err) => {
     reportError("POSTHOG", err, { context: "startup-init" });
@@ -550,20 +561,25 @@ app.on("will-quit", (event) => {
   // For normal quits, delay process exit until PostHog has flushed pending events.
   event.preventDefault();
 
-  shutdownPostHog()
-    .catch((err) => {
+  const shutdownMemory = import("./lib/memory/daemon")
+    .then(({ stopMemoryDaemon }) => stopMemoryDaemon())
+    .catch((err) => reportError("MEMORY_DAEMON", err, { context: "shutdown" }));
+  Promise.all([
+    shutdownPostHog().catch((err) => {
       // Log and continue exit even if analytics shutdown fails
       reportError("POSTHOG", err, { context: "shutdown" });
-    })
-    .finally(() => {
-      app.exit(0);
-    });
+    }),
+    shutdownMemory,
+  ]).finally(() => {
+    app.exit(0);
+  });
 });
 
 app.on("window-all-closed", () => {
   claudeSessionsIpc.stopAll();
   acpSessionsIpc.stopAll();
   codexSessionsIpc.stopAll();
+  void import("./lib/memory/daemon").then(({ stopMemoryDaemon }) => stopMemoryDaemon());
 
   for (const [terminalId, term] of terminals) {
     log("CLEANUP", `Killing terminal ${terminalId.slice(0, 8)}`);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SlashCommand } from "@/types";
 import {
   LOCAL_CLEAR_COMMAND,
+  LOCAL_REMEMBER_COMMAND,
   getAvailableSlashCommands,
   getSlashCommandReplacement,
   isClearCommandText,
@@ -15,6 +16,7 @@ describe("InputBar slash command helpers", () => {
 
     expect(getAvailableSlashCommands(commands)).toEqual([
       LOCAL_CLEAR_COMMAND,
+      LOCAL_REMEMBER_COMMAND,
       commands[0],
     ]);
   });
@@ -27,6 +29,7 @@ describe("InputBar slash command helpers", () => {
 
     expect(getAvailableSlashCommands(commands)).toEqual([
       LOCAL_CLEAR_COMMAND,
+      LOCAL_REMEMBER_COMMAND,
       commands[1],
     ]);
   });
@@ -40,6 +43,7 @@ describe("InputBar slash command helpers", () => {
 
   it("builds replacement text for local and engine commands", () => {
     expect(getSlashCommandReplacement(LOCAL_CLEAR_COMMAND)).toBe("/clear");
+    expect(getSlashCommandReplacement(LOCAL_REMEMBER_COMMAND)).toBe("/remember");
     expect(getSlashCommandReplacement({ name: "compact", description: "", source: "claude" })).toBe("/compact ");
     expect(getSlashCommandReplacement({ name: "open", description: "", source: "codex-app", appSlug: "jira" })).toBe("$jira ");
     expect(

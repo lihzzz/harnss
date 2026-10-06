@@ -38,6 +38,8 @@
     "@posthog/react": "^1.8.2",
     "@tanstack/react-virtual": "^3.13.22",
     "@trycua/cua-driver": "^0.33.0",
+    "@vectorize-io/hindsight-all": "0.10.2",
+    "@vectorize-io/hindsight-client": "0.10.2",
     "dompurify": "^3.3.3",
     "electron-context-menu": "^4.1.1",
     "electron-liquid-glass": "github:darkkatarsis/electron-liquid-glass",

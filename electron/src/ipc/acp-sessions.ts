@@ -36,6 +36,7 @@ import type { ACPTextFileParams } from "@shared/lib/acp-helpers";
 import type { McpServerInput } from "@shared/lib/mcp-config";
 import type { ACPAuthMethod, ACPAuthenticateResult } from "@shared/types/acp";
 import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
+import { withHindsightMcpServers, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeAcpUpdate, completeMemoryTurn } from "../lib/memory/service";
 
 type ACPReadTextFileParams = ACPTextFileParams & { content?: string; line?: number | null; limit?: number | null };
 type ACPWriteTextFileParams = ACPTextFileParams & { content: string };
@@ -343,6 +344,7 @@ async function createAcpConnection(
       error: `Failed to start agent: ${err.message}`,
     });
     acpSessions.delete(internalId);
+    unregisterMemorySession(internalId);
     configBuffer.delete(internalId);
     commandsBuffer.delete(internalId);
   });
@@ -372,6 +374,7 @@ async function createAcpConnection(
     entry.pendingPermissions.clear();
     safeSend(getMainWindow, "acp:exit", { _sessionId: internalId, code });
     acpSessions.delete(internalId);
+    unregisterMemorySession(internalId);
     configBuffer.delete(internalId);
     commandsBuffer.delete(internalId);
   });
@@ -408,6 +411,7 @@ async function createAcpConnection(
 
       // Full dump for tool calls and tool results
       const eventKind = update?.sessionUpdate as string;
+      observeAcpUpdate(internalId, update);
       if (eventKind === "tool_call" || eventKind === "tool_call_update") {
         log("ACP_EVENT_FULL", update);
       }
@@ -513,7 +517,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     log(`ACP_UI:${label}`, data);
   });
 
-  ipcMain.handle("acp:start", async (_event, options: { agentId: string; cwd: string; mcpServers?: McpServerInput[] }) => {
+  ipcMain.handle("acp:start", async (_event, options: { agentId: string; cwd: string; mcpServers?: McpServerInput[]; memoryContext?: { projectId: string } }) => {
     log("ACP_SPAWN", `acp:start called with agentId=${options.agentId} cwd=${options.cwd}`);
 
     const agentDef = resolveAgentDefinition(getAgent(options.agentId));
@@ -542,7 +546,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       );
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
-      const sourceServers = withComputerUseMcpServer(options.mcpServers);
+      if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "acp");
+      const sourceServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), internalId);
       const acpMcpServers = await buildAcpMcpServers(sourceServers);
       const entry: ACPSessionEntry = {
         process: proc,
@@ -602,6 +607,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       try { connResult?.proc?.kill(); } catch { /* already dead */ }
       if (connResult?.internalId) {
         acpSessions.delete(connResult.internalId);
+        unregisterMemorySession(connResult.internalId);
         configBuffer.delete(connResult.internalId);
         commandsBuffer.delete(connResult.internalId);
       }
@@ -674,6 +680,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     cwd: string;
     agentSessionId?: string; // ACP-side session ID from previous run
     mcpServers?: McpServerInput[];
+    memoryContext?: { projectId: string };
   }) => {
     log("ACP_REVIVE", `agentId=${options.agentId} agentSessionId=${options.agentSessionId?.slice(0, 12) ?? "none"} cwd=${options.cwd}`);
 
@@ -693,7 +700,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       );
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
-      const sourceServers = withComputerUseMcpServer(options.mcpServers);
+      if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "acp");
+      const sourceServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), internalId);
       const acpMcpServers = await buildAcpMcpServers(sourceServers);
 
       let acpSessionId: string;
@@ -729,6 +737,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       try { connResult?.proc?.kill(); } catch { /* already dead */ }
       if (connResult?.internalId) {
         acpSessions.delete(connResult.internalId);
+        unregisterMemorySession(connResult.internalId);
         configBuffer.delete(connResult.internalId);
       }
       const msg = reportError("ACP_REVIVE", err, { engine: "acp", ...analyticsProperties });
@@ -747,6 +756,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     const acpSessionId = session.acpSessionId;
 
+    const memory = await beforeMemorySend(sessionId, text);
     log("ACP_SEND", `session=${sessionId.slice(0, 8)} text=${text.slice(0, 500)} images=${images?.length ?? 0}`);
 
     const prompt: ContentBlock[] = [];
@@ -755,7 +765,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         prompt.push({ type: "image", data: img.data, mimeType: img.mediaType });
       }
     }
-    prompt.push({ type: "text", text });
+    prompt.push({ type: "text", text: memory.text });
 
     try {
       session.lastStderrError = undefined;
@@ -765,6 +775,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       });
 
       log("ACP_TURN_COMPLETE", `session=${sessionId.slice(0, 8)} stopReason=${result.stopReason} usage=${JSON.stringify(result.usage ?? null)}`);
+      void completeMemoryTurn(sessionId);
 
       safeSend(getMainWindow,"acp:turn_complete", {
         _sessionId: sessionId,
@@ -816,6 +827,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     session.pendingPermissions.clear();
     session.process.kill();
     acpSessions.delete(sessionId);
+    unregisterMemorySession(sessionId);
     configBuffer.delete(sessionId);
     commandsBuffer.delete(sessionId);
     return { ok: true };
@@ -846,7 +858,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     const nextCwd = cwd ?? session.cwd;
     log("ACP_RELOAD", `session=${sessionId.slice(0, 8)} calling loadSession with ${mcpServers?.length ?? 0} MCP server(s) cwd=${nextCwd}`);
 
-    const acpMcpServers = await buildAcpMcpServers(withComputerUseMcpServer(mcpServers));
+    const acpMcpServers = await buildAcpMcpServers(withHindsightMcpServers(withComputerUseMcpServer(mcpServers), sessionId));
 
     try {
       // Suppress history replay notifications so the renderer doesn't get duplicates
@@ -989,6 +1001,7 @@ export function stopAll(): void {
     log("CLEANUP", `Stopping ACP session ${sessionId.slice(0, 8)}`);
     try { entry.process.kill(); } catch { /* already dead */ }
   }
+  for (const sessionId of acpSessions.keys()) unregisterMemorySession(sessionId);
   acpSessions.clear();
   configBuffer.clear();
   commandsBuffer.clear();

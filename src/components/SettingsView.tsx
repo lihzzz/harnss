@@ -12,6 +12,7 @@ import {
   BarChart3,
   PanelLeft,
   Archive,
+  Brain,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -31,10 +32,11 @@ import type { ChatSession, InstalledAgent, Project } from "@/types";
 import { useAgentContext } from "./AgentContext";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { ArchivedSettings } from "@/components/settings/ArchivedSettings";
+import { MemorySettings } from "@/components/settings/MemorySettings";
 
 // ── Section definitions ──
 
-export type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "skills" | "custom-agents" | "advanced" | "archived";
+export type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "memory" | "skills" | "custom-agents" | "advanced" | "archived";
 
 interface NavItem {
   id: SettingsSection;
@@ -52,6 +54,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "agents", labelKey: "acpAgents", icon: Bot },
   { id: "mcp", labelKey: "mcpServers", icon: Plug },
   { id: "engines", labelKey: "engines", icon: Cpu },
+  { id: "memory", labelKey: "memory", icon: Brain },
   { id: "skills", labelKey: "skills", icon: Sparkles, comingSoon: true },
   { id: "custom-agents", labelKey: "agents", icon: Users, comingSoon: true },
   { id: "advanced", labelKey: "advanced", icon: Wrench },
@@ -178,6 +181,14 @@ export const SettingsView = memo(function SettingsView({
           <EngineSettings
             appSettings={appSettings}
             onUpdateAppSettings={updateAppSettings}
+          />
+        );
+      case "memory":
+        return (
+          <MemorySettings
+            appSettings={appSettings}
+            onUpdateAppSettings={updateAppSettings}
+            projectId={sessions.find((session) => session.id === activeSessionId)?.projectId}
           />
         );
       case "advanced":

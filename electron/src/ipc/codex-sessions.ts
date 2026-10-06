@@ -22,6 +22,7 @@ import {
   getComputerUseRuntimeStatus,
   getCodexMcpServerOverrides,
 } from "../lib/computer-use-runtime";
+import { getHindsightCodexMcpOverrides, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeCodexNotification, completeMemoryTurn } from "../lib/memory/service";
 
 import type {
   CodexServerNotification,
@@ -86,7 +87,7 @@ function getAppServerClientInfo(): { name: string; title: string; version: strin
   };
 }
 
-function getCodexAppServerArgs(): string[] {
+function getCodexAppServerArgs(sessionId?: string): string[] {
   const args = ["app-server"];
   const computerUse = getComputerUseMcpServer();
   if (computerUse) {
@@ -95,6 +96,7 @@ function getCodexAppServerArgs(): string[] {
     // runtime without mutating the user's ~/.codex/config.toml.
     args.push(...getCodexMcpServerOverrides(computerUse));
   }
+  if (sessionId) args.push(...getHindsightCodexMcpOverrides(sessionId));
   return args;
 }
 
@@ -106,8 +108,8 @@ function getCodexAppServerEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function spawnCodexAppServer(codexPath: string, cwd: string) {
-  return spawn(codexPath, getCodexAppServerArgs(), {
+function spawnCodexAppServer(codexPath: string, cwd: string, sessionId?: string) {
+  return spawn(codexPath, getCodexAppServerArgs(sessionId), {
     stdio: ["pipe", "pipe", "pipe"],
     cwd,
     env: getCodexAppServerEnv(),
@@ -417,7 +419,10 @@ function setupCodexHandlers(
       session.activeTurnId = notification.params.turn.id;
     } else if (notification.method === "turn/completed") {
       session.activeTurnId = null;
+      void completeMemoryTurn(internalId);
     }
+
+    observeCodexNotification(internalId, notification.method, notification.params as Record<string, unknown>);
 
     safeSend(getMainWindow, "codex:event", {
       _sessionId: internalId,
@@ -448,6 +453,7 @@ function setupCodexHandlers(
   rpc.onExit = (code, signal) => {
     log("codex", ` Process exited: code=${code} signal=${signal} session=${internalId}`);
     codexSessions.delete(internalId);
+    unregisterMemorySession(internalId);
     safeSend(getMainWindow, "codex:exit", {
       _sessionId: internalId,
       code,
@@ -474,6 +480,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         model?: string;
         approvalPolicy?: string;
         sandbox?: string;
+        memoryContext?: { projectId: string };
         personality?: string;
         collaborationMode?: { mode: string; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
       },
@@ -484,7 +491,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const codexPath = await getCodexBinaryPath();
         log("codex",` Starting app-server: ${codexPath} (session=${internalId})`);
 
-        const proc = spawnCodexAppServer(codexPath, options.cwd);
+        if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "codex");
+        const proc = spawnCodexAppServer(codexPath, options.cwd, internalId);
 
         if (!proc.pid) {
           throw new Error("Failed to spawn codex app-server process");
@@ -589,6 +597,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           session.rpc.destroy();
           codexSessions.delete(internalId);
         }
+        unregisterMemorySession(internalId);
         return { error: errMsg };
       }
     },
@@ -627,7 +636,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       );
 
       try {
-        const input: unknown[] = [{ type: "text", text: data.text }];
+        const memory = await beforeMemorySend(data.sessionId, data.text);
+        const input: unknown[] = [{ type: "text", text: memory.text }];
         if (data.images) {
           input.push(...data.images);
         }
@@ -664,6 +674,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     if (!session) return;
     session.rpc.destroy();
     codexSessions.delete(sessionId);
+    unregisterMemorySession(sessionId);
     log("codex",` Session stopped: ${sessionId}`);
   });
 
@@ -976,6 +987,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         model?: string;
         approvalPolicy?: string;
         sandbox?: string;
+        memoryContext?: { projectId: string };
       },
     ) => {
       const internalId = crypto.randomUUID();
@@ -984,7 +996,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const codexPath = await getCodexBinaryPath();
         log("codex",` Resuming thread ${data.threadId} in new process (session=${internalId})`);
 
-        const proc = spawnCodexAppServer(codexPath, data.cwd);
+        if (data.memoryContext?.projectId) registerMemorySession(internalId, data.memoryContext.projectId, "codex");
+        const proc = spawnCodexAppServer(codexPath, data.cwd, internalId);
 
         if (!proc.pid) throw new Error("Failed to spawn codex app-server");
 
@@ -1037,6 +1050,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           session.rpc.destroy();
           codexSessions.delete(internalId);
         }
+        unregisterMemorySession(internalId);
         return { error: errMsg };
       }
     },
@@ -1077,5 +1091,6 @@ export function stopAll(): void {
   for (const [id, session] of codexSessions) {
     session.rpc.destroy();
     codexSessions.delete(id);
+    unregisterMemorySession(id);
   }
 }

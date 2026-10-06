@@ -349,8 +349,24 @@ export function useSessionLifecycle({
 
       if (!activeId) return;
 
-      // Queue check: if engine is processing, enqueue instead of sending directly
       const activeSessionEngine = refs.sessionsRef.current.find(s => s.id === activeId)?.engine ?? "claude";
+      const rememberMatch = text.match(/^\s*\/remember(?:\s+([\s\S]+?))?\s*$/i);
+      if (rememberMatch) {
+        const content = rememberMatch[1]?.trim() ?? "";
+        const result = await window.claude.memory.retainManual(activeId, content);
+        const message = result.ok
+          ? "Saved to long-term memory."
+          : (result.error ?? "Unable to save to long-term memory.");
+        const setMessages = activeSessionEngine === "acp"
+          ? acp.setMessages
+          : activeSessionEngine === "codex"
+            ? codex.setMessages
+            : claude.setMessages;
+        setMessages((prev) => [...prev, createSystemMessage(message, !result.ok)]);
+        return { sessionId: activeId, error: result.ok ? undefined : result.error };
+      }
+
+      // Queue check: if engine is processing, enqueue instead of sending directly
       if (refs.isProcessingRef.current && refs.liveSessionIdsRef.current.has(activeId)) {
         trackMessageSent(activeSessionEngine === "acp" ? activeId : undefined);
         enqueueMessage(text, images, displayText);

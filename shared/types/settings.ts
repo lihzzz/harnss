@@ -14,6 +14,7 @@ export type ThemeOption = "light" | "dark" | "system";
 export type MacBackgroundEffect = "liquid-glass" | "vibrancy" | "off";
 export type CodexBinarySource = "auto" | "managed" | "custom";
 export type ClaudeBinarySource = "auto" | "managed" | "custom";
+import type { MemorySettings } from "./memory";
 
 // ── Notification settings ──
 
@@ -73,4 +74,6 @@ export interface AppSettings {
   analyticsUserId?: string;
   /** Last date (YYYY-MM-DD) when daily_active_user was sent */
   analyticsLastDailyActiveDate?: string;
+  /** Local Hindsight long-term memory configuration. API keys live in an encrypted main-process store. */
+  memory: MemorySettings;
 }

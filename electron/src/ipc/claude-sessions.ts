@@ -15,6 +15,7 @@ import type { McpServerInput } from "@shared/lib/mcp-config";
 import { getClaudeBinaryMetadata, getClaudeBinaryPath, getClaudeBinaryStatus, getClaudeVersion } from "../lib/claude-binary";
 import { captureEvent } from "../lib/posthog";
 import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
+import { withHindsightMcpServers, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeClaudeEvent, completeMemoryTurn } from "../lib/memory/service";
 
 /** SDK options for file checkpointing — enables Write/Edit/NotebookEdit revert support */
 function fileCheckpointOptions(): Record<string, unknown> {
@@ -263,6 +264,7 @@ function startEventLoop(
         if (msgObj.type === "user" || msgObj.type === "result") {
           log("EVENT_FULL", message);
         }
+        observeClaudeEvent(sessionId, msgObj);
         safeSend(getMainWindow, "claude:event", { ...(message as object), _sessionId: sessionId });
 
         // Index tool names from assistant tool_use blocks for later lookup by tool_use_id
@@ -281,6 +283,7 @@ function startEventLoop(
 
         // Track session completion on result events
         if (msgObj.type === "result") {
+          void completeMemoryTurn(sessionId);
           void captureEvent("session_completed", {
             engine: "claude",
             total_cost: msgObj.total_cost_usd,
@@ -319,6 +322,7 @@ function startEventLoop(
         const exitCode = (queryError && !stopRequested) ? 1 : 0;
         log("EXIT", `${logPrefix} total_events=${session.eventCounter} stopRequested=${!!stopRequested} stopReason=${session.stopReason ?? "none"} error=${queryError ?? "none"}`);
         sessions.delete(sessionId);
+        unregisterMemorySession(sessionId);
         safeSend(getMainWindow, "claude:exit", {
           code: exitCode, _sessionId: sessionId,
           ...((queryError && !stopRequested) ? { error: queryError } : {}),
@@ -356,6 +360,7 @@ interface StartOptions {
   /** Resume at a specific message UUID — used with forkSession to truncate history */
   resumeSessionAt?: string;
   mcpServers?: McpServerInput[];
+  memoryContext?: { projectId: string };
 }
 
 function buildThinkingConfig(): { type: "adaptive" } {
@@ -516,7 +521,7 @@ async function restartSession(
   }
 
   const opts = session.startOptions;
-  const mcpServers = withComputerUseMcpServer(mcpServersOverride ?? opts.mcpServers);
+  const mcpServers = withHindsightMcpServers(withComputerUseMcpServer(mcpServersOverride ?? opts.mcpServers), sessionId);
   const cwd = cwdOverride || opts.cwd || process.cwd();
   const query = await getSDK();
   const newChannel = new AsyncChannel<unknown>();
@@ -628,6 +633,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         startOptions: options,
       };
       sessions.set(sessionId, session);
+      if (options.memoryContext?.projectId) registerMemorySession(sessionId, options.memoryContext.projectId, "claude");
 
       const canUseTool = (toolName: string, input: unknown, context: { toolUseID: string; suggestions: unknown; decisionReason: string }) => {
         return new Promise<PermissionResult>((resolve) => {
@@ -692,7 +698,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         queryOptions.effort = options.effort;
       }
 
-      const mcpServers = withComputerUseMcpServer(options.mcpServers);
+      const mcpServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), sessionId);
       if (mcpServers.length) {
         queryOptions.mcpServers = await buildSdkMcpConfig(mcpServers, mcpConfigOptions);
       }
@@ -720,6 +726,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     } catch (err) {
       // getSDK() or query() threw — clean up and return error
       sessions.delete(sessionId);
+      unregisterMemorySession(sessionId);
       const errMsg = reportError("START_ERROR", err, { engine: "claude", sessionId });
       safeSend(getMainWindow,"claude:exit", {
         code: 1, _sessionId: sessionId, error: errMsg,
@@ -729,16 +736,28 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
   });
 
-  ipcMain.handle("claude:send", (_event, { sessionId, message }: { sessionId: string; message: { message: { content: unknown } } }) => {
+  ipcMain.handle("claude:send", async (_event, { sessionId, message }: { sessionId: string; message: { message: { content: unknown } } }) => {
     const session = sessions.get(sessionId);
     if (!session) {
       log("SEND", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
       return { error: "Claude session not found" };
     }
-    log("SEND", `session=${sessionId.slice(0, 8)} content=${JSON.stringify(message).slice(0, 500)}`);
+    const originalContent = message.message.content;
+    const originalText = typeof originalContent === "string"
+      ? originalContent
+      : Array.isArray(originalContent)
+        ? originalContent.map((block) => typeof block === "object" && block && "text" in block && typeof (block as { text?: unknown }).text === "string" ? (block as { text: string }).text : "").join("\n")
+        : "";
+    const memory = await beforeMemorySend(sessionId, originalText);
+    const content = memory.text === originalText || !originalText
+      ? originalContent
+      : Array.isArray(originalContent)
+        ? [{ type: "text", text: memory.text.slice(0, memory.text.length - originalText.length) }, ...originalContent]
+        : memory.text;
+    log("SEND", `session=${sessionId.slice(0, 8)} content=${JSON.stringify(originalContent).slice(0, 500)}`);
     session.channel.push({
       type: "user",
-      message: { role: "user", content: message.message.content },
+      message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: sessionId,
     });
@@ -1065,13 +1084,16 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     cwd,
     effort,
     model,
+    memoryContext,
   }: {
     sessionId: string;
     mcpServers?: McpServerInput[];
     cwd?: string;
     effort?: StartOptions["effort"];
     model?: string;
+    memoryContext?: { projectId: string };
   }) => {
+    if (memoryContext?.projectId) registerMemorySession(sessionId, memoryContext.projectId, "claude");
     return restartSession(sessionId, getMainWindow, mcpServers, cwd, effort, model);
   });
 }
@@ -1088,6 +1110,7 @@ export function stopAll(): void {
     session.pendingPermissions.clear();
     session.channel.close();
     session.queryHandle?.close();
+    unregisterMemorySession(sessionId);
   }
   sessions.clear();
 }

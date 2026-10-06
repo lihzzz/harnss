@@ -99,6 +99,7 @@ export function useSessionRestart({
       agentId,
       cwd: nextCwd,
       mcpServers: servers,
+      memoryContext: { projectId: session.projectId },
     });
     if (!("sessionId" in result) || !result.sessionId) {
       // Show error in the UI after restart failure — use setMessages directly
@@ -173,6 +174,7 @@ export function useSessionRestart({
         model: session.model,
         approvalPolicy: getCodexApprovalPolicy(startOptionsRef.current),
         sandbox: getCodexSandboxMode(startOptionsRef.current),
+        memoryContext: { projectId: session.projectId },
       });
 
       if (resumeResult.error || !resumeResult.sessionId) {
@@ -203,7 +205,7 @@ export function useSessionRestart({
       return { ok: true };
     }
 
-    const restartResult = await window.claude.restartSession(currentId, mcpServers, nextCwd);
+    const restartResult = await window.claude.restartSession(currentId, mcpServers, nextCwd, undefined, undefined, { projectId: session.projectId });
     if (restartResult?.error) {
       return { error: restartResult.error };
     }
@@ -263,6 +265,7 @@ export function useSessionRestart({
       forkSession: true,
       resumeSessionAt: checkpointId,
       mcpServers,
+      memoryContext: { projectId: session.projectId },
     });
 
     if (startResult.error) {

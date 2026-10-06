@@ -7,6 +7,7 @@ import type { PermissionUpdate } from "./permissions";
 import type { GitRepoInfo, GitStatus, GitBranch, GitLogEntry } from "@shared/types/git";
 import type { InstalledAgent } from "@shared/types/registry";
 import type { AppSettings, MacBackgroundEffect, ThemeOption } from "@shared/types/settings";
+import type { MemoryFact, MemoryGoldenReport, MemoryProjectConfig, MemoryStatusResult } from "@shared/types/memory";
 import type {
   ACPSessionEvent,
   ACPPermissionEvent,
@@ -75,6 +76,7 @@ declare global {
         /** Resume at a specific message UUID — used with forkSession to truncate history */
         resumeSessionAt?: string;
         mcpServers?: McpServerConfig[];
+        memoryContext?: { projectId: string };
       }) => Promise<{ sessionId: string; pid: number; error?: string }>;
       send: (
         sessionId: string,
@@ -94,7 +96,7 @@ declare global {
       mcpStatus: (sessionId: string) => Promise<{ servers: McpServerStatus[]; error?: string }>;
       mcpReconnect: (sessionId: string, serverName: string) => Promise<IpcResult & { restarted?: boolean }>;
       revertFiles: (sessionId: string, checkpointId: string) => Promise<IpcResult>;
-      restartSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string, effort?: ClaudeEffort, model?: string) => Promise<IpcResult & { restarted?: boolean }>;
+      restartSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string, effort?: ClaudeEffort, model?: string, memoryContext?: { projectId: string }) => Promise<IpcResult & { restarted?: boolean }>;
       readFile: (filePath: string) => Promise<{ content?: string; error?: string }>;
       renameFile: (oldPath: string, newPath: string) => Promise<IpcResult>;
       trashItem: (filePath: string) => Promise<IpcResult>;
@@ -289,12 +291,12 @@ declare global {
       };
       acp: {
         log: (label: string, data: unknown) => void;
-        start: (options: { agentId: string; cwd: string; mcpServers?: McpServerConfig[] }) => Promise<ACPStartResult>;
+        start: (options: { agentId: string; cwd: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string } }) => Promise<ACPStartResult>;
         authenticate: (sessionId: string, methodId: string) => Promise<ACPAuthenticateResult>;
         prompt: (sessionId: string, text: string, images?: unknown[]) => Promise<IpcResult>;
         stop: (sessionId: string) => Promise<IpcResult>;
         reloadSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string) => Promise<IpcResult & { supportsLoad?: boolean }>;
-        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[] }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
+        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string } }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
         cancel: (sessionId: string) => Promise<IpcResult>;
         abortPendingStart: () => Promise<{ ok?: boolean }>;
         respondPermission: (sessionId: string, requestId: string, optionId: string) => Promise<IpcResult>;
@@ -308,7 +310,7 @@ declare global {
       };
       codex: {
         log: (label: string, data: unknown) => void;
-        start: (options: { cwd: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; personality?: string; collaborationMode?: CollaborationMode }) =>
+        start: (options: { cwd: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; personality?: string; collaborationMode?: CollaborationMode; memoryContext?: { projectId: string } }) =>
           Promise<{
             sessionId?: string;
             threadId?: string;
@@ -365,7 +367,7 @@ declare global {
         listModels: () => Promise<{ models: CodexModel[]; error?: string }>;
         authStatus: () => Promise<{ account: unknown; requiresOpenaiAuth: boolean }>;
         login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) => Promise<unknown>;
-        resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access" }) =>
+        resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; memoryContext?: { projectId: string } }) =>
           Promise<{ sessionId?: string; threadId?: string; goal?: import("@shared/types/codex").CodexThreadGoal | null; goalSupported?: boolean; error?: string }>;
         setModel: (sessionId: string, model: string) => Promise<{ error?: string }>;
         version: () => Promise<{ version?: string; error?: string }>;
@@ -400,6 +402,23 @@ declare global {
         set: (patch: Partial<AppSettings>) => Promise<IpcResult>;
         /** Subscribe to settings changes pushed from the main process. */
         onChanged: (callback: (settings: AppSettings) => void) => () => void;
+      };
+      memory: {
+        getStatus: () => Promise<MemoryStatusResult>;
+        setLlmKey: (key: string) => Promise<IpcResult & { hasLlmKey?: boolean }>;
+        clearLlmKey: () => Promise<IpcResult>;
+        testConnection: () => Promise<{ ok: boolean; error?: string }>;
+        daemonStart: () => Promise<{ ok?: boolean; error?: string; status?: MemoryStatusResult }>;
+        daemonStop: () => Promise<{ ok?: boolean; error?: string }>;
+        daemonInstallDeps: () => Promise<{ ok?: boolean; error?: string; status?: MemoryStatusResult }>;
+        listDocuments: (bankId: string) => Promise<{ documents?: unknown[]; total?: number; error?: string }>;
+        listMemories: (bankId: string) => Promise<{ memories?: MemoryFact[]; total?: number; error?: string }>;
+        updateMemory: (bankId: string, memoryId: string, patch: Record<string, unknown>) => Promise<IpcResult>;
+        runGoldenSet: (bankId: string) => Promise<{ report?: MemoryGoldenReport; error?: string }>;
+        deleteDocument: (bankId: string, documentId: string) => Promise<IpcResult>;
+        retainManual: (sessionId: string, content: string) => Promise<IpcResult>;
+        getProjectConfig: (projectId: string) => Promise<MemoryProjectConfig | { error: string }>;
+        setProjectConfig: (projectId: string, patch: Partial<MemoryProjectConfig>) => Promise<MemoryProjectConfig | { error: string }>;
       };
       jira: {
         getConfig: (projectId: string) => Promise<JiraProjectConfig | null>;

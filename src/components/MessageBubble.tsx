@@ -1,5 +1,5 @@
-import { lazy, memo, Suspense, useEffect, useState, useMemo, createContext, useContext, type ReactNode } from "react";
-import { AlertCircle, ChevronDown, ChevronUp, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
+import { lazy, memo, Suspense, useEffect, useState, useMemo, useCallback, createContext, useContext, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
+import { AlertCircle, Brain, ChevronDown, ChevronUp, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -31,6 +31,23 @@ const REMARK_PLUGINS = [remarkGfm, remarkMath];
 const REHYPE_PLUGINS = [rehypeKatex];
 
 const AUTO_RETRY_BUTTON_CLASS = "rounded-full px-1.5 py-0.5 text-foreground/60 transition-colors hover:bg-foreground/[0.08] hover:text-foreground";
+
+function RememberMenu({ onRemember }: { onRemember: () => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="rounded p-1 text-foreground/25 opacity-0 transition hover:bg-foreground/[0.08] hover:text-foreground/70 group-hover/user:opacity-100 group-hover/assistant:opacity-100" aria-label="Remember this message" title="Remember this message">
+          <Brain className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onClick={onRemember}>
+          <Brain className="me-2 h-3.5 w-3.5" /> Remember this message
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /** Countdown shown on a retryable error while an auto-retry is scheduled. */
 function AutoRetryCountdown({
@@ -346,6 +363,7 @@ interface MessageBubbleProps {
   /** Scheduled auto-retry for this error — replaces the manual Retry button with a countdown. */
   autoRetry?: AutoRetryState | null;
   onCancelAutoRetry?: () => void;
+  onRemember?: (content: string) => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -361,10 +379,12 @@ export const MessageBubble = memo(function MessageBubble({
   onRetry,
   autoRetry,
   onCancelAutoRetry,
+  onRemember,
 }: MessageBubbleProps) {
   // All hooks must be called before any early returns (Rules of Hooks)
   const isUser = message.role === "user";
   const [viewingImage, setViewingImage] = useState<ImageAttachment | null>(null);
+  const [rememberMenu, setRememberMenu] = useState<{ x: number; y: number } | null>(null);
   const time = useMemo(() => new Date(message.timestamp).toLocaleTimeString(), [message.timestamp]);
   const displayContent = useMemo(() => isUser ? (message.displayContent ?? stripFileContext(message.content)) : message.content, [isUser, message.content, message.displayContent]);
   const markdownContent = useMemo(() => normalizeMathDelimiters(message.content), [message.content]);
@@ -379,6 +399,27 @@ export const MessageBubble = memo(function MessageBubble({
   const renderedUserContent = isLongUserMessage && !isUserMessageExpanded
     ? getCollapsedUserContent(displayContent)
     : displayContent;
+
+  const handleRememberContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!onRemember || !message.content.trim()) return;
+    event.preventDefault();
+    setRememberMenu({ x: event.clientX, y: event.clientY });
+  }, [message.content, onRemember]);
+
+  useEffect(() => {
+    if (!rememberMenu) return;
+    const close = () => setRememberMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [rememberMenu]);
+
+  const rememberContextAction = onRemember && rememberMenu ? (
+    <div className="fixed z-50 rounded-md border border-foreground/10 bg-popover p-1 shadow-lg" style={{ left: rememberMenu.x, top: rememberMenu.y }} onClick={(event) => event.stopPropagation()}>
+      <button type="button" className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-popover-foreground hover:bg-foreground/[0.08]" onClick={() => { setRememberMenu(null); onRemember(message.content); }}>
+        <Brain className="h-3.5 w-3.5" /> Remember this message
+      </button>
+    </div>
+  ) : null;
 
   // Per-token fade-in animation via DOM surgery in useLayoutEffect.
   // Always renders ReactMarkdown (real-time markdown parsing) — the hook
@@ -425,7 +466,7 @@ export const MessageBubble = memo(function MessageBubble({
     const checkpointId = message.checkpointId;
     const canRevert = !!checkpointId && (!!onRevert || !!onFullRevert);
     return (
-      <div className={cn("group/user flex justify-end", CHAT_ROW_CLASS, message.isQueued && "opacity-60")}>
+      <div className={cn("group/user flex justify-end", CHAT_ROW_CLASS, message.isQueued && "opacity-60")} onContextMenu={handleRememberContextMenu}>
         <div className={cn("relative max-w-[var(--chat-user-message-max-width,80%)]", canRevert && "pb-5")}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -514,6 +555,7 @@ export const MessageBubble = memo(function MessageBubble({
               <p className="text-xs">{time}</p>
             </TooltipContent>
           </Tooltip>
+          {onRemember && message.content.trim() && <div className="absolute -bottom-1 -start-7"><RememberMenu onRemember={() => onRemember(message.content)} /></div>}
           {/* Revert dropdown — visible on hover, offers file-only or full (files + chat) revert */}
           {canRevert && (
             <div className="pointer-events-none absolute end-0 -bottom-0.5 w-max opacity-0 transition-opacity group-hover/user:opacity-100">
@@ -542,6 +584,7 @@ export const MessageBubble = memo(function MessageBubble({
             </div>
           )}
         </div>
+        {rememberContextAction}
       </div>
     );
   }
@@ -560,8 +603,9 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div
-      className={cn("flex justify-start", CHAT_ROW_CLASS)}
+      className={cn("group/assistant flex justify-start", CHAT_ROW_CLASS)}
       data-continuation={isContinuation || undefined}
+      onContextMenu={handleRememberContextMenu}
     >
       <Tooltip>
         <TooltipTrigger asChild>
@@ -611,6 +655,8 @@ export const MessageBubble = memo(function MessageBubble({
           <p className="text-xs">{time}</p>
         </TooltipContent>
       </Tooltip>
+      {onRemember && message.content.trim() && <div className="ms-1 self-end"><RememberMenu onRemember={() => onRemember(message.content)} /></div>}
+      {rememberContextAction}
     </div>
   );
 }, (prev, next) =>
@@ -633,7 +679,8 @@ export const MessageBubble = memo(function MessageBubble({
   prev.onUnqueueQueued === next.onUnqueueQueued &&
   prev.onRetry === next.onRetry &&
   prev.autoRetry === next.autoRetry &&
-  prev.onCancelAutoRetry === next.onCancelAutoRetry,
+  prev.onCancelAutoRetry === next.onCancelAutoRetry &&
+  prev.onRemember === next.onRemember,
 );
 
 /**

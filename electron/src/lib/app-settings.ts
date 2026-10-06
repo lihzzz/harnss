@@ -12,6 +12,7 @@ import path from "path";
 import fs from "fs";
 import { getDataDir } from "./data-dir";
 import type { AppSettings, NotificationSettings } from "@shared/types/settings";
+import type { MemorySettings } from "@shared/types/memory";
 
 // Re-export shared types so existing `import from "./app-settings"` consumers still work
 export type { AppSettings, MacBackgroundEffect, PreferredEditor, VoiceDictationMode, NotificationTrigger, NotificationEventSettings, NotificationSettings, CodexBinarySource, ClaudeBinarySource } from "@shared/types/settings";
@@ -21,6 +22,21 @@ const NOTIFICATION_DEFAULTS: NotificationSettings = {
   permissions: { osNotification: "unfocused", sound: "unfocused" },
   askUserQuestion: { osNotification: "unfocused", sound: "always" },
   sessionComplete: { osNotification: "unfocused", sound: "always" },
+};
+
+const MEMORY_DEFAULTS: MemorySettings = {
+  enabled: false,
+  localPort: 8888,
+  llmProvider: "anthropic",
+  llmModel: "claude-sonnet-4-20250514",
+  injectionPolicy: "first-turn",
+  autoRetain: false,
+  clientSideRedact: true,
+  recallBudget: "mid",
+  recallMaxTokens: 1024,
+  recallMaxItems: 5,
+  recallTimeoutMs: 2000,
+  memoryDefense: "redact",
 };
 
 const DEFAULTS: AppSettings = {
@@ -41,6 +57,7 @@ const DEFAULTS: AppSettings = {
   showJiraBoard: false,
   macBackgroundEffect: "liquid-glass",
   analyticsEnabled: true,
+  memory: MEMORY_DEFAULTS,
 };
 
 // ── Internal state ──
@@ -64,6 +81,7 @@ export function getAppSettings(): AppSettings {
     // Deep-merge `notifications` so upgrading users get defaults for each event type
     // even if their settings.json has a partial or missing notifications object.
     const parsedNotif = parsed.notifications as Partial<NotificationSettings> | undefined;
+    const parsedMemory = parsed.memory as Partial<MemorySettings> | undefined;
     const computerUseEnabled = typeof parsed.computerUseEnabled === "boolean"
       ? parsed.computerUseEnabled
       : parsed.codexComputerUseEnabled === true;
@@ -77,6 +95,7 @@ export function getAppSettings(): AppSettings {
         askUserQuestion: { ...NOTIFICATION_DEFAULTS.askUserQuestion, ...parsedNotif?.askUserQuestion },
         sessionComplete: { ...NOTIFICATION_DEFAULTS.sessionComplete, ...parsedNotif?.sessionComplete },
       },
+      memory: { ...MEMORY_DEFAULTS, ...parsedMemory },
     };
   } catch {
     cached = { ...DEFAULTS };
@@ -92,7 +111,11 @@ export function getAppSetting<K extends keyof AppSettings>(key: K): AppSettings[
 /** Update one or more settings and persist to disk. */
 export function setAppSettings(patch: Partial<AppSettings>): AppSettings {
   const current = getAppSettings();
-  const next = { ...current, ...patch };
+  const next = {
+    ...current,
+    ...patch,
+    ...(patch.memory ? { memory: { ...current.memory, ...patch.memory } } : {}),
+  };
   cached = next;
 
   try {

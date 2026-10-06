@@ -27,6 +27,7 @@ import {
 import { estimateRowHeight } from "@/lib/chat/virtualization";
 import { CHAT_ROW_CLASS } from "@/components/lib/chat-layout";
 import { useSettingsStore } from "@/stores/settings-store";
+import { toast } from "sonner";
 
 // ── Row model ──
 
@@ -158,6 +159,7 @@ interface ChatMessageRowProps {
   onRetry?: (errorMessageId: string) => void | Promise<void>;
   autoRetry?: AutoRetryState | null;
   onCancelAutoRetry?: () => void;
+  onRemember?: (content: string) => void;
 }
 
 const ChatMessageRow = memo(function ChatMessageRow({
@@ -174,6 +176,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   onRetry,
   autoRetry,
   onCancelAutoRetry,
+  onRemember,
 }: ChatMessageRowProps) {
   // ── Display preferences from Zustand store ──
   const autoExpandTools = useSettingsStore((s) => s.autoExpandTools);
@@ -272,6 +275,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
         onRetry={onRetry}
         autoRetry={autoRetry}
         onCancelAutoRetry={onCancelAutoRetry}
+        onRemember={onRemember}
       />
     </div>
   );
@@ -288,7 +292,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
   prev.onUnqueueQueuedMessage === next.onUnqueueQueuedMessage &&
   prev.onRetry === next.onRetry &&
   prev.autoRetry === next.autoRetry &&
-  prev.onCancelAutoRetry === next.onCancelAutoRetry,
+  prev.onCancelAutoRetry === next.onCancelAutoRetry &&
+  prev.onRemember === next.onRemember,
 );
 
 // ── ChatViewProps ──
@@ -311,6 +316,7 @@ interface ChatViewProps {
   /** Scheduled auto-retry of a failed turn — countdown shown on the error bubble. */
   autoRetry?: AutoRetryState | null;
   onCancelAutoRetry?: () => void;
+  onRemember?: (content: string) => void;
   /** Upstream reconnect in progress — transient status row at the bottom. */
   reconnectMessage?: string | null;
   /** Current space ID — included in remount key so space switches show spinner immediately */
@@ -399,13 +405,19 @@ function ChatViewContent({
   messages, isProcessing, showThinking, extraBottomPadding, scrollToMessageId, onScrolledToMessage,
   sessionId, onRevert, onFullRevert, onTopScrollProgress,
   onSendQueuedNow, onUnqueueQueuedMessage, sendNextId,
-  onRetry, autoRetry, onCancelAutoRetry, reconnectMessage,
+  onRetry, autoRetry, onCancelAutoRetry, onRemember, reconnectMessage,
 }: ChatViewProps) {
   // ── Display preferences from Zustand store (only those used directly in ChatViewContent) ──
   const autoGroupTools = useSettingsStore((s) => s.autoGroupTools);
   const avoidGroupingEdits = useSettingsStore((s) => s.avoidGroupingEdits);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [useFullWidthMessages, setUseFullWidthMessages] = useState(false);
+  const rememberMessage = useCallback(async (content: string) => {
+    if (!sessionId) return;
+    const result = await window.claude.memory.retainManual(sessionId, content);
+    if (result.ok) toast.success("Saved to long-term memory.");
+    else toast.error(result.error ?? "Unable to save to long-term memory.");
+  }, [sessionId]);
 
   // ── Scroll state (refs, not state — rerender-use-ref-transient-values) ──
   const bottomLockedRef = useRef(true);
@@ -916,6 +928,7 @@ function ChatViewContent({
                 onRetry={onRetry}
                 autoRetry={autoRetry}
                 onCancelAutoRetry={onCancelAutoRetry}
+                onRemember={onRemember ?? rememberMessage}
               />
             </div>
           ))}
