@@ -27,22 +27,6 @@ import type { SkillsListEntry } from "./codex-protocol/v2/SkillsListEntry";
 import type { AppInfo } from "./codex-protocol/v2/AppInfo";
 import type { CodexFingerprintProbeResult } from "./codex-fingerprint";
 import type { SessionMeta as SessionListItem } from "@shared/lib/session-persistence";
-import type {
-  JiraProjectConfig,
-  JiraBoard,
-  JiraIssue,
-  JiraSprint,
-  JiraComment,
-  JiraTransition,
-  JiraBoardConfiguration,
-  JiraProjectSummary,
-  JiraGetBoardsParams,
-  JiraGetIssuesParams,
-  JiraGetSprintsParams,
-  JiraGetCommentsParams,
-  JiraGetTransitionsParams,
-  JiraTransitionIssueParams,
-} from "@shared/types/jira";
 
 /** Standard IPC result envelope — most IPC calls return this shape. */
 interface IpcResult {
@@ -426,27 +410,6 @@ declare global {
         retainManual: (sessionId: string, content: string) => Promise<IpcResult>;
         getProjectConfig: (projectId: string) => Promise<MemoryProjectConfig | { error: string }>;
         setProjectConfig: (projectId: string, patch: Partial<MemoryProjectConfig>) => Promise<MemoryProjectConfig | { error: string }>;
-      };
-      jira: {
-        getConfig: (projectId: string) => Promise<JiraProjectConfig | null>;
-        saveConfig: (projectId: string, config: JiraProjectConfig) => Promise<IpcResult>;
-        deleteConfig: (projectId: string) => Promise<IpcResult>;
-        authenticate: (
-          instanceUrl: string,
-          method: "oauth" | "apitoken",
-          apiToken?: string,
-          email?: string
-        ) => Promise<IpcResult>;
-        authStatus: (instanceUrl: string) => Promise<{ hasToken: boolean }>;
-        logout: (instanceUrl: string) => Promise<IpcResult>;
-        getProjects: (instanceUrl: string) => Promise<JiraProjectSummary[] | { error: string }>;
-        getBoards: (params: JiraGetBoardsParams) => Promise<JiraBoard[] | { error: string }>;
-        getBoardConfiguration: (params: JiraGetSprintsParams) => Promise<JiraBoardConfiguration | { error: string }>;
-        getSprints: (params: JiraGetSprintsParams) => Promise<JiraSprint[] | { error: string }>;
-        getIssues: (params: JiraGetIssuesParams) => Promise<JiraIssue[] | { error: string }>;
-        getComments: (params: JiraGetCommentsParams) => Promise<JiraComment[] | { error: string }>;
-        getTransitions: (params: JiraGetTransitionsParams) => Promise<JiraTransition[] | { error: string }>;
-        transitionIssue: (params: JiraTransitionIssueParams) => Promise<IpcResult>;
       };
       analytics: {
         /** Fire-and-forget analytics event via the main process PostHog client. */

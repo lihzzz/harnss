@@ -45,7 +45,6 @@ import * as codexSessionsIpc from "./ipc/codex-sessions";
 import { registerCodexFingerprintIpc } from "./ipc/codex-fingerprint";
 import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
-import * as jiraIpc from "./ipc/jira";
 import * as memoryIpc from "./ipc/memory";
 import { onSettingsChanged } from "./ipc/settings";
 import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./lib/computer-use-runtime";
@@ -384,7 +383,6 @@ codexSessionsIpc.register(getMainWindow);
 registerCodexFingerprintIpc();
 mcpIpc.register();
 settingsIpc.register(getMainWindow);
-jiraIpc.register();
 memoryIpc.register(getMainWindow);
 
 // Listen for analytics settings changes and reinitialize PostHog

@@ -26,13 +26,11 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   const setBackgroundProcessLimit = useSettingsStore((s) => s.setBackgroundProcessLimit);
   const [codexClientName, setCodexClientName] = useState("Harnss");
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
-  const [showJiraBoard, setShowJiraBoard] = useState(false);
 
   useEffect(() => {
     if (appSettings) {
       setCodexClientName(appSettings.codexClientName || "Harnss");
       setShowDevFillInChatTitleBar(!!appSettings.showDevFillInChatTitleBar);
-      setShowJiraBoard(!!appSettings.showJiraBoard);
     }
   }, [appSettings]);
 
@@ -50,14 +48,6 @@ export const AdvancedSettings = memo(function AdvancedSettings({
     async (checked: boolean) => {
       setShowDevFillInChatTitleBar(checked);
       await onUpdateAppSettings({ showDevFillInChatTitleBar: checked });
-    },
-    [onUpdateAppSettings],
-  );
-
-  const handleJiraBoardToggle = useCallback(
-    async (checked: boolean) => {
-      setShowJiraBoard(checked);
-      await onUpdateAppSettings({ showJiraBoard: checked });
     },
     [onUpdateAppSettings],
   );
@@ -115,16 +105,6 @@ export const AdvancedSettings = memo(function AdvancedSettings({
                 value={backgroundProcessLimit}
                 onChange={(e) => setBackgroundProcessLimit(Number(e.target.value))}
                 className="h-8 w-20 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Enable Jira board"
-              description="Show the Jira board UI in project sidebars and chats. This is a developer preview."
-            >
-              <Switch
-                checked={showJiraBoard}
-                onCheckedChange={handleJiraBoardToggle}
               />
             </SettingRow>
 

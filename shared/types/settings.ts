@@ -11,6 +11,13 @@ export type VoiceDictationMode = "native" | "whisper";
 /** UI language. Chinese is the first-run default. */
 export type Language = "zh-CN" | "en-US";
 export type ThemeOption = "light" | "dark" | "system";
+/**
+ * Renderer-only theme preference. "auto" resolves to light/dark by local time
+ * and must never be sent to the main process (nativeTheme accepts only ThemeOption).
+ */
+export type ThemePreference = ThemeOption | "auto";
+/** UI information density. "comfortable" is the default layout. */
+export type DensityOption = "compact" | "comfortable" | "loose";
 export type MacBackgroundEffect = "liquid-glass" | "vibrancy" | "off";
 export type CodexBinarySource = "auto" | "managed" | "custom";
 export type ClaudeBinarySource = "auto" | "managed" | "custom";
@@ -64,8 +71,6 @@ export interface AppSettings {
   opencodeCustomBinaryPath: string;
   /** Show developer-only "Dev Fill" button in chat title bar (local dev builds only) */
   showDevFillInChatTitleBar: boolean;
-  /** Show the Jira board UI in the sidebar and main panel (developer preview) */
-  showJiraBoard: boolean;
   /** Preferred native macOS background material when window transparency is enabled */
   macBackgroundEffect: MacBackgroundEffect;
   /** Enable anonymous analytics to help improve the app (default: true) */

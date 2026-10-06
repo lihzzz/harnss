@@ -46,7 +46,6 @@ shared/
 │   ├── acp.ts           # ACP session update types
 │   ├── registry.ts      # Agent registry types
 │   ├── git.ts           # Git operation types (GitFileStatus, GitBranch, GitRepoInfo, etc.)
-│   ├── jira.ts          # Jira integration types (JiraProjectConfig, JiraBoard, JiraIssue, etc.)
 │   └── settings.ts      # AppSettings type definition
 └── lib/               # Shared utilities usable by both processes
     ├── acp-helpers.ts         # ACP helper functions
@@ -61,10 +60,10 @@ electron/
 ├── dist/       # tsup build output (gitignored)
 └── src/
     ├── ipc/    # IPC handlers (claude-sessions, acp-sessions, codex-sessions, projects, sessions,
-    │           #              settings, terminal, git, jira, mcp, spaces, files, folders, cc-import,
+    │           #              settings, terminal, git, mcp, spaces, files, folders, cc-import,
     │           #              title-gen, agent-registry)
     └── lib/    # Main-process utilities (logger, data-dir, app-settings, sdk,
-                #   error-utils, git-exec, jira-client, jira-store, jira-oauth-store, mcp-store,
+                #   error-utils, git-exec, mcp-store,
                 #   mcp-oauth-flow, mcp-oauth-provider, mcp-oauth-store, acp-auth, claude-binary,
                 #   codex-binary, codex-rpc, migration, posthog, glass, terminal-history,
                 #   json-file-store, safe-send, claude-model-cache, acp-utility-prompt,
@@ -77,7 +76,6 @@ src/
 │   ├── browser/       # BrowserPanel decomposed (BrowserNavBar, BrowserUrlBar, WebviewInstance, etc.)
 │   ├── input-bar/     # InputBar decomposed (CommandPicker, MentionPicker, EngineControls,
 │   │                  #   AttachmentPreview, ContextGauge, EnginePickerDropdown, useMentionAutocomplete)
-│   ├── jira/          # Jira board UI (KanbanBoard, JiraIssueCard, JiraBoardSetup)
 │   ├── mcp/           # MCP server management UI (AddServerDialog, McpServerRow, McpAuthStatus)
 │   ├── mcp-renderers/ # MCP tool renderers (jira, confluence, atlassian, context7, shared, helpers)
 │   ├── tool-renderers/# Built-in tool renderers (BashContent, EditContent, TaskTool, etc.)
@@ -96,11 +94,11 @@ src/
 │                      #   BackgroundAgentsPanel, AgentTranscriptViewer, AgentContext, AgentIcon,
 │                      #   ImageAnnotationEditor, ImageAnnotationToolbar, ImageLightbox,
 │                      #   FilePreviewOverlay, DiffViewer, UnifiedPatchViewer, TurnChangesSummary,
-│                      #   SpaceBar, SpaceCustomizer, WorktreeBar, JiraBoardPanel,
-│                      #   JiraIssuePreviewOverlay, McpPanel, BottomComposer, SidebarSearch,
+│                      #   SpaceBar, SpaceCustomizer, WorktreeBar,
+│                      #   McpPanel, BottomComposer, SidebarSearch,
 │                      #   ChatSearchBar, TabBar, PanelHeader, CopyButton, MessageBubble,
 │                      #   ErrorBoundary, WelcomeScreen,
-│                      #   ACPAuthDialog, CodexAuthDialog, JiraAuthDialog, AuthDialogShell,
+│                      #   ACPAuthDialog, CodexAuthDialog, AuthDialogShell,
 │                      #   MermaidDiagram, ThinkingBlock, SummaryBlock, OpenInEditorButton,
 │                      #   PanelDockControls, PanelDockPreview, ColorPicker, IconPicker,
 │                      #   SettingsView, AppSidebar, chat-ui-state
@@ -111,7 +109,7 @@ src/
 │   │                  #   useAppContextualPanels, useAppEnvironmentState, useAppSpaceWorkflow,
 │   │                  #   session-utils — shared session-creation option builder)
 │   └── ...            # React hooks (useEngineBase, useClaude, useACP, useCodex, useSpaceManager,
-│                      #   useGitStatus, useWorktreeChips, useJiraBoard, useSpeechRecognition,
+│                      #   useGitStatus, useWorktreeChips, useSpeechRecognition,
 │                      #   useSpaceTerminals, useToolIslands, useSplitView, useNotifications,
 │                      #   useGlassOrchestrator, useGlassTheme, useTheme, usePaneController,
 │                      #   useMainToolWorkspace, useMainToolAreaLayout, useToolIslandContext,
@@ -138,7 +136,7 @@ src/
 │   ├── dev-seeding/   #   chat-seed.ts, space-seeding.ts (dev-only data seeding)
 │   └── ...            # Root utilities: utils.ts (cn/isRecord/isMac/isWindows), message-factory.ts,
 │                      #   file-access.ts, mcp-utils.ts, color-utils.ts, icon-utils.ts,
-│                      #   engine-icons.ts, jira-utils.ts, model-utils.ts, notification-utils.ts,
+│                      #   engine-icons.ts, model-utils.ts, notification-utils.ts,
 │                      #   session-notifications.ts, ansi.tsx, syntax-highlight.tsx, clipboard.ts,
 │                      #   file-tree.ts, element-inspector.ts, local-storage-migration.ts,
 │                      #   terminal-tabs.ts, ask-user-question.ts, monaco.ts, languages.ts,
@@ -333,23 +331,6 @@ The main process uses `@anthropic-ai/claude-agent-sdk` (ESM-only, loaded via `aw
 - `spaces:save(spaces)` — persists the full spaces array (create/delete/update all go through this)
 - Each space has `{ id, name, color, icon, projectId, worktreePath? }`
 
-**IPC API — Jira:**
-
-- `jira:get-config` — returns stored Jira OAuth config and selected board
-- `jira:save-config(config)` — saves Jira connection settings
-- `jira:delete-config` — removes stored Jira credentials
-- `jira:authenticate` — opens browser for Jira OAuth flow (loopback redirect)
-- `jira:auth-status` — returns current OAuth token status
-- `jira:logout` — clears stored Jira OAuth tokens
-- `jira:get-boards` — lists accessible Jira boards
-- `jira:get-projects` — lists accessible Jira projects
-- `jira:get-sprints(boardId)` — lists sprints for a board
-- `jira:get-board-configuration(boardId)` — fetches column configuration for a board
-- `jira:get-issues(params)` — fetches issues for a board/sprint
-- `jira:get-comments(issueKey)` — fetches comments for an issue
-- `jira:get-transitions(issueKey)` — fetches available transitions for an issue
-- `jira:transition-issue(issueKey, transitionId)` — moves an issue to a new status
-
 **IPC API — Folders:**
 
 - `folders:list(projectId)` — lists folders/subfolders for the folder picker
@@ -403,7 +384,6 @@ Three tiers of settings storage, each suited to different access patterns:
 - `useSidebar` — sidebar open/close with localStorage persistence
 - `useGitStatus` — polls git status for the active project's cwd
 - `useWorktreeChips` — derives available worktrees for the WorktreeBar
-- `useJiraBoard` / `useJiraBoardData` / `useJiraConfig` — Jira board management
 - `useSpeechRecognition` — voice dictation via Whisper (lazy-loads `@huggingface/transformers`) or native OS speech API
 - `useSpaceTerminals` — tracks which terminal tabs belong to which space
 - `useNotifications` — OS notification triggers based on session completion events
@@ -528,16 +508,6 @@ Tool name normalization: `extractMcpToolName(toolName)` strips the `"mcp__Server
 **Git Panel** (`src/components/git/`): Decomposed into 9 components — `GitPanel` (orchestrator), `RepoSection` (repo header + branch), `BranchPicker` (branch switcher popover), `ChangesSection` (staged/unstaged file list), `CommitInput` (message + commit button), `FileItem` (individual file row), `InlineDiff` (per-file diff preview), `InlineSelector` (hunk-level staging UI), `git-panel-utils.ts` (formatting helpers).
 
 **Commit message generation**: `oneShotSdkQuery()` calls a one-shot Claude Haiku query with the staged diff to generate a commit message. Exposed as `git:generate-commit-message(cwd)`.
-
-### Jira Integration
-
-Full Jira board integration via OAuth 2.0 (3-legged flow):
-
-- **OAuth**: loopback redirect flow via `electron/src/lib/jira-oauth-store.ts`. User authenticates in browser via `jira:authenticate`, token stored in `jira-oauth-store.ts`.
-- **Board data**: `electron/src/lib/jira-client.ts` wraps the Jira REST API. `ipc/jira.ts` exposes board/issue operations (see IPC API — Jira above for full handler list).
-- **UI**: `JiraBoardPanel.tsx` hosts the board. `src/components/jira/` contains `KanbanBoard.tsx` (column layout with drag-and-drop), `JiraIssueCard.tsx` (compact card), `JiraBoardSetup.tsx` (initial OAuth + board selection). `JiraIssuePreviewOverlay.tsx` shows issue details without leaving the board.
-- **Types**: `shared/types/jira.ts` defines all Jira entities.
-- **Hooks**: `useJiraConfig` (stored config), `useJiraBoardData` (fetch + poll), `useJiraBoard` (full board state + actions).
 
 ### MCP Server Management
 
@@ -672,7 +642,6 @@ Types shared between electron and renderer live in `shared/types/`. Both tsconfi
 - **`shared/types/acp.ts`** — ACP session update discriminated union types.
 - **`shared/types/registry.ts`** — agent registry types (`RegistryAgent`, `RegistryData`).
 - **`shared/types/git.ts`** — git operation types: `GitFileStatus`, `GitBranch`, `GitRepoInfo`, `GitStatus`, `GitLogEntry`, `GitWorktree`.
-- **`shared/types/jira.ts`** — Jira integration types: `JiraProjectConfig`, `JiraBoard`, `JiraIssue`, `JiraColumn`, `JiraSprint`.
 - **`shared/types/settings.ts`** — `AppSettings` type (notification config, editor/binary preferences, and analytics settings).
 
 **Shared utilities** (`shared/lib/`) — utilities safe to import from both processes (no Electron or React imports):
@@ -712,7 +681,6 @@ Types shared between electron and renderer live in `shared/types/`. Both tsconfi
 - **`src/lib/mcp-utils.ts`** — `toMcpStatusState()` (moved from types/ui.ts)
 - **`src/lib/color-utils.ts`** — space color generation from agent icon URLs
 - **`src/lib/icon-utils.ts`** — agent icon URL resolution
-- **`src/lib/jira-utils.ts`** — Jira formatting helpers (issue key, priority icons, etc.)
 - **`src/lib/model-utils.ts`** — model name parsing and display normalization
 - **`src/lib/notification-utils.ts`** — OS notification trigger logic (respects `notifyOn: always/unfocused/never`)
 - **`src/lib/session-notifications.ts`** — maps session events to notification triggers
@@ -746,7 +714,6 @@ Types shared between electron and renderer live in `shared/types/`. Both tsconfi
 - **`src/lib/analytics/posthog.ts`** — `initPostHog()`, `syncAnalyticsSettings()` — renderer-side PostHog client (posthog-js) initialization
 - **`electron/src/lib/error-utils.ts`** — `extractErrorMessage()`, `reportError()` — shared error extraction and PostHog exception capture
 - **`electron/src/lib/git-exec.ts`** — git command execution helpers used by `ipc/git.ts`
-- **`electron/src/lib/jira-client.ts`** — Jira REST API client (search, fetch issue, update)
 - **`electron/src/lib/migration.ts`** — data migration utilities for localStorage and file store upgrades
 - **`electron/src/lib/claude-binary.ts`** / **`codex-binary.ts`** — CLI binary detection (managed download path + custom user path)
 - **`electron/src/lib/mcp-oauth-flow.ts`** / **`mcp-oauth-provider.ts`** — MCP OAuth provider server (loopback redirect) + flow orchestration
@@ -790,7 +757,7 @@ The three session IPC handlers share extracted utilities:
 - **`codex-utility-prompt.ts`** — one-shot Codex utility prompt (same pattern for Codex engine)
 
 Key main-process infrastructure:
-- **`json-file-store.ts`** — generic JSON file store backing `mcp-store`, `mcp-oauth-store`, `jira-store`, `jira-oauth-store`. Handles atomic writes and optional encryption.
+- **`json-file-store.ts`** — generic JSON file store backing `mcp-store`, `mcp-oauth-store`. Handles atomic writes and optional encryption.
 - **`safe-send.ts`** — `safeSend(getWindow, channel, payload)` guards `webContents.send` against destroyed BrowserWindows. Use in all async event loops (PTY, SDK, ACP, Codex).
 - **`claude-model-cache.ts`** — TTL'd disk cache for Claude `supportedModels` results (avoids re-querying on every session start).
 
@@ -806,7 +773,7 @@ Key main-process infrastructure:
 - **No false optionals** — never mark props/parameters as optional (`?`) when they are always provided by every caller. Optional means "sometimes absent" — if every call site passes the value, make it required. Lazy `?` hides broken contracts and leads to unnecessary null checks.
 - **pnpm** — always use pnpm for package management
 - **Memo optimization** — components use `React.memo` with custom comparators for performance
-- **Component decomposition** — large components are split into focused sub-components in subdirectories (git/, browser/, input-bar/, jira/, mcp/, mcp-renderers/, tool-renderers/, sidebar/, split/, welcome/, workspace/)
+- **Component decomposition** — large components are split into focused sub-components in subdirectories (git/, browser/, input-bar/, mcp/, mcp-renderers/, tool-renderers/, sidebar/, split/, welcome/, workspace/)
 - **Hook decomposition** — large hooks are split into focused sub-hooks (session/, app-layout/, useEngineBase)
 - **Shared components** — reusable UI patterns extracted to shared components (`TabBar`, `PanelHeader`, `SettingRow`)
 - **Error tracking** — all caught errors in IPC handlers and hooks must use `reportError(label, err)` (not bare `log()`). Benign/expected catches (cleanup, parse fallbacks, cancellation guards) are exempt. See "Error Tracking (PostHog)" section for details.

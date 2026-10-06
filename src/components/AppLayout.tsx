@@ -39,9 +39,6 @@ const SettingsView = lazy(() =>
 );
 import { CodexAuthDialog } from "./CodexAuthDialog";
 import { ACPAuthDialog } from "./ACPAuthDialog";
-const JiraBoardPanel = lazy(() =>
-  import("./JiraBoardPanel").then((m) => ({ default: m.JiraBoardPanel })),
-);
 import { isMac, isWindows } from "@/lib/utils";
 import { SplitHandle } from "./split/SplitHandle";
 import { SplitDropZone } from "./split/SplitDropZone";
@@ -59,7 +56,6 @@ import { useSpaceSwitchCooldown } from "@/hooks/useSpaceSwitchCooldown";
 import { useMainToolPaneResize } from "@/hooks/useMainToolPaneResize";
 import { useMainToolAreaLayout } from "@/hooks/useMainToolAreaLayout";
 import { useMainToolAreaResize } from "@/hooks/useMainToolAreaResize";
-import { useJiraBoard } from "@/hooks/useJiraBoard";
 import { useSplitDragDrop } from "@/hooks/useSplitDragDrop";
 import { useToolDragDrop, findDraggedIsland, type ToolDragState } from "@/hooks/useToolDragDrop";
 import { useAppLayoutUIState } from "@/hooks/app-layout/useAppLayoutUIState";
@@ -107,7 +103,7 @@ export function AppLayout() {
     activeProjectId, activeProjectPath, currentBranch, activeSpaceProject, activeSpaceTerminalCwd, showThinking,
     hasProjects, isSpaceSwitching, showToolPicker, hasRightPanel,
     activeTodos, bgAgents, hasTodos, hasAgents, availableContextual,
-    glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled, jiraBoardEnabled,
+    glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled,
     draftSpaceId,
   } = state;
   const inputHistory = useMemo(
@@ -161,16 +157,6 @@ export function AppLayout() {
     handleClosePreview,
   } = layoutUI;
 
-  const jiraBoard = useJiraBoard({
-    jiraBoardEnabled,
-    activeSpaceId: spaceManager.activeSpaceId,
-    activeProjectId,
-    activeSessionId: manager.activeSessionId,
-    projects: projectManager.projects,
-    handleSend,
-    handleNewChat,
-  });
-  const { jiraBoardProjectId, jiraBoardProject, setJiraBoardProjectForSpace, handleToggleProjectJiraBoard, handleCreateTaskFromJiraIssue } = jiraBoard;
   const [pendingSplitPaneSend, setPendingSplitPaneSend] = useState<{
     sessionId: string;
     text: string;
@@ -212,14 +198,10 @@ export function AppLayout() {
 
   const handleOpenNewChat = useCallback(
     async (projectId: string) => {
-      const project = projectManager.projects.find((item) => item.id === projectId);
-      if (project) {
-        setJiraBoardProjectForSpace(project.spaceId || "default", null);
-      }
       splitView.dismissSplitView();
       await handleNewChat(projectId);
     },
-    [handleNewChat, projectManager.projects, setJiraBoardProjectForSpace, splitView.dismissSplitView],
+    [handleNewChat, splitView.dismissSplitView],
   );
 
   const handleComposerClear = useCallback(
@@ -234,17 +216,10 @@ export function AppLayout() {
 
   const handleSidebarSelectSession = useCallback(
     (sessionId: string) => {
-      const session = manager.sessions.find((item) => item.id === sessionId);
-      const project = session
-        ? projectManager.projects.find((item) => item.id === session.projectId)
-        : null;
-      if (project) {
-        setJiraBoardProjectForSpace(project.spaceId || "default", null);
-      }
       splitView.dismissSplitView();
       handleSelectSession(sessionId);
     },
-    [handleSelectSession, manager.sessions, projectManager.projects, setJiraBoardProjectForSpace, splitView.dismissSplitView],
+    [handleSelectSession, splitView.dismissSplitView],
   );
 
 
@@ -1078,15 +1053,12 @@ export function AppLayout() {
           projects: projectManager.projects,
           sessions: manager.sessions,
           activeSessionId: manager.activeSessionId,
-          jiraBoardProjectId,
-          jiraBoardEnabled,
           foldersByProject: o.foldersByProject,
           organizeByChatBranch: settings.organizeByChatBranch,
           draftSpaceId,
         }}
         projectActions={{
           onNewChat: handleOpenNewChat,
-          onToggleProjectJiraBoard: handleToggleProjectJiraBoard,
           onCreateProject: handleCreateProject,
           onDeleteProject: projectManager.deleteProject,
           onRenameProject: projectManager.renameProject,
@@ -1517,19 +1489,7 @@ export function AppLayout() {
                   "--chat-fade-strength": String(chatFadeStrength),
                 }) as React.CSSProperties}
           >
-            {jiraBoardProject ? (
-              <Suspense fallback={null}>
-              <JiraBoardPanel
-                projectId={jiraBoardProject.id}
-                projectName={jiraBoardProject.name}
-                variant="main"
-                onClose={() => setJiraBoardProjectForSpace(spaceManager.activeSpaceId, null)}
-                sidebarOpen={sidebar.isOpen}
-                onToggleSidebar={sidebar.toggle}
-                onCreateTask={handleCreateTaskFromJiraIssue}
-              />
-              </Suspense>
-            ) : manager.activeSessionId ? (
+            {manager.activeSessionId ? (
               <>
               {/* Top fade: only visible when chat is scrolled down. Island mode uses dark shadow; flat mode fades content into bg */}
               {/* Island: gradient starts at top-0 (behind header, subtle bleed). Flat: starts at top-10 (right below header) so full gradient is visible and strong. */}

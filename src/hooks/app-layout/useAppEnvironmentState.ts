@@ -24,7 +24,6 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
   const [devFillEnabled, setDevFillEnabled] = useState(false);
-  const [jiraBoardEnabled, setJiraBoardEnabled] = useState(false);
 
   const { glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect } = useGlassOrchestrator({
     macBackgroundEffect: input.macBackgroundEffect,
@@ -39,7 +38,6 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
         setNotificationSettings(settings.notifications as NotificationSettings);
       }
       setDevFillEnabled(import.meta.env.DEV && !!settings?.showDevFillInChatTitleBar);
-      setJiraBoardEnabled(!!settings?.showJiraBoard);
     });
   }, [showSettings]);
 
@@ -73,6 +71,5 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
     macLiquidGlassSupported,
     liveMacBackgroundEffect,
     devFillEnabled,
-    jiraBoardEnabled,
   };
 }

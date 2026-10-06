@@ -15,8 +15,31 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { isRecord } from "@/lib/utils";
-import { getInitials, getStatusColor } from "@/lib/jira-utils";
 import { Field, McpListHeader, McpEmptyState, MCP_ROW_CLASS, REMARK_PLUGINS } from "./shared";
+
+function getInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  "to do": "bg-muted text-muted-foreground",
+  open: "bg-muted text-muted-foreground",
+  backlog: "bg-muted text-muted-foreground",
+  "in progress": "bg-blue-500/15 text-blue-400",
+  "in review": "bg-purple-500/15 text-purple-400",
+  done: "bg-emerald-500/15 text-emerald-400",
+  closed: "bg-emerald-500/15 text-emerald-400",
+  resolved: "bg-emerald-500/15 text-emerald-400",
+};
+
+function getStatusColor(status: string): string {
+  return STATUS_COLORS[status.toLowerCase()] ?? "bg-muted text-muted-foreground";
+}
 
 const PRIORITY_ICONS: Record<string, { icon: typeof ArrowUpCircle; color: string }> = {
   highest: { icon: ArrowUpCircle, color: "text-red-500" },

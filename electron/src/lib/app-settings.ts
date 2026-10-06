@@ -55,7 +55,6 @@ const DEFAULTS: AppSettings = {
   claudeCustomBinaryPath: "",
   opencodeCustomBinaryPath: "",
   showDevFillInChatTitleBar: false,
-  showJiraBoard: false,
   macBackgroundEffect: "liquid-glass",
   analyticsEnabled: true,
   memory: MEMORY_DEFAULTS,

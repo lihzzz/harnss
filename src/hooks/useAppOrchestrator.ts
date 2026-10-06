@@ -5,6 +5,7 @@ import { useSidebar } from "@/hooks/useSidebar";
 import { useSpaceManager } from "@/hooks/useSpaceManager";
 import { useSettingsCompat as useSettings } from "@/hooks/useSettingsCompat";
 import { useTheme } from "@/hooks/useTheme";
+import { useDensity } from "@/hooks/useDensity";
 import { useSpaceTerminals } from "@/hooks/useSpaceTerminals";
 import { useAgentRegistry } from "@/hooks/useAgentRegistry";
 import { useAcpAgentAutoUpdate } from "@/hooks/useAcpAgentAutoUpdate";
@@ -44,6 +45,7 @@ export function useAppOrchestrator() {
   const settingsProjectId = manager.activeSession?.projectId ?? manager.draftProjectId ?? null;
   const settings = useSettings(settingsProjectId, settingsEngine);
   const resolvedTheme = useTheme(settings.theme);
+  useDensity();
   const { agents, refresh: refreshAgents, saveAgent, deleteAgent } = useAgentRegistry();
   useAcpAgentAutoUpdate({ installedAgents: agents, refreshInstalledAgents: refreshAgents });
   // Engine is locked once a session is active (not draft) — null means free to switch
@@ -98,7 +100,8 @@ export function useAppOrchestrator() {
     macBackgroundEffect: settings.macBackgroundEffect,
     setMacBackgroundEffect: settings.setMacBackgroundEffect,
     transparency: settings.transparency,
-    theme: settings.theme,
+    // "auto" has no native themeSource equivalent — pass the resolved value.
+    theme: settings.theme === "auto" ? resolvedTheme : settings.theme,
     pendingPermission: manager.pendingPermission,
     activeSessionId: manager.activeSessionId,
     activeSession: manager.activeSession,
@@ -273,7 +276,6 @@ export function useAppOrchestrator() {
     macLiquidGlassSupported: environment.macLiquidGlassSupported,
     liveMacBackgroundEffect: environment.liveMacBackgroundEffect,
     devFillEnabled: environment.devFillEnabled,
-    jiraBoardEnabled: environment.jiraBoardEnabled,
     draftSpaceId: spaceWorkflow.draftSpaceId,
   };
 
@@ -375,7 +377,6 @@ export function useAppOrchestrator() {
     macLiquidGlassSupported: environment.macLiquidGlassSupported,
     liveMacBackgroundEffect: environment.liveMacBackgroundEffect,
     devFillEnabled: environment.devFillEnabled,
-    jiraBoardEnabled: environment.jiraBoardEnabled,
 
     // Settings view
     showSettings: ui.showSettings,

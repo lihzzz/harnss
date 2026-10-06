@@ -88,8 +88,6 @@ interface AppSidebarState {
   projects: Project[];
   sessions: ChatSession[];
   activeSessionId: string | null;
-  jiraBoardProjectId: string | null;
-  jiraBoardEnabled: boolean;
   foldersByProject: Record<string, ChatFolder[]>;
   organizeByChatBranch: boolean;
   draftSpaceId: string | null;
@@ -97,7 +95,6 @@ interface AppSidebarState {
 
 interface AppSidebarProjectActions {
   onNewChat: (projectId: string) => void;
-  onToggleProjectJiraBoard: (projectId: string) => void;
   onCreateProject: () => void;
   onDeleteProject: (id: string) => void;
   onRenameProject: (id: string, name: string) => void;
@@ -162,15 +159,12 @@ export const AppSidebar = memo(function AppSidebar({
     projects,
     sessions,
     activeSessionId,
-    jiraBoardProjectId,
-    jiraBoardEnabled,
     foldersByProject,
     organizeByChatBranch,
     draftSpaceId,
   } = state;
   const {
     onNewChat,
-    onToggleProjectJiraBoard,
     onCreateProject,
     onDeleteProject,
     onRenameProject,
@@ -659,11 +653,8 @@ export const AppSidebar = memo(function AppSidebar({
                       sessions={projectSessions}
                       folders={projectFolders}
                       activeSessionId={activeSessionId}
-                      jiraBoardEnabled={jiraBoardEnabled}
-                      isJiraBoardOpen={jiraBoardProjectId === project.id}
                       organizeByChatBranch={organizeByChatBranch}
                       onNewChat={() => onNewChat(project.id)}
-                      onToggleJiraBoard={() => onToggleProjectJiraBoard(project.id)}
                       onDeleteProject={() => onDeleteProject(project.id)}
                       onRenameProject={(name) => onRenameProject(project.id, name)}
                       onUpdateIcon={(icon, iconType) =>

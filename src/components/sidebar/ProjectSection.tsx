@@ -8,7 +8,6 @@ import {
   FolderOpen,
   FolderPlus,
   SquarePen,
-  KanbanSquare,
   ChevronRight,
   ChevronDown,
   History,
@@ -58,11 +57,8 @@ export function ProjectSection({
   sessions,
   folders,
   activeSessionId,
-  jiraBoardEnabled,
-  isJiraBoardOpen,
   organizeByChatBranch,
   onNewChat,
-  onToggleJiraBoard,
   onDeleteProject,
   onRenameProject,
   onUpdateIcon,
@@ -83,11 +79,8 @@ export function ProjectSection({
   sessions: ChatSession[];
   folders: ChatFolder[];
   activeSessionId: string | null;
-  jiraBoardEnabled: boolean;
-  isJiraBoardOpen: boolean;
   organizeByChatBranch: boolean;
   onNewChat: () => void;
-  onToggleJiraBoard: () => void;
   onDeleteProject: () => void;
   onRenameProject: (name: string) => void;
   onUpdateIcon: (icon: string | null, iconType: "emoji" | "lucide" | null) => void;
@@ -298,22 +291,6 @@ export function ProjectSection({
           </button>
 
           <div className="absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-            {jiraBoardEnabled && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-7 w-7 shrink-0 rounded-lg transition-all ${
-                  isJiraBoardOpen
-                    ? "bg-black/10 text-sidebar-foreground dark:bg-white/15"
-                    : "text-sidebar-foreground/50 hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/10"
-                }`}
-                onClick={onToggleJiraBoard}
-                title={t("openJiraBoard")}
-              >
-                <KanbanSquare className="h-4 w-4" />
-              </Button>
-            )}
-
             <Button
               variant="ghost"
               size="icon"
