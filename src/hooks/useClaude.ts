@@ -515,7 +515,9 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 ...(textContent ? { isStreaming: false } : {}),
                 ...(thinkingContent ? { thinkingComplete: true } : {}),
               };
-              if (!merged.content.trim() && !merged.thinking) {
+              // Snapshots arrive per content block. An empty thinking snapshot
+              // must not remove the target for subsequent text deltas.
+              if (!merged.isStreaming && !merged.content.trim() && !merged.thinking) {
                 return prev.filter((m) => m.id !== target.id);
               }
               return prev.map((m) => (m.id === target.id ? merged : m));

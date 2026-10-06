@@ -252,7 +252,9 @@ export function handleClaudeEvent(
           target.thinking = thinkingContent;
           target.thinkingComplete = true;
         }
-        if (!target.content.trim() && !target.thinking) {
+        // Keep the streaming target across empty per-block snapshots; later
+        // text deltas still need it. message_delta removes empty messages.
+        if (!target.isStreaming && !target.content.trim() && !target.thinking) {
           state.messages = state.messages.filter((m) => m.id !== target.id);
         }
       } else if (textContent || thinkingContent) {
