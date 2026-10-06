@@ -53,6 +53,12 @@ describe("settings store", () => {
     expect(secondProjects["project-1"]?.activeTools).toEqual(["tasks"]);
   });
 
+  it("includes the fingerprint probe in legacy tool orders", async () => {
+    const { selectProjectSettings, useSettingsStore } = await import("./settings-store");
+
+    expect(selectProjectSettings(useSettingsStore.getState(), "project-1").toolOrder).toContain("fingerprint");
+  });
+
   it("defaults to Chinese and persists language changes", async () => {
     const { useSettingsStore } = await import("./settings-store");
 

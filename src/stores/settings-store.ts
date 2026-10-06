@@ -33,7 +33,7 @@ const MIN_BOTTOM_HEIGHT = 120;
 const MAX_BOTTOM_HEIGHT = 600;
 const DEFAULT_BOTTOM_HEIGHT = 250;
 
-const DEFAULT_TOOL_ORDER: ToolId[] = ["terminal", "git", "browser", "files", "project-files", "mcp"];
+const DEFAULT_TOOL_ORDER: ToolId[] = ["terminal", "git", "browser", "files", "project-files", "mcp", "fingerprint"];
 const VALID_TOOL_IDS = new Set<ToolId>([
   "terminal",
   "browser",
@@ -43,6 +43,7 @@ const VALID_TOOL_IDS = new Set<ToolId>([
   "tasks",
   "agents",
   "mcp",
+  "fingerprint",
 ]);
 
 const IS_MAC_PLATFORM = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
