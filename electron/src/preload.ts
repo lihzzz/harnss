@@ -348,6 +348,9 @@ contextBridge.exposeInMainWorld("claude", {
       return () => ipcRenderer.removeListener("settings:changed", listener);
     },
   },
+  skills: {
+    list: () => ipcRenderer.invoke("skills:list"),
+  },
   memory: {
     getStatus: () => ipcRenderer.invoke("memory:get-status"),
     setLlmKey: (key: string) => ipcRenderer.invoke("memory:set-llm-key", key),

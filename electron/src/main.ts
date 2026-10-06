@@ -46,6 +46,7 @@ import { registerCodexFingerprintIpc } from "./ipc/codex-fingerprint";
 import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
 import * as memoryIpc from "./ipc/memory";
+import * as skillsIpc from "./ipc/skills";
 import { onSettingsChanged } from "./ipc/settings";
 import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./lib/computer-use-runtime";
 
@@ -384,6 +385,7 @@ registerCodexFingerprintIpc();
 mcpIpc.register();
 settingsIpc.register(getMainWindow);
 memoryIpc.register(getMainWindow);
+skillsIpc.register();
 
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;

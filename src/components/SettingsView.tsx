@@ -33,6 +33,7 @@ import { useAgentContext } from "./AgentContext";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { ArchivedSettings } from "@/components/settings/ArchivedSettings";
 import { MemorySettings } from "@/components/settings/MemorySettings";
+import { SkillsSettings } from "@/components/settings/SkillsSettings";
 
 // ── Section definitions ──
 
@@ -55,7 +56,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "mcp", labelKey: "mcpServers", icon: Plug },
   { id: "engines", labelKey: "engines", icon: Cpu },
   { id: "memory", labelKey: "memory", icon: Brain },
-  { id: "skills", labelKey: "skills", icon: Sparkles, comingSoon: true },
+  { id: "skills", labelKey: "skills", icon: Sparkles },
   { id: "custom-agents", labelKey: "agents", icon: Users, comingSoon: true },
   { id: "advanced", labelKey: "advanced", icon: Wrench },
   { id: "archived", labelKey: "archived", icon: Archive },
@@ -216,14 +217,7 @@ export const SettingsView = memo(function SettingsView({
           />
         );
       case "skills":
-        return (
-          <PlaceholderSection
-            title={t("skills")}
-            description={t("skillsDescription")}
-            icon={Sparkles}
-            comingSoon
-          />
-        );
+        return <SkillsSettings />;
       case "custom-agents":
         return (
           <PlaceholderSection

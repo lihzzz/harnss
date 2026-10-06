@@ -8,6 +8,7 @@ import type { GitRepoInfo, GitStatus, GitBranch, GitLogEntry } from "@shared/typ
 import type { InstalledAgent } from "@shared/types/registry";
 import type { AppSettings, MacBackgroundEffect, ThemeOption } from "@shared/types/settings";
 import type { MemoryFact, MemoryGoldenReport, MemoryProjectConfig, MemoryStatusResult } from "@shared/types/memory";
+import type { SkillsListResult } from "@shared/types/skills";
 import type {
   ACPSessionEvent,
   ACPPermissionEvent,
@@ -393,6 +394,9 @@ declare global {
         set: (patch: Partial<AppSettings>) => Promise<IpcResult>;
         /** Subscribe to settings changes pushed from the main process. */
         onChanged: (callback: (settings: AppSettings) => void) => () => void;
+      };
+      skills: {
+        list: () => Promise<SkillsListResult>;
       };
       memory: {
         getStatus: () => Promise<MemoryStatusResult>;
