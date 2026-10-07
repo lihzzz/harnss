@@ -16,6 +16,7 @@ import { getClaudeBinaryMetadata, getClaudeBinaryPath, getClaudeBinaryStatus, ge
 import { captureEvent } from "../lib/posthog";
 import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
 import { withHindsightMcpServers, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeClaudeEvent, completeMemoryTurn } from "../lib/memory/service";
+import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
 
 /** SDK options for file checkpointing — enables Write/Edit/NotebookEdit revert support */
 function fileCheckpointOptions(): Record<string, unknown> {
@@ -265,6 +266,11 @@ function startEventLoop(
           log("EVENT_FULL", message);
         }
         observeClaudeEvent(sessionId, msgObj);
+        if (msgObj.type === "system" && typeof msgObj.task_id === "string") {
+          if (msgObj.subtype === "task_started") beginUsageTurn(sessionId, `task:${msgObj.task_id}`);
+          if (msgObj.subtype === "task_notification") endUsageTurn(sessionId, `task:${msgObj.task_id}`);
+        }
+        if (msgObj.type === "result" && !msgObj.parent_tool_use_id) endUsageTurn(sessionId);
         safeSend(getMainWindow, "claude:event", { ...(message as object), _sessionId: sessionId });
 
         // Index tool names from assistant tool_use blocks for later lookup by tool_use_id
@@ -317,6 +323,7 @@ function startEventLoop(
       log("QUERY_ERROR", `${logPrefix} stopping=${!!session.stopping} reason=${session.stopReason ?? "none"}`);
     } finally {
       if (!session.restarting) {
+        stopUsageSession(sessionId);
         // Requested stop: treat teardown errors as clean exit
         const stopRequested = session.stopping;
         const exitCode = (queryError && !stopRequested) ? 1 : 0;
@@ -761,6 +768,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       parent_tool_use_id: null,
       session_id: sessionId,
     });
+    beginUsageTurn(sessionId);
     return { ok: true };
   });
 
@@ -895,6 +903,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     "claude:stop",
     (_event, payload: string | { sessionId: string; reason?: string }) => {
       const { sessionId, reason } = parseStopRequest(payload);
+      stopUsageSession(sessionId);
       const session = sessions.get(sessionId);
       if (session) {
         // Mark as requested stop so teardown errors are suppressed
@@ -950,6 +959,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     try {
       await session.queryHandle.stopTask(taskId);
+      endUsageTurn(sessionId, `task:${taskId}`);
       log("STOP_TASK", `session=${sessionId.slice(0, 8)} task=${taskId}`);
       return { ok: true };
     } catch (err) {
@@ -1101,6 +1111,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 /** Stop all Claude sessions (called on app quit). Idempotent. */
 export function stopAll(): void {
   for (const [sessionId, session] of sessions) {
+    stopUsageSession(sessionId);
     log("CLEANUP", `Closing Claude session ${sessionId.slice(0, 8)}`);
     session.stopping = true;
     session.stopReason = "app-quit";

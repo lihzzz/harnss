@@ -936,6 +936,7 @@ function ChatViewContent({
     <ChatUiStateProvider>
       <div
         ref={scrollContainerRef}
+        data-usage-chat
         className="relative min-h-0 flex-1 overflow-y-auto"
         style={{ overscrollBehaviorY: "contain" }}
         onScroll={handleScroll}

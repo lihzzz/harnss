@@ -9,6 +9,7 @@ import type { InstalledAgent } from "@shared/types/registry";
 import type { AppSettings, MacBackgroundEffect, ThemeOption } from "@shared/types/settings";
 import type { MemoryFact, MemoryGoldenReport, MemoryProjectConfig, MemoryStatusResult } from "@shared/types/memory";
 import type { SkillsListResult } from "@shared/types/skills";
+import type { UsageRange, UsageReport } from "@shared/types/usage";
 import type {
   ACPSessionEvent,
   ACPPermissionEvent,
@@ -422,6 +423,10 @@ declare global {
       analytics: {
         /** Fire-and-forget analytics event via the main process PostHog client. */
         capture: (event: string, properties?: Record<string, unknown>) => void;
+      };
+      usage: {
+        get: (days: UsageRange) => Promise<{ data?: UsageReport; error?: string }>;
+        activity: (start: number, end: number) => void;
       };
       speech: {
         /** Triggers macOS native dictation (Cocoa startDictation: selector). Returns { ok: false } on non-macOS. */

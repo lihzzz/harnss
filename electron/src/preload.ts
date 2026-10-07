@@ -405,6 +405,10 @@ contextBridge.exposeInMainWorld("claude", {
     capture: (event: string, properties?: Record<string, unknown>) =>
       ipcRenderer.send("analytics:capture", event, properties),
   },
+  usage: {
+    get: (days: number) => ipcRenderer.invoke("usage:get", days),
+    activity: (start: number, end: number) => ipcRenderer.send("usage:activity", start, end),
+  },
   speech: {
     startNativeDictation: () => ipcRenderer.invoke("speech:start-native-dictation"),
     getPlatform: () => ipcRenderer.invoke("speech:get-platform"),

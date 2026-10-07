@@ -23,6 +23,7 @@ import {
   getCodexMcpServerOverrides,
 } from "../lib/computer-use-runtime";
 import { getHindsightCodexMcpOverrides, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeCodexNotification, completeMemoryTurn } from "../lib/memory/service";
+import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
 
 import type {
   CodexServerNotification,
@@ -416,10 +417,14 @@ function setupCodexHandlers(
 
     // Track active turn from turn events
     if (notification.method === "turn/started") {
+      beginUsageTurn(internalId, notification.params.turn.id);
       session.activeTurnId = notification.params.turn.id;
     } else if (notification.method === "turn/completed") {
+      endUsageTurn(internalId, notification.params.turn.id);
       session.activeTurnId = null;
       void completeMemoryTurn(internalId);
+    } else if (notification.method === "error" && !notification.params.willRetry) {
+      endUsageTurn(internalId, notification.params.turnId);
     }
 
     observeCodexNotification(internalId, notification.method, notification.params as Record<string, unknown>);
@@ -451,6 +456,7 @@ function setupCodexHandlers(
   };
 
   rpc.onExit = (code, signal) => {
+    stopUsageSession(internalId);
     log("codex", ` Process exited: code=${code} signal=${signal} session=${internalId}`);
     codexSessions.delete(internalId);
     unregisterMemorySession(internalId);
@@ -670,6 +676,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   // ─── codex:stop ───
   ipcMain.handle("codex:stop", async (_, sessionId: string) => {
+    stopUsageSession(sessionId);
     const session = codexSessions.get(sessionId);
     if (!session) return;
     session.rpc.destroy();
@@ -1089,6 +1096,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 /** Stop all Codex sessions (called on app quit). */
 export function stopAll(): void {
   for (const [id, session] of codexSessions) {
+    stopUsageSession(id);
     session.rpc.destroy();
     codexSessions.delete(id);
     unregisterMemorySession(id);

@@ -6,6 +6,7 @@ import { SettingRow, SettingsHeader, SettingsSection } from "@/components/settin
 import { syncAnalyticsSettings } from "@/lib/analytics/posthog";
 import type { AppSettings } from "@/types";
 import { useI18n } from "@/lib/i18n";
+import { UsageDashboard } from "./UsageDashboard";
 
 interface AnalyticsSettingsProps {
   appSettings: AppSettings | null;
@@ -45,9 +46,10 @@ export const AnalyticsSettings = memo(function AnalyticsSettings({
       <SettingsHeader title={t("analytics")} description={t("settingsAnalyticsDescription")} />
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-6 py-2">
+        <div className="@container px-6 py-2">
+          <UsageDashboard />
           {/* ── Analytics section ── */}
-          <SettingsSection icon={BarChart3} label={t("settingsAnalyticsUsage")} first>
+          <SettingsSection icon={BarChart3} label={t("usageTelemetry")}>
             <SettingRow
               label={t("settingsSendAnalytics")}
               description={t("settingsSendAnalyticsDescription")}

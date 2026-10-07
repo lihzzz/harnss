@@ -37,6 +37,7 @@ import type { McpServerInput } from "@shared/lib/mcp-config";
 import type { ACPAuthMethod, ACPAuthenticateResult } from "@shared/types/acp";
 import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
 import { withHindsightMcpServers, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeAcpUpdate, completeMemoryTurn } from "../lib/memory/service";
+import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
 
 type ACPReadTextFileParams = ACPTextFileParams & { content?: string; line?: number | null; limit?: number | null };
 type ACPWriteTextFileParams = ACPTextFileParams & { content: string };
@@ -337,6 +338,7 @@ async function createAcpConnection(
 
   // Process lifecycle handlers
   proc.on("error", (err) => {
+    stopUsageSession(internalId);
     log(logLabel, `ERROR: spawn failed: ${err.message}`);
     safeSend(getMainWindow, "acp:exit", {
       _sessionId: internalId,
@@ -364,6 +366,7 @@ async function createAcpConnection(
   });
 
   proc.on("exit", (code) => {
+    stopUsageSession(internalId);
     // Guard: session may already be deleted by the "error" handler (ENOENT race)
     if (!acpSessions.has(internalId)) return;
     const entry = acpSessions.get(internalId)!;
@@ -767,6 +770,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     prompt.push({ type: "text", text: memory.text });
 
+    const usageTurnId = crypto.randomUUID();
+    beginUsageTurn(sessionId, usageTurnId);
     try {
       session.lastStderrError = undefined;
       const result = await session.connection.prompt({
@@ -789,6 +794,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       const surfacedError = msg === "Internal error" && session.lastStderrError ? session.lastStderrError : msg;
       reportError("ACP_PROMPT_ERR", err, { engine: "acp", sessionId, surfacedError });
       return { error: surfacedError };
+    } finally {
+      endUsageTurn(sessionId, usageTurnId);
     }
   });
 
@@ -807,6 +814,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   });
 
   ipcMain.handle("acp:stop", async (_event, sessionId: string) => {
+    stopUsageSession(sessionId);
     const session = acpSessions.get(sessionId);
     if (!session) {
       // Fallback: check if this is a pending start that hasn't completed yet
@@ -998,6 +1006,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 /** Stop all ACP sessions (called on app quit). Idempotent. */
 export function stopAll(): void {
   for (const [sessionId, entry] of acpSessions) {
+    stopUsageSession(sessionId);
     log("CLEANUP", `Stopping ACP session ${sessionId.slice(0, 8)}`);
     try { entry.process.kill(); } catch { /* already dead */ }
   }

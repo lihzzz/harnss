@@ -840,7 +840,7 @@ export const InputBar = memo(function InputBar({
       isSending);
 
   return (
-    <div className={`mx-auto w-full px-4 pb-4 ${BOTTOM_CHAT_MAX_WIDTH_CLASS}`}>
+    <div data-usage-chat className={`mx-auto w-full px-4 pb-4 ${BOTTOM_CHAT_MAX_WIDTH_CLASS}`}>
       <input
         ref={fileInputRef}
         type="file"

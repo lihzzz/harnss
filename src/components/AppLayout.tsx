@@ -4,6 +4,7 @@ import { PanelLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
+import { useUsageActivity } from "@/hooks/useUsageActivity";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { useGlassTheme } from "@/hooks/useGlassTheme";
 import { ThemeProvider } from "@/hooks/useTheme";
@@ -155,6 +156,8 @@ export function AppLayout() {
     handlePreviewFile,
     handleClosePreview,
   } = layoutUI;
+
+  useUsageActivity(welcomeCompleted && !showSettings);
 
   const [pendingSplitPaneSend, setPendingSplitPaneSend] = useState<{
     sessionId: string;
