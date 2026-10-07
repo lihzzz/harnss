@@ -25,7 +25,7 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
   const [devFillEnabled, setDevFillEnabled] = useState(false);
 
-  const { glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect } = useGlassOrchestrator({
+  const { glassSupported, glassActive, macLiquidGlassSupported, liveMacBackgroundEffect } = useGlassOrchestrator({
     macBackgroundEffect: input.macBackgroundEffect,
     setMacBackgroundEffect: input.setMacBackgroundEffect,
     transparency: input.transparency,
@@ -68,6 +68,7 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
     chatSearchOpen,
     setChatSearchOpen,
     glassSupported,
+    glassActive,
     macLiquidGlassSupported,
     liveMacBackgroundEffect,
     devFillEnabled,

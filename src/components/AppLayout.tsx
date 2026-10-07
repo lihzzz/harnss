@@ -103,7 +103,7 @@ export function AppLayout() {
     activeProjectId, activeProjectPath, currentBranch, activeSpaceProject, activeSpaceTerminalCwd, showThinking,
     hasProjects, isSpaceSwitching, showToolPicker, hasRightPanel,
     activeTodos, bgAgents, hasTodos, hasAgents, availableContextual,
-    glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled,
+    glassSupported, glassActive, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled,
     draftSpaceId,
   } = state;
   const inputHistory = useMemo(
@@ -126,13 +126,12 @@ export function AppLayout() {
   const glassOverlayStyle = useSpaceTheme(
     spaceManager.activeSpace,
     resolvedTheme,
-    glassSupported && settings.transparency,
+    glassActive,
     liveMacBackgroundEffect,
   );
   const spaceOpacity = spaceManager.activeSpace?.color.opacity ?? 1;
   const glassTheme = useGlassTheme({
-    isGlassSupported: glassSupported,
-    transparency: settings.transparency,
+    isGlassActive: glassActive,
     resolvedTheme,
     liveMacBackgroundEffect,
     isIsland: settings.islandLayout,

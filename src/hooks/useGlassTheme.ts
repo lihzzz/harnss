@@ -12,8 +12,7 @@ import { useMemo } from "react";
 import { isMac } from "@/lib/utils";
 
 export interface GlassThemeInput {
-  isGlassSupported: boolean;
-  transparency: boolean;
+  isGlassActive: boolean;
   resolvedTheme: string;
   liveMacBackgroundEffect: string;
   isIsland: boolean;
@@ -33,7 +32,7 @@ export interface GlassThemeResult {
 
 export function useGlassTheme(input: GlassThemeInput): GlassThemeResult {
   return useMemo(() => {
-    const isGlassActive = input.isGlassSupported && input.transparency;
+    const isGlassActive = input.isGlassActive;
     const isLightGlass = isGlassActive && input.resolvedTheme !== "dark";
     const isNativeGlass = isGlassActive && isMac && input.liveMacBackgroundEffect === "liquid-glass";
     const isIsland = input.isIsland;
@@ -72,8 +71,7 @@ export function useGlassTheme(input: GlassThemeInput): GlassThemeResult {
       bottomFadeBackground,
     };
   }, [
-    input.isGlassSupported,
-    input.transparency,
+    input.isGlassActive,
     input.resolvedTheme,
     input.liveMacBackgroundEffect,
     input.isIsland,

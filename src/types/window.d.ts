@@ -27,6 +27,7 @@ import type { CollaborationMode } from "./codex-protocol/CollaborationMode";
 import type { SkillsListEntry } from "./codex-protocol/v2/SkillsListEntry";
 import type { AppInfo } from "./codex-protocol/v2/AppInfo";
 import type { CodexFingerprintProbeResult } from "./codex-fingerprint";
+import type { BackgroundEffectState } from "@shared/types/background-effect";
 import type { SessionMeta as SessionListItem } from "@shared/lib/session-persistence";
 
 /** Standard IPC result envelope — most IPC calls return this shape. */
@@ -41,6 +42,9 @@ declare global {
   interface Window {
     claude: {
       getGlassSupported: () => Promise<boolean>;
+      getBackgroundEffect: () => Promise<BackgroundEffectState>;
+      setTransparency: (enabled: boolean) => Promise<BackgroundEffectState>;
+      onBackgroundEffectChanged: (callback: (state: BackgroundEffectState) => void) => () => void;
       getMacBackgroundEffectSupport: () => Promise<{ liquidGlass: boolean; vibrancy: boolean }>;
       setThemeSource: (themeSource: ThemeOption) => void;
       setMacBackgroundEffect: (effect: MacBackgroundEffect) => void;

@@ -13,7 +13,7 @@ import {
   validateThemePreset,
   type ThemePreset,
 } from "@/themes/theme-preset";
-import { isMac } from "@/lib/utils";
+import { isMac, isWindows } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import type { TranslationKey } from "@/lib/i18n";
 
@@ -518,24 +518,26 @@ export const AppearanceSettings = memo(function AppearanceSettings({
           {/* ── Transparency section ── */}
           <SettingsSection icon={Blend} label={t("settingsTransparency")}>
             <SettingRow
-              label={isMac ? t("settingsWindowBackgroundEffect") : t("settingsWindowTransparency")}
+              label={t("settingsWindowBackgroundEffect")}
               description={
-                isMac
+                !glassSupported
+                  ? t("settingsWindowTransparencyUnavailable")
+                  : isMac
                   ? (
                     macLiquidGlassSupported
                       ? t("settingsWindowBackgroundEffectDescription")
                       : t("settingsWindowBackgroundEffectUnavailable")
                   )
                   : (
-                    glassSupported
+                    isWindows
                     ? t("settingsWindowTransparencyDescription")
-                    : t("settingsWindowTransparencyUnavailable")
+                    : t("settingsLinuxBackgroundEffectDescription")
                   )
               }
             >
               {isMac ? (
                 <SettingsSelect
-                  value={effectiveMacBackgroundEffect}
+                  value={glassSupported ? effectiveMacBackgroundEffect : "off"}
                   onValueChange={onMacBackgroundEffectChange}
                   options={[
                     ...(macLiquidGlassSupported
@@ -545,10 +547,11 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                     { value: "off", label: "Blur Off" },
                   ]}
                   className="min-w-[9.5rem]"
+                  disabled={!glassSupported}
                 />
               ) : (
                 <Switch
-                  checked={transparency}
+                  checked={glassSupported && transparency}
                   onCheckedChange={onTransparencyChange}
                   disabled={!glassSupported}
                 />

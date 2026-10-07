@@ -174,6 +174,84 @@ html.glass-enabled #root {
   --sidebar-ring: oklch(0.64 0 0);
 }
 
+/* Linux: one bounded Gaussian blur layer over an in-app backdrop. CSS cannot
+   sample the desktop behind a native window on arbitrary Linux compositors. */
+html.gaussian-blur-enabled body {
+  isolation: isolate;
+  background: var(--background) !important;
+}
+
+.gaussian-blur-enabled body::before,
+.gaussian-blur-enabled body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gaussian-blur-enabled body::before {
+  z-index: -2;
+  background:
+    radial-gradient(ellipse at 12% 15%, oklch(0.65 max(var(--space-chroma), 0.035) var(--space-hue) / 0.36), transparent 65%),
+    linear-gradient(135deg, var(--background) 30%, var(--sidebar-accent) 65%, var(--background));
+}
+
+.gaussian-blur-enabled body::after {
+  z-index: -1;
+  backdrop-filter: blur(18px);
+}
+
+/* Policy fallback must override space tint (inline tokens) and custom presets
+   without changing either saved preference. All surface tokens stay opaque. */
+html.transparency-reduced {
+  --solid-background: #fff;
+  --solid-surface: #f2f2f2;
+  --solid-foreground: #111;
+  --solid-muted: #454545;
+  --solid-border: #767676;
+  --background: var(--solid-background) !important;
+  --foreground: var(--solid-foreground) !important;
+  --card: var(--solid-background) !important;
+  --card-foreground: var(--solid-foreground) !important;
+  --popover: var(--solid-background) !important;
+  --popover-foreground: var(--solid-foreground) !important;
+  --primary: var(--solid-foreground) !important;
+  --primary-foreground: var(--solid-background) !important;
+  --secondary: var(--solid-surface) !important;
+  --secondary-foreground: var(--solid-foreground) !important;
+  --accent: var(--solid-surface) !important;
+  --accent-foreground: var(--solid-foreground) !important;
+  --muted: var(--solid-surface) !important;
+  --muted-foreground: var(--solid-muted) !important;
+  --border: var(--solid-border) !important;
+  --input: var(--solid-border) !important;
+  --ring: var(--solid-foreground) !important;
+  --sidebar: var(--solid-surface) !important;
+  --sidebar-foreground: var(--solid-foreground) !important;
+  --sidebar-primary: var(--solid-foreground) !important;
+  --sidebar-primary-foreground: var(--solid-background) !important;
+  --sidebar-accent: var(--solid-background) !important;
+  --sidebar-accent-foreground: var(--solid-foreground) !important;
+  --sidebar-border: var(--solid-border) !important;
+  --sidebar-ring: var(--solid-foreground) !important;
+  --island-fill: var(--solid-background) !important;
+  --island-overlay-bg: transparent !important;
+}
+
+html.transparency-reduced.dark {
+  --solid-background: #141414;
+  --solid-surface: #202020;
+  --solid-foreground: #fff;
+  --solid-muted: #ccc;
+  --solid-border: #888;
+}
+
+.transparency-reduced *,
+.transparency-reduced *::before,
+.transparency-reduced *::after {
+  backdrop-filter: none !important;
+}
+
 /* ── Density modes ──
    Tailwind v4 derives all spacing utilities from --spacing at runtime
    (calc(var(--spacing) * N)), so scaling it compresses/expands padding and

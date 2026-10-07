@@ -87,14 +87,16 @@ export function SettingsSelect<T extends string>({
   onValueChange,
   options,
   className,
+  disabled,
 }: {
   value: T;
   onValueChange: (value: T) => void;
   options: Array<{ value: T; label: string }>;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
-    <Select value={value} onValueChange={(v) => onValueChange(v as T)}>
+    <Select value={value} onValueChange={(v) => onValueChange(v as T)} disabled={disabled}>
       <SelectTrigger size="sm" className={`text-foreground/80 ${className ?? ""}`}>
         <SelectValue />
       </SelectTrigger>

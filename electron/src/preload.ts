@@ -1,9 +1,13 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+import type { BackgroundEffectState } from "@shared/types/background-effect";
+import { applyBackgroundEffectClasses } from "@shared/lib/background-effect-classes";
 
 interface PreloadDocument {
+  addEventListener: (type: string, listener: () => void, options: { once: boolean }) => void;
   documentElement: {
     classList: {
       add: (token: string) => void;
+      toggle: (token: string, force: boolean) => boolean;
     };
   };
 }
@@ -27,6 +31,19 @@ function readStoredThemeSource(storage: PreloadStorage | undefined): ThemeSource
     : "dark";
 }
 
+function readStoredTransparency(storage: PreloadStorage | undefined): boolean {
+  try {
+    const persisted: unknown = JSON.parse(storage?.getItem("harnss-settings-store") ?? "null");
+    if (persisted && typeof persisted === "object" && "state" in persisted) {
+      const state = persisted.state;
+      if (state && typeof state === "object" && "transparency" in state && typeof state.transparency === "boolean") {
+        return state.transparency;
+      }
+    }
+  } catch { /* Invalid persisted JSON: fall back to the legacy preference. */ }
+  return storage?.getItem("harnss-transparency") !== "false";
+}
+
 // Early setup wrapped in try/catch so contextBridge.exposeInMainWorld always runs
 // even if DOM isn't ready or something else fails above it.
 try {
@@ -34,15 +51,23 @@ try {
   const root = globals.document?.documentElement;
   const themeSource = readStoredThemeSource(globals.localStorage);
 
-  // Apply platform + glass classes as early as possible (before React mounts).
-  // On Windows, glass support does not mean the user has transparency enabled.
+  // Start opaque; expose transparent surfaces only after main confirms the material.
   root?.classList.add(`platform-${process.platform}`);
   ipcRenderer.send("app:set-theme-source", themeSource);
-  const transparencyEnabled = (globals.localStorage?.getItem("harnss-transparency") ?? null) !== "false";
-  const canUseTransparentWindow = process.platform === "darwin" || process.platform === "win32";
-  if (canUseTransparentWindow && transparencyEnabled) {
-    root?.classList.add("glass-enabled");
-  }
+  let latestEffect: BackgroundEffectState | undefined;
+  const applyEffect = (state: BackgroundEffectState) => {
+    latestEffect = state;
+    const classes = globals.document?.documentElement?.classList;
+    if (classes) applyBackgroundEffectClasses(classes, state);
+  };
+  globals.document?.addEventListener("DOMContentLoaded", () => {
+    globals.document?.documentElement?.classList.add(`platform-${process.platform}`);
+    if (latestEffect) applyEffect(latestEffect);
+  }, { once: true });
+  ipcRenderer.on("app:background-effect-changed", (_event, state: BackgroundEffectState) => applyEffect(state));
+  void ipcRenderer.invoke("app:set-transparency", readStoredTransparency(globals.localStorage))
+    .then(applyEffect)
+    .catch((error) => console.error("[preload] background effect setup failed:", error));
 
   // Push stored theme to main process early so glass appearance is correct
   // before React mounts. Default to "dark" to match useSettings, which falls
@@ -59,6 +84,13 @@ try {
 
 contextBridge.exposeInMainWorld("claude", {
   getGlassSupported: () => ipcRenderer.invoke("app:getGlassSupported"),
+  getBackgroundEffect: () => ipcRenderer.invoke("app:get-background-effect"),
+  setTransparency: (enabled: boolean) => ipcRenderer.invoke("app:set-transparency", enabled),
+  onBackgroundEffectChanged: (callback: (state: BackgroundEffectState) => void) => {
+    const listener = (_event: IpcRendererEvent, state: BackgroundEffectState) => callback(state);
+    ipcRenderer.on("app:background-effect-changed", listener);
+    return () => ipcRenderer.removeListener("app:background-effect-changed", listener);
+  },
   getMacBackgroundEffectSupport: () => ipcRenderer.invoke("app:get-mac-background-effect-support"),
   setThemeSource: (themeSource: ThemeSource) => ipcRenderer.send("app:set-theme-source", themeSource),
   setMacBackgroundEffect: (effect: MacBackgroundEffect) => ipcRenderer.send("app:set-mac-background-effect", effect),

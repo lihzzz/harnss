@@ -22,7 +22,8 @@ if (process.platform !== "win32") {
 import { log } from "./lib/logger";
 import { reportError } from "./lib/error-utils";
 import { migrateFromOpenAcpUi } from "./lib/migration";
-import { glassEnabled, applyGlass, setGlassTint } from "./lib/glass";
+import { glassEnabled, setGlassTint } from "./lib/glass";
+import { createBackgroundEffects } from "./lib/background-effects";
 import { getAppSettings } from "./lib/app-settings";
 import { initPostHog, shutdownPostHog, reinitPostHog, captureEvent } from "./lib/posthog";
 import { getAcpAnalyticsPropertiesForSession } from "./ipc/acp-sessions";
@@ -53,7 +54,6 @@ import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./li
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // force GPU raster for all content
 app.commandLine.appendSwitch("enable-zero-copy"); // avoid CPU→GPU memory copies for tiles
-app.commandLine.appendSwitch("ignore-gpu-blocklist"); // use GPU even on blocklisted hardware
 app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization"); // off-main-thread canvas
 
 // --- Liquid Glass command-line switches ---
@@ -63,13 +63,12 @@ if (glassEnabled) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+const backgroundEffects = createBackgroundEffects(() => mainWindow);
 
 import type { ThemeOption, MacBackgroundEffect as SharedMacBackgroundEffect } from "@shared/types/settings";
 
-/** In main process, "off" is never applied — it resolves to vibrancy or liquid-glass before use. */
+/** Transparency is tracked separately from the preferred macOS material. */
 type MacBackgroundEffect = Exclude<SharedMacBackgroundEffect, "off">;
-
-let pendingMacBackgroundEffect: MacBackgroundEffect = "liquid-glass";
 
 function normalizeThemeSource(value: unknown): ThemeOption {
   return value === "light" || value === "dark" || value === "system"
@@ -86,36 +85,6 @@ function getMacBackgroundEffectSupport(): { liquidGlass: boolean; vibrancy: bool
     liquidGlass: glassEnabled,
     vibrancy: process.platform === "darwin",
   };
-}
-
-function resolveMacBackgroundEffect(effect: MacBackgroundEffect): MacBackgroundEffect {
-  const support = getMacBackgroundEffectSupport();
-  if (effect === "liquid-glass" && !support.liquidGlass) {
-    return "vibrancy";
-  }
-  return effect;
-}
-
-function applyMacBackgroundEffect(effect: MacBackgroundEffect): void {
-  if (process.platform !== "darwin" || !mainWindow || mainWindow.isDestroyed()) return;
-
-  const resolved = resolveMacBackgroundEffect(effect);
-  pendingMacBackgroundEffect = resolved;
-
-  if (resolved === "vibrancy") {
-    mainWindow.setVibrancy("under-window", { animationDuration: 120 });
-    return;
-  }
-
-  mainWindow.setVibrancy(null);
-  if (!glassEnabled || mainWindow.webContents.isLoadingMainFrame()) return;
-
-  const glassId = applyGlass(mainWindow.getNativeWindowHandle());
-  if (glassId === -1) {
-    log("GLASS", "addView returned -1 — native addon failed, glass will not be visible");
-  } else {
-    log("GLASS", `Liquid glass applied, viewId=${glassId}`);
-  }
 }
 
 function getMainWindow(): BrowserWindow | null {
@@ -170,11 +139,6 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
 }
 
 function createWindow(): void {
-  const initialMacBackgroundEffect: MacBackgroundEffect = resolveMacBackgroundEffect(pendingMacBackgroundEffect);
-  if (process.platform === "darwin") {
-    pendingMacBackgroundEffect = initialMacBackgroundEffect;
-  }
-
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     show: false,
     width: 1200,
@@ -197,34 +161,27 @@ function createWindow(): void {
 
   if (process.platform === "darwin") {
     windowOptions.titleBarStyle = "hidden";
-    windowOptions.transparent = true;
-    windowOptions.backgroundColor = "#00000000";
+    const fallback = backgroundEffects.getState().fallbackReason;
+    windowOptions.transparent = fallback !== "low-memory" && fallback !== "low-cpu";
+    windowOptions.backgroundColor = windowOptions.transparent ? "#00000000" : "#141414";
     windowOptions.trafficLightPosition = { x: 19, y: 19 };
   } else if (process.platform === "win32") {
-    // Windows: native Electron backgroundMaterial handles DWM mica/acrylic.
-    // WebContents is automatically transparent (no transparent: true needed),
-    // and the native title bar stays intact.
+    // Enable Mica Alt only after the hardware policy and saved preference are known.
     windowOptions.autoHideMenuBar = true;
-    windowOptions.backgroundMaterial = "mica";
+    windowOptions.backgroundColor = "#141414";
   } else {
-    // macOS without glass / Linux
+    // Linux uses an in-app Gaussian backdrop, so no transparent native window is needed.
     windowOptions.titleBarStyle = "hiddenInset";
     windowOptions.trafficLightPosition = { x: 19, y: 19 };
     windowOptions.backgroundColor = "#141414";
   }
 
   mainWindow = new BrowserWindow(windowOptions);
-  if (process.platform === "darwin") applyMacBackgroundEffect(initialMacBackgroundEffect);
+  backgroundEffects.refresh();
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
   });
-
-  if (process.platform === "darwin") {
-    mainWindow.on("focus", () => {
-      applyMacBackgroundEffect(pendingMacBackgroundEffect);
-    });
-  }
 
   contextMenu({
     window: mainWindow,
@@ -249,16 +206,18 @@ function createWindow(): void {
     void shell.openExternal(url);
   });
 
-  if (process.platform === "darwin") {
-    mainWindow.webContents.once("did-finish-load", () => {
-      applyMacBackgroundEffect(pendingMacBackgroundEffect);
-    });
-  }
+  mainWindow.webContents.on("did-finish-load", () => backgroundEffects.refresh());
 }
 
 // Renderer uses this to decide whether the transparency toggle is available.
 ipcMain.handle("app:getGlassSupported", () => {
-  return process.platform === "darwin" || process.platform === "win32";
+  return backgroundEffects.getState().availableEffect !== null;
+});
+
+ipcMain.handle("app:get-background-effect", () => backgroundEffects.getState());
+ipcMain.handle("app:set-transparency", (event, enabled: unknown) => {
+  if (event.sender !== mainWindow?.webContents || typeof enabled !== "boolean") return backgroundEffects.getState();
+  return backgroundEffects.setTransparency(enabled);
 });
 
 ipcMain.handle("app:get-mac-background-effect-support", () => {
@@ -273,9 +232,7 @@ ipcMain.on("app:set-theme-source", (_event, themeSource: unknown) => {
 });
 
 ipcMain.on("app:set-mac-background-effect", (_event, effect: unknown) => {
-  const normalized = normalizeMacBackgroundEffect(effect);
-  pendingMacBackgroundEffect = normalized;
-  applyMacBackgroundEffect(normalized);
+  backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(effect));
 });
 
 ipcMain.handle("app:relaunch", () => {
@@ -348,7 +305,7 @@ ipcMain.on("app:set-min-width", (_event, minWidth: number) => {
 // The C++ addon auto-cleans previous views in a single dispatch_sync block.
 const GLASS_TINT_RE = /^#[0-9a-fA-F]{8}$/;
 ipcMain.on("glass:set-tint-color", (_event, tintColor: string | null) => {
-  if (!glassEnabled) return;
+  if (backgroundEffects.getState().effect !== "liquid-glass") return;
   if (tintColor !== null && (typeof tintColor !== "string" || !GLASS_TINT_RE.test(tintColor))) {
     log("GLASS", `Ignoring invalid tintColor: ${String(tintColor)}`);
     return;
@@ -390,6 +347,9 @@ skillsIpc.register();
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;
 onSettingsChanged((settings) => {
+  if (process.platform === "darwin") {
+    backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(settings.macBackgroundEffect));
+  }
   if (lastAnalyticsEnabled !== undefined && settings.analyticsEnabled !== lastAnalyticsEnabled) {
     lastAnalyticsEnabled = settings.analyticsEnabled;
     reinitPostHog().catch((err) => {
@@ -501,9 +461,7 @@ app.whenReady().then(() => {
   // Migrate data from old "OpenACP UI" app directory before anything reads it
   migrateFromOpenAcpUi();
   if (process.platform === "darwin") {
-    pendingMacBackgroundEffect = resolveMacBackgroundEffect(
-      normalizeMacBackgroundEffect(getAppSettings().macBackgroundEffect),
-    );
+    backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(getAppSettings().macBackgroundEffect));
   }
 
   createWindow();
