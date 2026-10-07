@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useState, startTransition, memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useState, startTransition, memo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Loader2, Minus, WifiOff } from "lucide-react";
 import type { UIMessage } from "@/types";
@@ -25,6 +25,8 @@ import {
   shouldUnlockBottomLock,
 } from "@/lib/chat/scroll";
 import { estimateRowHeight } from "@/lib/chat/virtualization";
+import { useDensityFactor } from "@/hooks/useDensity";
+import { useMotionLevel } from "@/hooks/useMotionLevel";
 import { CHAT_ROW_CLASS } from "@/components/lib/chat-layout";
 import { useSettingsStore } from "@/stores/settings-store";
 import { toast } from "sonner";
@@ -44,6 +46,24 @@ const EMPTY_TOOL_GROUP_INFO: ToolGroupInfo = {
 };
 const EMPTY_STRING_SET: Set<string> = new Set();
 const PROCESSING_ROW: RowDescriptor = { kind: "processing" };
+
+/**
+ * Entrance animation wrapper for newly appended chat rows.
+ * Always renders the same motion.div so the tree shape stays stable when the
+ * `animate` flag flips false after the row has been seen — initial={false}
+ * simply skips the entrance for history/hydrated rows.
+ */
+function RowEntrance({ animate, children }: { animate: boolean; children: ReactNode }) {
+  return (
+    <motion.div
+      initial={animate ? { opacity: 0, y: 14 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 260, damping: 30 }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 const CHAT_TOP_PADDING_PX = 56;
 const CHAT_BOTTOM_PADDING_PX = 144;
 const CHAT_EXTRA_BOTTOM_PADDING_PX = 280;
@@ -643,6 +663,20 @@ function ChatViewContent({
     turnSummaryByEndIndex,
   ]);
 
+  // ── Row entrance animation: only rows appended after the initial commit
+  // animate in. History, hydrated batches, and session replays are pre-seeded
+  // as "seen" so they render statically. Remounting (session switch) reseeds.
+  const motionLevel = useMotionLevel();
+  const seenRowKeysRef = useRef<Set<string> | null>(null);
+  if (seenRowKeysRef.current === null) {
+    seenRowKeysRef.current = new Set(rows.map(getRowKey));
+  }
+  useEffect(() => {
+    const seen = seenRowKeysRef.current;
+    if (!seen) return;
+    for (const row of rows) seen.add(getRowKey(row));
+  }, [rows]);
+
   // ── Progressive rendering: render bottom rows immediately, hydrate upward in background ──
   // `hydratedFrom` is the index from which rows are fully rendered.
   // Rows above hydratedFrom are represented by a single spacer div (not individual placeholders).
@@ -657,13 +691,14 @@ function ChatViewContent({
   const effectiveHydratedFrom = Math.min(hydratedFrom, Math.max(0, rows.length - INITIAL_RENDER_ROWS));
 
   // Single spacer height for all unhydrated rows — replaces 500 placeholder divs with 1
+  const densityFactor = useDensityFactor();
   const unhydratedHeight = useMemo(() => {
     let h = 0;
     for (let i = 0; i < effectiveHydratedFrom; i++) {
-      h += estimateRowHeight(rows[i]);
+      h += estimateRowHeight(rows[i], densityFactor);
     }
     return h;
-  }, [rows, effectiveHydratedFrom]);
+  }, [rows, effectiveHydratedFrom, densityFactor]);
 
   // Progressively hydrate older rows in background batches
   useEffect(() => {
@@ -912,36 +947,42 @@ function ChatViewContent({
             <div style={{ height: `${unhydratedHeight}px` }} aria-hidden />
           )}
           {/* Only render hydrated rows — initial mount: ~20 divs instead of 500 */}
-          {rows.slice(effectiveHydratedFrom).map((row) => (
+          {rows.slice(effectiveHydratedFrom).map((row) => {
             // content-visibility lets the browser skip layout+paint for offscreen
             // rows; contain-intrinsic-size seeds an estimate until first render
             // (`auto` retains the measured size afterwards).
-            <div
-              key={getRowKey(row)}
-              className="flow-root"
-              style={{
-                contentVisibility: "auto",
-                containIntrinsicSize: `auto ${estimateRowHeight(row)}px`,
-              }}
-            >
-              <ChatMessageRow
-                row={row}
-                showThinking={showThinking}
-                animatingGroupKeys={animatingGroupKeys}
-                assistantTurnDividerLabels={assistantTurnDividerLabels}
-                continuationIds={continuationIds}
-                sendNextId={sendNextId}
-                onRevert={onRevert}
-                onFullRevert={onFullRevert}
-                onSendQueuedNow={onSendQueuedNow}
-                onUnqueueQueuedMessage={onUnqueueQueuedMessage}
-                onRetry={onRetry}
-                autoRetry={autoRetry}
-                onCancelAutoRetry={onCancelAutoRetry}
-                onRemember={onRemember ?? rememberMessage}
-              />
-            </div>
-          ))}
+            const rowKey = getRowKey(row);
+            const isNewRow = seenRowKeysRef.current?.has(rowKey) === false;
+            return (
+              <div
+                key={rowKey}
+                className="flow-root"
+                style={{
+                  contentVisibility: "auto",
+                  containIntrinsicSize: `auto ${estimateRowHeight(row, densityFactor)}px`,
+                }}
+              >
+                <RowEntrance animate={isNewRow && motionLevel === "full"}>
+                  <ChatMessageRow
+                    row={row}
+                    showThinking={showThinking}
+                    animatingGroupKeys={animatingGroupKeys}
+                    assistantTurnDividerLabels={assistantTurnDividerLabels}
+                    continuationIds={continuationIds}
+                    sendNextId={sendNextId}
+                    onRevert={onRevert}
+                    onFullRevert={onFullRevert}
+                    onSendQueuedNow={onSendQueuedNow}
+                    onUnqueueQueuedMessage={onUnqueueQueuedMessage}
+                    onRetry={onRetry}
+                    autoRetry={autoRetry}
+                    onCancelAutoRetry={onCancelAutoRetry}
+                    onRemember={onRemember ?? rememberMessage}
+                  />
+                </RowEntrance>
+              </div>
+            );
+          })}
         </div>
       </div>
     </ChatUiStateProvider>

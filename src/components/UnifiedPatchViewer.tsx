@@ -10,9 +10,9 @@ interface UnifiedPatchViewerProps {
 const MAX_PATCH_LINES = 100;
 
 function getLineClass(line: string): string {
-  if (line.startsWith("@@")) return "text-blue-700/80 dark:text-blue-400/60";
-  if (line.startsWith("+")) return "text-emerald-800/90 dark:text-emerald-400/75 bg-emerald-500/10 dark:bg-transparent";
-  if (line.startsWith("-")) return "text-red-800/90 dark:text-red-400/75 bg-red-500/10 dark:bg-transparent";
+  if (line.startsWith("@@")) return "text-(--diff-note-fg)";
+  if (line.startsWith("+")) return "text-(--diff-add-fg) bg-(--diff-add-bg)";
+  if (line.startsWith("-")) return "text-(--diff-remove-fg) bg-(--diff-remove-bg)";
   if (
     line.startsWith("diff --git ")
     || line.startsWith("index ")

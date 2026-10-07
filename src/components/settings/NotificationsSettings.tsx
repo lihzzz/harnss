@@ -1,7 +1,11 @@
 import { memo, useState, useCallback, useEffect } from "react";
-import { Bell, Volume2, MonitorSmartphone } from "lucide-react";
+import { Bell, Volume2, MonitorSmartphone, AudioWaveform } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
+import { useSettingsStore } from "@/stores/settings-store";
+import type { AmbientSoundMode } from "@/lib/audio/ambient-player";
 import type {
   NotificationTrigger,
   NotificationEventSettings,
@@ -59,6 +63,12 @@ export const NotificationsSettings = memo(function NotificationsSettings({
   onUpdateAppSettings,
 }: NotificationsSettingsProps) {
   const { t } = useI18n();
+  const ambientSound = useSettingsStore((s) => s.ambientSound);
+  const ambientVolume = useSettingsStore((s) => s.ambientVolume);
+  const streamTickEnabled = useSettingsStore((s) => s.streamTickEnabled);
+  const setAmbientSound = useSettingsStore((s) => s.setAmbientSound);
+  const setAmbientVolume = useSettingsStore((s) => s.setAmbientVolume);
+  const setStreamTickEnabled = useSettingsStore((s) => s.setStreamTickEnabled);
   const [settings, setSettings] = useState<NotificationSettings>({
     exitPlanMode: { osNotification: "unfocused", sound: "always" },
     permissions: { osNotification: "unfocused", sound: "unfocused" },
@@ -134,6 +144,54 @@ export const NotificationsSettings = memo(function NotificationsSettings({
               </div>
             </SettingsSection>
           ))}
+
+          {/* ── Ambient sound section ── */}
+          <SettingsSection icon={AudioWaveform} label={t("settingsAmbientSound")}>
+            <p className="mb-2 text-xs text-muted-foreground">
+              {t("settingsAmbientSoundDescription")}
+            </p>
+            <div className="flex flex-col">
+              <SettingRow label={t("settingsAmbientSoundMode")}>
+                <SettingsSelect
+                  value={ambientSound}
+                  onValueChange={(v) => setAmbientSound(v as AmbientSoundMode)}
+                  options={[
+                    { value: "off", label: t("ambientOff") },
+                    { value: "white", label: t("ambientWhite") },
+                    { value: "pink", label: t("ambientPink") },
+                    { value: "rain", label: t("ambientRain") },
+                  ]}
+                />
+              </SettingRow>
+
+              {ambientSound !== "off" && (
+                <SettingRow label={t("settingsAmbientVolume")}>
+                  <div className="flex w-40 items-center gap-2">
+                    <Slider
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={[Math.round(ambientVolume * 100)]}
+                      onValueChange={([val]) => setAmbientVolume(val / 100)}
+                    />
+                    <span className="w-8 text-end text-xs tabular-nums text-muted-foreground">
+                      {Math.round(ambientVolume * 100)}%
+                    </span>
+                  </div>
+                </SettingRow>
+              )}
+
+              <SettingRow
+                label={t("settingsStreamTick")}
+                description={t("settingsStreamTickDescription")}
+              >
+                <Switch
+                  checked={streamTickEnabled}
+                  onCheckedChange={setStreamTickEnabled}
+                />
+              </SettingRow>
+            </div>
+          </SettingsSection>
         </div>
       </ScrollArea>
     </div>

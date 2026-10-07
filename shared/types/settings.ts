@@ -18,6 +18,8 @@ export type ThemeOption = "light" | "dark" | "system";
 export type ThemePreference = ThemeOption | "auto";
 /** UI information density. "comfortable" is the default layout. */
 export type DensityOption = "compact" | "comfortable" | "loose";
+/** UI motion level. "auto" follows the OS prefers-reduced-motion setting. */
+export type MotionLevelOption = "auto" | "full" | "reduced";
 export type MacBackgroundEffect = "liquid-glass" | "vibrancy" | "off";
 export type CodexBinarySource = "auto" | "managed" | "custom";
 export type ClaudeBinarySource = "auto" | "managed" | "custom";

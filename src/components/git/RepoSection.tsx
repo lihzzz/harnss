@@ -146,8 +146,8 @@ export function RepoSection({ repoState, git, collapsed: collapsedProp, onToggle
         )}
         {!collapsed && (diffStat.additions > 0 || diffStat.deletions > 0) && (
           <span className="ms-auto flex items-center gap-1 text-[10px] font-medium tabular-nums">
-            {diffStat.additions > 0 && <span className="text-emerald-600/80 dark:text-emerald-300/80">+{diffStat.additions}</span>}
-            {diffStat.deletions > 0 && <span className="text-red-600/80 dark:text-red-300/80">-{diffStat.deletions}</span>}
+            {diffStat.additions > 0 && <span className="text-(--diff-add-fg)">+{diffStat.additions}</span>}
+            {diffStat.deletions > 0 && <span className="text-(--diff-remove-fg)">-{diffStat.deletions}</span>}
           </span>
         )}
         {collapsed && status?.branch && (

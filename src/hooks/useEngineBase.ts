@@ -9,6 +9,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { UIMessage, SessionInfo, PermissionRequest, ContextUsage, BackgroundSessionSnapshot } from "@/types";
+import { streamTick } from "@/lib/audio/stream-tick";
 
 export interface UseEngineBaseOptions {
   sessionId: string | null;
@@ -107,6 +108,8 @@ export function useEngineBase({
     rafId.current = requestAnimationFrame(() => {
       pendingFlush.current = false;
       flushFn();
+      // Opt-in stream tick; self-throttled and silent when disabled/hidden.
+      streamTick();
     });
   }, []);
 

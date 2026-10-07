@@ -1,7 +1,10 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { ToolId } from "@/types/tools";
-import type { AcpPermissionBehavior, ClaudeEffort, EngineId, Language, MacBackgroundEffect, ThemeOption } from "@/types";
+import type { AcpPermissionBehavior, ClaudeEffort, DensityOption, EngineId, Language, MacBackgroundEffect, MotionLevelOption, ThemePreference } from "@/types";
+import { DEFAULT_AUTO_DAY_START, DEFAULT_AUTO_NIGHT_START, normalizeHour } from "@/lib/theme-schedule";
+import { DEFAULT_THEME_ID, validateThemePreset, type ThemePreset } from "@/themes/theme-preset";
+import type { AmbientSoundMode } from "@/lib/audio/ambient-player";
 
 // ── Constants ──
 
@@ -97,7 +100,27 @@ export interface ProjectSettings {
 /** Global settings state (not per-project) */
 interface GlobalSettingsState {
   language: Language;
-  theme: ThemeOption;
+  theme: ThemePreference;
+  /** Hour of day (0-23) when auto theme switches to light */
+  themeAutoDayStart: number;
+  /** Hour of day (0-23) when auto theme switches to dark */
+  themeAutoNightStart: number;
+  /** UI information density */
+  density: DensityOption;
+  /** Colorblind-safe diff/chart palette (blue/orange instead of red/green) */
+  colorblindSafe: boolean;
+  /** Active theme preset id ("default", a builtin id, or a custom theme id) */
+  activeThemeId: string;
+  /** User-imported custom theme presets */
+  customThemes: ThemePreset[];
+  /** UI motion level ("auto" follows OS prefers-reduced-motion) */
+  motionLevel: MotionLevelOption;
+  /** Procedural ambient sound loop ("off" disables) */
+  ambientSound: AmbientSoundMode;
+  /** Ambient sound volume 0-1 */
+  ambientVolume: number;
+  /** Soft tick sound while the active session streams output */
+  streamTickEnabled: boolean;
   islandLayout: boolean;
   islandShine: boolean;
   /** The native macOS background material (liquid-glass or vibrancy) — never "off" */
@@ -127,7 +150,18 @@ interface GlobalSettingsState {
 interface SettingsActions {
   // Global setters
   setLanguage: (language: Language) => void;
-  setTheme: (t: ThemeOption) => void;
+  setTheme: (t: ThemePreference) => void;
+  setThemeAutoDayStart: (hour: number) => void;
+  setThemeAutoNightStart: (hour: number) => void;
+  setDensity: (density: DensityOption) => void;
+  setColorblindSafe: (on: boolean) => void;
+  setActiveThemeId: (id: string) => void;
+  addCustomTheme: (preset: ThemePreset) => void;
+  removeCustomTheme: (id: string) => void;
+  setMotionLevel: (level: MotionLevelOption) => void;
+  setAmbientSound: (mode: AmbientSoundMode) => void;
+  setAmbientVolume: (volume: number) => void;
+  setStreamTickEnabled: (on: boolean) => void;
   setIslandLayout: (enabled: boolean) => void;
   setIslandShine: (enabled: boolean) => void;
   setMacBackgroundEffect: (effect: MacBackgroundEffect) => void;
@@ -284,7 +318,8 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
   const languageRaw = localStorage.getItem("harnss-language");
   const language: Language = languageRaw === "en-US" ? "en-US" : "zh-CN";
   const themeRaw = localStorage.getItem("harnss-theme");
-  const theme: ThemeOption = (themeRaw === "light" || themeRaw === "dark" || themeRaw === "system") ? themeRaw : "dark";
+  const theme: ThemePreference =
+    (themeRaw === "light" || themeRaw === "dark" || themeRaw === "system" || themeRaw === "auto") ? themeRaw : "dark";
 
   // Plan mode with legacy migration
   let planMode = DEFAULT_PLAN_MODE;
@@ -318,6 +353,16 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
   return {
     language,
     theme,
+    themeAutoDayStart: DEFAULT_AUTO_DAY_START,
+    themeAutoNightStart: DEFAULT_AUTO_NIGHT_START,
+    density: "comfortable",
+    colorblindSafe: readLegacyBool("harnss-colorblind-safe", false),
+    activeThemeId: DEFAULT_THEME_ID,
+    customThemes: [],
+    motionLevel: "auto",
+    ambientSound: "off",
+    ambientVolume: 0.3,
+    streamTickEnabled: false,
     islandLayout: readLegacyBool("harnss-island-layout", true),
     islandShine: readLegacyBool("harnss-island-shine", true),
     macNativeBackgroundEffect: "liquid-glass",
@@ -414,6 +459,27 @@ function validateToolOrder(stored: ToolId[]): ToolId[] {
   return result;
 }
 
+/** Drop malformed custom themes from persisted state (storage corruption guard). */
+function sanitizePersistedThemes(value: unknown): ThemePreset[] {
+  if (!Array.isArray(value)) return [];
+  const result: ThemePreset[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const candidate = entry as Partial<ThemePreset>;
+    if (typeof candidate.id !== "string" || candidate.id.length === 0) continue;
+    const validation = validateThemePreset({
+      "harnss-theme": 1,
+      name: candidate.name,
+      light: candidate.light,
+      dark: candidate.dark,
+    });
+    if (validation.ok) {
+      result.push({ id: candidate.id, name: validation.preset.name, light: validation.preset.light, dark: validation.preset.dark });
+    }
+  }
+  return result;
+}
+
 function normalizePersistedProjects(
   projects: Record<string, ProjectSettings>,
 ): Record<string, ProjectSettings> {
@@ -449,6 +515,16 @@ export const useSettingsStore = create<SettingsStore>()(
       // ── Global state defaults ──
       language: "zh-CN",
       theme: "dark",
+      themeAutoDayStart: DEFAULT_AUTO_DAY_START,
+      themeAutoNightStart: DEFAULT_AUTO_NIGHT_START,
+      density: "comfortable",
+      colorblindSafe: false,
+      activeThemeId: DEFAULT_THEME_ID,
+      customThemes: [],
+      motionLevel: "auto",
+      ambientSound: "off" as AmbientSoundMode,
+      ambientVolume: 0.3,
+      streamTickEnabled: false,
       islandLayout: true,
       islandShine: true,
       macNativeBackgroundEffect: "liquid-glass",
@@ -476,6 +552,38 @@ export const useSettingsStore = create<SettingsStore>()(
       setLanguage: (language) => set({ language }),
 
       setTheme: (t) => set({ theme: t }),
+
+      setThemeAutoDayStart: (hour) =>
+        set((state) => ({ themeAutoDayStart: normalizeHour(hour, state.themeAutoDayStart) })),
+
+      setThemeAutoNightStart: (hour) =>
+        set((state) => ({ themeAutoNightStart: normalizeHour(hour, state.themeAutoNightStart) })),
+
+      setDensity: (density) => set({ density }),
+
+      setColorblindSafe: (on) => set({ colorblindSafe: on }),
+
+      setActiveThemeId: (id) => set({ activeThemeId: id }),
+
+      addCustomTheme: (preset) =>
+        set((state) => ({
+          customThemes: [...state.customThemes.filter((t) => t.id !== preset.id), preset],
+        })),
+
+      removeCustomTheme: (id) =>
+        set((state) => ({
+          customThemes: state.customThemes.filter((t) => t.id !== id),
+          activeThemeId: state.activeThemeId === id ? DEFAULT_THEME_ID : state.activeThemeId,
+        })),
+
+      setMotionLevel: (level) => set({ motionLevel: level }),
+
+      setAmbientSound: (mode) => set({ ambientSound: mode }),
+
+      setAmbientVolume: (volume) =>
+        set({ ambientVolume: Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.3 }),
+
+      setStreamTickEnabled: (on) => set({ streamTickEnabled: on }),
 
       setIslandLayout: (enabled) => set({ islandLayout: enabled }),
 
@@ -652,6 +760,16 @@ export const useSettingsStore = create<SettingsStore>()(
         // Global state
         language: state.language,
         theme: state.theme,
+        themeAutoDayStart: state.themeAutoDayStart,
+        themeAutoNightStart: state.themeAutoNightStart,
+        density: state.density,
+        colorblindSafe: state.colorblindSafe,
+        activeThemeId: state.activeThemeId,
+        customThemes: state.customThemes,
+        motionLevel: state.motionLevel,
+        ambientSound: state.ambientSound,
+        ambientVolume: state.ambientVolume,
+        streamTickEnabled: state.streamTickEnabled,
         islandLayout: state.islandLayout,
         islandShine: state.islandShine,
         macNativeBackgroundEffect: state.macNativeBackgroundEffect,
@@ -682,6 +800,9 @@ export const useSettingsStore = create<SettingsStore>()(
           ...current,
           ...incoming,
           language: incoming.language === "en-US" ? "en-US" : "zh-CN",
+          // Re-validate persisted custom themes; drop anything malformed.
+          customThemes: sanitizePersistedThemes(incoming.customThemes),
+          activeThemeId: typeof incoming.activeThemeId === "string" ? incoming.activeThemeId : DEFAULT_THEME_ID,
           // Ensure projects is always an object, never undefined
           projects: normalizePersistedProjects(incoming.projects ?? current.projects),
         };

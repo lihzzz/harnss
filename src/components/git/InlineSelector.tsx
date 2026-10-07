@@ -55,7 +55,7 @@ export function InlineSelector({
                 }`}
               >
                 {isSelected ? (
-                  <Check className="h-3 w-3 shrink-0 text-emerald-600/80 dark:text-emerald-300/80" />
+                  <Check className="h-3 w-3 shrink-0 text-(--diff-add-fg)" />
                 ) : (
                   <span className="h-3 w-3 shrink-0" />
                 )}

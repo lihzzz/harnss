@@ -6,6 +6,9 @@ import { useSpaceManager } from "@/hooks/useSpaceManager";
 import { useSettingsCompat as useSettings } from "@/hooks/useSettingsCompat";
 import { useTheme } from "@/hooks/useTheme";
 import { useDensity } from "@/hooks/useDensity";
+import { useColorblindMode } from "@/hooks/useColorblindMode";
+import { useThemePreset } from "@/hooks/useThemePreset";
+import { useAmbientSound } from "@/hooks/useAmbientSound";
 import { useSpaceTerminals } from "@/hooks/useSpaceTerminals";
 import { useAgentRegistry } from "@/hooks/useAgentRegistry";
 import { useAcpAgentAutoUpdate } from "@/hooks/useAcpAgentAutoUpdate";
@@ -46,6 +49,9 @@ export function useAppOrchestrator() {
   const settings = useSettings(settingsProjectId, settingsEngine);
   const resolvedTheme = useTheme(settings.theme);
   useDensity();
+  useColorblindMode();
+  useThemePreset();
+  useAmbientSound();
   const { agents, refresh: refreshAgents, saveAgent, deleteAgent } = useAgentRegistry();
   useAcpAgentAutoUpdate({ installedAgents: agents, refreshInstalledAgents: refreshAgents });
   // Engine is locked once a session is active (not draft) — null means free to switch

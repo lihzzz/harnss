@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ToolId } from "@/types/tools";
-import type { AcpPermissionBehavior, ClaudeEffort, EngineId, MacBackgroundEffect, ThemeOption } from "@/types";
+import type { AcpPermissionBehavior, ClaudeEffort, EngineId, MacBackgroundEffect, ThemePreference } from "@/types";
 
 // ── Helpers ──
 
@@ -95,8 +95,8 @@ const VALID_TOOL_IDS = new Set<ToolId>([
 
 export interface Settings {
   // Global
-  theme: ThemeOption;
-  setTheme: (t: ThemeOption) => void;
+  theme: ThemePreference;
+  setTheme: (t: ThemePreference) => void;
   islandLayout: boolean;
   setIslandLayout: (enabled: boolean) => void;
   islandShine: boolean;
@@ -263,12 +263,12 @@ export function useSettings(projectId: string | null, engine: EngineId = "claude
 
   // ── Global settings ──
 
-  const [theme, setThemeRaw] = useState<ThemeOption>(() => {
+  const [theme, setThemeRaw] = useState<ThemePreference>(() => {
     const stored = localStorage.getItem("harnss-theme");
-    if (stored === "light" || stored === "dark" || stored === "system") return stored;
+    if (stored === "light" || stored === "dark" || stored === "system" || stored === "auto") return stored;
     return "dark";
   });
-  const setTheme = useCallback((t: ThemeOption) => {
+  const setTheme = useCallback((t: ThemePreference) => {
     setThemeRaw(t);
     localStorage.setItem("harnss-theme", t);
   }, []);

@@ -5,6 +5,8 @@ import { useResolvedTheme } from "@/hooks/useTheme";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useChatIsScrolling } from "@/components/chat-ui-state";
 import { getMonacoLanguageFromPath, disableMonacoDiagnostics } from "@/lib/monaco";
+import { defineHarnssDiffThemes, harnssDiffThemeName } from "@/lib/diff/monaco-diff-theme";
+import { useSettingsStore } from "@/stores/settings-store";
 import { parseUnifiedDiffFromUnknown } from "@/lib/diff/unified-diff";
 
 const MonacoDiffEditor = lazy(() =>
@@ -375,6 +377,7 @@ export const DiffViewer = memo(function DiffViewer({
   );
   const [copied, setCopied] = useState(false);
   const resolvedTheme = useResolvedTheme();
+  const colorblindSafe = useSettingsStore((s) => s.colorblindSafe);
   const editorRef = useRef<MonacoDiffEditorLike | null>(null);
   const monacoRef = useRef<MonacoLike | null>(null);
   const measureFrameRef = useRef<number | null>(null);
@@ -645,9 +648,12 @@ export const DiffViewer = memo(function DiffViewer({
               modifiedModelPath={modelPaths.modified}
               keepCurrentOriginalModel
               keepCurrentModifiedModel
-              theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
+              theme={harnssDiffThemeName(resolvedTheme, colorblindSafe)}
               options={MONACO_DIFF_OPTIONS}
-              beforeMount={disableMonacoDiagnostics}
+              beforeMount={(monaco) => {
+                disableMonacoDiagnostics(monaco);
+                defineHarnssDiffThemes(monaco);
+              }}
               onMount={handleEditorMount}
               loading={
                 <DiffBodyPlaceholder
