@@ -693,6 +693,7 @@ export function useACP({ sessionId, initialMessages, initialConfigOptions, initi
   }, []);
 
   return {
+    isReadyForSession: base.isReadyForSession,
     messages, setMessages,
     isProcessing, setIsProcessing,
     isConnected, setIsConnected,

@@ -42,6 +42,7 @@ export interface EngineBaseState {
   // Refs
   sessionIdRef: React.RefObject<string | null>;
   messagesRef: React.RefObject<UIMessage[]>;
+  isReadyForSession: (id: string) => boolean;
 
   // rAF scheduling — engine hooks call scheduleFlush after pushing data to their buffer
   pendingFlush: React.RefObject<boolean>;
@@ -70,6 +71,8 @@ export function useEngineBase({
   sessionIdRef.current = sessionId;
   const messagesRef = useRef<UIMessage[]>(messages);
   messagesRef.current = messages;
+  const readySessionRef = useRef<string | null>(null);
+  const isReadyForSession = useCallback((id: string) => readySessionRef.current === id && sessionIdRef.current === id, []);
 
   // rAF scheduling refs
   const pendingFlush = useRef(false);
@@ -99,6 +102,8 @@ export function useEngineBase({
     setPendingPermission(initialPermission ?? null);
     setIsCompacting(initialMeta?.isCompacting ?? false);
     setReconnectMessage(initialMeta?.reconnectMessage ?? null);
+    readySessionRef.current = sessionId;
+    return () => { readySessionRef.current = null; };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared rAF scheduling — engines provide their own flush function
@@ -130,6 +135,7 @@ export function useEngineBase({
   }, []);
 
   return {
+    isReadyForSession,
     messages, setMessages,
     isProcessing, setIsProcessing,
     isConnected, setIsConnected,

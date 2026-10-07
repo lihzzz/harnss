@@ -24,6 +24,7 @@ export type MacBackgroundEffect = "liquid-glass" | "vibrancy" | "off";
 export type CodexBinarySource = "auto" | "managed" | "custom";
 export type ClaudeBinarySource = "auto" | "managed" | "custom";
 import type { MemorySettings } from "./memory";
+import type { GlobalShortcutSettings, QuickCaptureTarget } from "./productivity";
 
 // ── Notification settings ──
 
@@ -45,6 +46,9 @@ export interface NotificationSettings {
 
 /** Main-process app settings (persisted to JSON file in data dir). */
 export interface AppSettings {
+  globalShortcuts: GlobalShortcutSettings;
+  quickCaptureTarget: QuickCaptureTarget | null;
+  history: { semanticEnabled: boolean; embeddingModelKey: string | null };
   /** Number of recent chats to show per project in the sidebar (default: 10) */
   defaultChatLimit: number;
   /** Preferred code editor for "Open in Editor" actions (default: "auto") */

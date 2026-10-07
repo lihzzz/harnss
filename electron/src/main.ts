@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, webContents } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, webContents } from "electron";
 import path from "path";
 import http from "http";
 import contextMenu from "electron-context-menu";
@@ -33,6 +33,13 @@ import { terminals } from "./ipc/terminal";
 import * as spacesIpc from "./ipc/spaces";
 import * as projectsIpc from "./ipc/projects";
 import * as sessionsIpc from "./ipc/sessions";
+import * as sessionOperationsIpc from "./ipc/session-operations";
+import * as historyIpc from "./ipc/history";
+import { configureSessionStopper } from "./lib/session-service";
+import { GlobalShortcuts } from "./lib/global-shortcuts";
+import { QuickCapture } from "./lib/quick-capture";
+import * as quickCaptureIpc from "./ipc/quick-capture";
+import { safeSend } from "./lib/safe-send";
 import * as foldersIpc from "./ipc/folders";
 import * as ccImportIpc from "./ipc/cc-import";
 import * as filesIpc from "./ipc/files";
@@ -54,9 +61,10 @@ import { onSettingsChanged } from "./ipc/settings";
 import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./lib/computer-use-runtime";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
+if (!app.requestSingleInstanceLock()) app.exit(0);
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // force GPU raster for all content
 app.commandLine.appendSwitch("enable-zero-copy"); // avoid CPU→GPU memory copies for tiles
-app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization"); // off-main-thread canvas
+app.commandLine.appendSwitch("enable-features", [app.commandLine.getSwitchValue("enable-features"), "CanvasOopRasterization", ...(process.platform === "linux" ? ["GlobalShortcutsPortal"] : [])].filter(Boolean).join(","));
 
 // --- Liquid Glass command-line switches ---
 if (glassEnabled) {
@@ -65,6 +73,13 @@ if (glassEnabled) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let quitting = false;
+let tray: Tray | null = null;
+const quickCapture = new QuickCapture((request) => safeSend(getMainWindow, "quick-capture:requested", request));
+const globalInputShortcuts = new GlobalShortcuts(globalShortcut, (action) => {
+  showMainWindow();
+  quickCapture.capture(action, () => clipboard.readText(), getAppSettings().quickCaptureTarget);
+}, process.platform);
 const backgroundEffects = createBackgroundEffects(() => mainWindow);
 
 import type { ThemeOption, MacBackgroundEffect as SharedMacBackgroundEffect } from "@shared/types/settings";
@@ -92,6 +107,38 @@ function getMacBackgroundEffectSupport(): { liquidGlass: boolean; vibrancy: bool
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  const window = mainWindow;
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+function updateRecoveryEntry(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { label: "Show Harnss", click: showMainWindow },
+    { label: "Quit Harnss", click: () => app.quit() },
+  ];
+  if (process.platform === "darwin") { app.dock?.setMenu(Menu.buildFromTemplate(template)); return; }
+  if (!getAppSettings().globalShortcuts.enabled) { tray?.destroy(); tray = null; return; }
+  if (tray) return;
+  try {
+    const iconPath = app.isPackaged ? path.join(process.resourcesPath, "harnss-tray.png") : path.join(__dirname, "../../build/icon.png");
+    const icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) throw new Error("Tray icon is unavailable");
+    tray = new Tray(icon.resize({ width: 20, height: 20 }));
+    tray.setToolTip("Harnss");
+    tray.setContextMenu(Menu.buildFromTemplate(template));
+    tray.on("double-click", showMainWindow);
+  } catch (error) { reportError("SHORTCUTS:TRAY_ERR", error); tray = null; }
+}
+
+app.on("second-instance", showMainWindow);
+app.on("activate", () => { if (app.isReady()) showMainWindow(); });
+app.on("before-quit", () => { quitting = true; });
 
 function isMainRendererPermissionRequest(webContents: Electron.WebContents | null): boolean {
   return !!webContents && webContents.id === mainWindow?.webContents.id;
@@ -179,6 +226,16 @@ function createWindow(): void {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  mainWindow.on("close", (event) => {
+    const shortcuts = getAppSettings().globalShortcuts;
+    if (!quitting && shortcuts.enabled && shortcuts.keepAliveOnClose && (process.platform === "darwin" || tray)) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+  mainWindow.on("session-end", () => { quitting = true; });
+  mainWindow.on("query-session-end", () => { quitting = true; });
+  mainWindow.on("closed", () => { mainWindow = null; });
   backgroundEffects.refresh();
 
   mainWindow.once("ready-to-show", () => {
@@ -330,6 +387,15 @@ ipcMain.on("glass:set-theme", (_event, theme: string) => {
 spacesIpc.register();
 projectsIpc.register(getMainWindow);
 sessionsIpc.register();
+sessionOperationsIpc.register(getMainWindow);
+historyIpc.register(getMainWindow);
+configureSessionStopper(async (runtimeIds, meta) => {
+  for (const id of runtimeIds) {
+    if (meta.engine === "codex") await codexSessionsIpc.stopForDeletion(id);
+    else if (meta.engine === "acp") await acpSessionsIpc.stopForDeletion(id);
+    else await claudeSessionsIpc.stopForDeletion(id);
+  }
+});
 foldersIpc.register();
 ccImportIpc.register();
 filesIpc.register(getMainWindow);
@@ -343,6 +409,8 @@ codexSessionsIpc.register(getMainWindow);
 registerCodexFingerprintIpc();
 mcpIpc.register();
 settingsIpc.register(getMainWindow);
+settingsIpc.configureShortcutSettings((settings, persist) => globalInputShortcuts.apply(settings, persist));
+quickCaptureIpc.register(getMainWindow, quickCapture, globalInputShortcuts);
 memoryIpc.register(getMainWindow);
 skillsIpc.register();
 usageIpc.register(getMainWindow);
@@ -350,6 +418,7 @@ usageIpc.register(getMainWindow);
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;
 onSettingsChanged((settings) => {
+  if (app.isReady()) updateRecoveryEntry();
   if (process.platform === "darwin") {
     backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(settings.macBackgroundEffect));
   }
@@ -516,9 +585,21 @@ app.whenReady().then(() => {
     });
     log("DEVTOOLS", `Register ${shortcut}: ${ok ? "OK" : "FAILED"}`);
   }
+  globalInputShortcuts.initialize(getAppSettings().globalShortcuts);
+  updateRecoveryEntry();
 });
 
 app.on("will-quit", (event) => {
+  quitting = true;
+  quickCapture.dispose();
+  globalInputShortcuts.dispose();
+  tray?.destroy();
+  tray = null;
+  claudeSessionsIpc.stopAll();
+  acpSessionsIpc.stopAll();
+  codexSessionsIpc.stopAll();
+  for (const term of terminals.values()) term.pty.kill();
+  terminals.clear();
   globalShortcut.unregisterAll();
 
   // For normal quits, delay process exit until PostHog has flushed pending events.
@@ -534,22 +615,12 @@ app.on("will-quit", (event) => {
     }),
     shutdownMemory,
     shutdownUsage().catch((err) => log("USAGE_SHUTDOWN_ERR", err)),
+    historyIpc.shutdownHistory().catch((err) => reportError("HISTORY:SHUTDOWN", err)),
   ]).finally(() => {
     app.exit(0);
   });
 });
 
 app.on("window-all-closed", () => {
-  claudeSessionsIpc.stopAll();
-  acpSessionsIpc.stopAll();
-  codexSessionsIpc.stopAll();
-  void import("./lib/memory/daemon").then(({ stopMemoryDaemon }) => stopMemoryDaemon());
-
-  for (const [terminalId, term] of terminals) {
-    log("CLEANUP", `Killing terminal ${terminalId.slice(0, 8)}`);
-    term.pty.kill();
-  }
-  terminals.clear();
-
   app.quit();
 });

@@ -6,6 +6,7 @@
  */
 
 import type { ChildProcess } from "child_process";
+import { stopProcessAndWait } from "./process-stop";
 import type { RequestId } from "../types/codex-protocol/RequestId";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -149,6 +150,12 @@ export class CodexRpcClient {
 
   get isAlive(): boolean {
     return !this.destroyed && this.proc.exitCode === null && !this.proc.killed;
+  }
+
+  /** Destructive session operations require an observed process exit. */
+  async destroyAndWait(): Promise<void> {
+    this.destroyed = true;
+    await stopProcessAndWait(this.proc);
   }
 
   get pid(): number | undefined {

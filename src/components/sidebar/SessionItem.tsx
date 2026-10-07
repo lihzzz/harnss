@@ -37,6 +37,8 @@ import { useI18n } from "@/lib/i18n";
 import { isMac } from "@/lib/utils";
 import { DRAFT_ID } from "@/hooks/session/types";
 import { toast } from "sonner";
+import { conversationKey } from "@shared/lib/session-identity";
+import { useSidebarSelection } from "./SessionSelection";
 
 const REVEAL_LABEL = isMac ? "Reveal in Finder" : "Show in Explorer";
 
@@ -77,6 +79,8 @@ export function SessionItem({
   surface?: "sidebar" | "settings";
 }) {
   const { t } = useI18n();
+  const selection = useSidebarSelection();
+  const selectionKey = conversationKey(session);
   const { isEditing, startEditing, inputProps: renameInputProps } = useInlineRename({
     initialName: session.title,
     onRename,
@@ -140,13 +144,17 @@ export function SessionItem({
     <div
       ref={containerRef}
       className="group relative"
-      draggable={!isSettingsSurface}
+      data-session-selection-key={session.id === DRAFT_ID ? undefined : selectionKey}
+      draggable={!isSettingsSurface && !selection?.active}
       onDragStart={isSettingsSurface ? undefined : handleDragStart}
       onDragEnd={isSettingsSurface ? undefined : handleDragEnd}
       onContextMenu={handleContextMenu}
     >
+      {selection?.active && session.id !== DRAFT_ID ? <input type="checkbox" checked={selection.selected.has(selectionKey)}
+        aria-label={`${t("Select conversation")}: ${session.title}`} className="absolute start-0 top-2 z-10 accent-primary"
+        onChange={() => {}} onClick={(event) => { event.stopPropagation(); selection.toggle(selectionKey, event.shiftKey); }} /> : null}
       <button
-        onClick={onSelect}
+        onClick={(event) => { if (selection?.active && session.id !== DRAFT_ID) selection.toggle(selectionKey, event.shiftKey); else onSelect(); }}
         className={`session-item-button flex w-full min-w-0 items-center gap-2.5 rounded-lg ps-4 pe-3 group-hover:pe-14 py-1.5 text-start text-[13px] font-medium transition-all ${
           isActive
             ? "session-item-active bg-primary/10 text-black dark:bg-primary/15 dark:text-primary"

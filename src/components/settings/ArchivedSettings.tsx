@@ -3,6 +3,7 @@ import { Archive, ChevronRight, FolderOpen } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import { SessionItem } from "@/components/sidebar/SessionItem";
+import { SessionSelection } from "@/components/sidebar/SessionSelection";
 import { resolveLucideIcon } from "@/lib/icon-utils";
 import type { ChatSession, InstalledAgent, Project } from "@/types";
 import { useI18n } from "@/lib/i18n";
@@ -88,6 +89,7 @@ export const ArchivedSettings = memo(function ArchivedSettings({
         description={t("settingsArchivedDescription")}
       />
 
+      <SessionSelection sessions={archivedSessions} scopeLabel={t("archived")}>
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-6 py-2">
           <SettingsSection icon={Archive} label={t("archived")} first>
@@ -147,6 +149,7 @@ export const ArchivedSettings = memo(function ArchivedSettings({
           </SettingsSection>
         </div>
       </ScrollArea>
+      </SessionSelection>
     </div>
   );
 });

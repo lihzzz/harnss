@@ -30,6 +30,7 @@ import type { AppInfo } from "./codex-protocol/v2/AppInfo";
 import type { CodexFingerprintProbeRequest, CodexFingerprintProbeResult } from "./codex-fingerprint";
 import type { BackgroundEffectState } from "@shared/types/background-effect";
 import type { SessionMeta as SessionListItem } from "@shared/lib/session-persistence";
+import type { HistoryApi, OperationResult, QuickCaptureApi, SessionBatchApi, SessionResumeSource, ShortcutStatus } from "@shared/types/productivity";
 
 /** Standard IPC result envelope — most IPC calls return this shape. */
 interface IpcResult {
@@ -68,6 +69,7 @@ declare global {
         resumeSessionAt?: string;
         mcpServers?: McpServerConfig[];
         memoryContext?: { projectId: string };
+        source?: SessionResumeSource;
       }) => Promise<{ sessionId: string; pid: number; error?: string }>;
       send: (
         sessionId: string,
@@ -158,6 +160,7 @@ declare global {
         reorder: (projectId: string, targetProjectId: string) => Promise<IpcResult>;
       };
       sessions: {
+        batch: SessionBatchApi;
         save: (data: PersistedSession, previousSessionId?: string) => Promise<IpcResult>;
         append: (data: Omit<PersistedSession, "messages"> & {
           appendedMessages: UIMessage[];
@@ -287,12 +290,12 @@ declare global {
       };
       acp: {
         log: (label: string, data: unknown) => void;
-        start: (options: { agentId: string; cwd: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string } }) => Promise<ACPStartResult>;
+        start: (options: { agentId: string; cwd: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string }; source?: SessionResumeSource }) => Promise<ACPStartResult>;
         authenticate: (sessionId: string, methodId: string) => Promise<ACPAuthenticateResult>;
         prompt: (sessionId: string, text: string, images?: unknown[]) => Promise<IpcResult>;
         stop: (sessionId: string) => Promise<IpcResult>;
         reloadSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string) => Promise<IpcResult & { supportsLoad?: boolean }>;
-        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string } }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
+        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string }; source: SessionResumeSource }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
         cancel: (sessionId: string) => Promise<IpcResult>;
         abortPendingStart: () => Promise<{ ok?: boolean }>;
         respondPermission: (sessionId: string, requestId: string, optionId: string) => Promise<IpcResult>;
@@ -364,7 +367,7 @@ declare global {
         fingerprintProbe: (options: CodexFingerprintProbeRequest) => Promise<CodexFingerprintProbeResult | { error: string }>;
         authStatus: () => Promise<{ account: unknown; requiresOpenaiAuth: boolean }>;
         login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) => Promise<unknown>;
-        resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; memoryContext?: { projectId: string } }) =>
+        resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; memoryContext?: { projectId: string }; source: SessionResumeSource }) =>
           Promise<{ sessionId?: string; threadId?: string; goal?: import("@shared/types/codex").CodexThreadGoal | null; goalSupported?: boolean; error?: string }>;
         setModel: (sessionId: string, model: string) => Promise<{ error?: string }>;
         version: () => Promise<{ version?: string; error?: string }>;
@@ -428,6 +431,9 @@ declare global {
         get: (days: UsageRange) => Promise<{ data?: UsageReport; error?: string }>;
         activity: (start: number, end: number) => void;
       };
+      shortcuts: { getStatus: () => Promise<OperationResult<ShortcutStatus[]>> };
+      quickCapture: QuickCaptureApi;
+      history: HistoryApi;
       speech: {
         /** Triggers macOS native dictation (Cocoa startDictation: selector). Returns { ok: false } on non-macOS. */
         startNativeDictation: () => Promise<{ ok: boolean; reason?: string }>;

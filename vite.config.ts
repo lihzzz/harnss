@@ -10,6 +10,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "@shared": path.resolve(__dirname, "./shared"),
+      "@speech-runtime": path.resolve(__dirname, "node_modules/@huggingface/transformers/dist"),
     },
   },
   build: {
@@ -19,6 +20,7 @@ export default defineConfig({
     // into the eager entry graph. Rollup's automatic chunking respects dynamic import
     // boundaries and keeps them lazy.
   },
+  worker: { format: "es" },
   server: {
     port: 5173,
     strictPort: true,

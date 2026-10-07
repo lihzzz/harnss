@@ -12,10 +12,12 @@ import {
 import type { ChatFolder, ChatSession, Project, Space, SpaceColor } from "@/types";
 import { APP_SIDEBAR_WIDTH } from "@/lib/layout/constants";
 import { SidebarSearch } from "./SidebarSearch";
+import type { HistoryLocation } from "@shared/types/productivity";
 import { SpaceBar, SpaceIcon } from "./SpaceBar";
 import { SpaceCustomizer } from "./SpaceCustomizer";
 import { ProjectSection } from "./sidebar/ProjectSection";
 import { SidebarActionsProvider } from "./sidebar/SidebarActionsContext";
+import { SessionSelection } from "./sidebar/SessionSelection";
 import { useAgentContext } from "./AgentContext";
 import { clearSidebarDragPayload, isSidebarDragKind } from "@/lib/sidebar/dnd";
 import { useI18n } from "@/lib/i18n";
@@ -101,7 +103,7 @@ interface AppSidebarProjectActions {
   onUpdateProjectIcon: (id: string, icon: string | null, iconType: "emoji" | "lucide" | null) => void;
   onImportCCSession: (projectId: string, ccSessionId: string) => void;
   onToggleSidebar: () => void;
-  onNavigateToMessage: (sessionId: string, messageId: string) => void;
+  onNavigateHistory: (location: HistoryLocation) => Promise<void>;
   onMoveProjectToSpace: (projectId: string, spaceId: string) => void;
   onReorderProject: (projectId: string, targetProjectId: string) => void;
   onCreateFolder: (projectId: string) => void;
@@ -171,7 +173,7 @@ export const AppSidebar = memo(function AppSidebar({
     onUpdateProjectIcon,
     onImportCCSession,
     onToggleSidebar,
-    onNavigateToMessage,
+    onNavigateHistory,
     onMoveProjectToSpace,
     onReorderProject,
     onCreateFolder,
@@ -263,7 +265,6 @@ export const AppSidebar = memo(function AppSidebar({
     [projects, activeSpaceId],
   );
 
-  const projectIds = useMemo(() => filteredProjects.map((p) => p.id), [filteredProjects]);
 
   // Pre-group sessions by projectId (O(n) once) instead of filtering per project (O(n*m))
   const sessionsByProject = useMemo(() => {
@@ -615,15 +616,18 @@ export const AppSidebar = memo(function AppSidebar({
       ) : (
         /* ── Normal sidebar content ── */
         <SidebarActionsProvider value={sidebarActions}>
+        <SessionSelection key={activeSpaceId} sessions={sessions} scopeLabel={spaces.find((space) => space.id === activeSpaceId)?.name ?? activeSpaceId}>
         <div
           className={`flex min-h-0 flex-1 flex-col ${draftSlideClass}`}
           onDragOver={handleProjectListDragOver}
           onDrop={handleProjectListDrop}
         >
           <SidebarSearch
-            projectIds={projectIds}
-            onNavigateToMessage={onNavigateToMessage}
-            onSelectSession={onSelectSession}
+            projects={projects}
+            spaces={spaces}
+            activeSpaceId={activeSpaceId}
+            activeProjectId={sessions.find((session) => session.id === activeSessionId)?.projectId ?? null}
+            onNavigate={onNavigateHistory}
           />
           <button
             type="button"
@@ -695,6 +699,7 @@ export const AppSidebar = memo(function AppSidebar({
           </div>
 
         </div>
+        </SessionSelection>
         </SidebarActionsProvider>
       )}
 

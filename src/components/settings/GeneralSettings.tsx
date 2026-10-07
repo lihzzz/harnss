@@ -5,6 +5,7 @@ import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/c
 import type { AppSettings, PreferredEditor, VoiceDictationMode } from "@/types";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useI18n } from "@/lib/i18n";
+import { ShortcutSettings } from "./ShortcutSettings";
 
 interface GeneralSettingsProps {
   appSettings: AppSettings | null;
@@ -114,6 +115,7 @@ export const GeneralSettings = memo(function GeneralSettings({
           </SettingsSection>
 
           {/* ── Voice Dictation section ── */}
+          <ShortcutSettings appSettings={appSettings} onUpdate={onUpdateAppSettings} />
           <SettingsSection icon={Mic} label={t("settingsVoiceDictation")}>
             <SettingRow
               label={t("settingsDictationMode")}

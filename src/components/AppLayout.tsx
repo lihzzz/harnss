@@ -4,6 +4,9 @@ import { PanelLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
+import { useQuickCapture } from "@/hooks/app-layout/useQuickCapture";
+import { QuickCapturePanel } from "./QuickCapturePanel";
+import type { HistoryLocation } from "@shared/types/productivity";
 import { useUsageActivity } from "@/hooks/useUsageActivity";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { useGlassTheme } from "@/hooks/useGlassTheme";
@@ -119,7 +122,7 @@ export function AppLayout() {
     handleModelChange, handlePermissionModeChange, handlePlanModeChange,
     handleClaudeModelEffortChange, handleAgentWorktreeChange, handleStop, handleSelectSession,
     handleSendQueuedNow, handleUnqueueMessage, handleCreateProject, handleImportCCSession,
-    handleNavigateToMessage, handleStartCreateSpace, handleConfirmCreateSpace, handleCancelCreateSpace,
+    handleStartCreateSpace, handleConfirmCreateSpace, handleCancelCreateSpace,
     handleUpdateSpace, handleDeleteSpace, handleMoveProjectToSpace, handleSeedDevExampleSpaceData,
   } = actions;
 
@@ -726,6 +729,24 @@ export function AppLayout() {
     };
   }, []);
 
+  const [pendingHistoryLocation, setPendingHistoryLocation] = useState<HistoryLocation | null>(null);
+  const handleNavigateHistory = useCallback(async (location: HistoryLocation) => {
+    const response = await window.claude.history.resolve(location);
+    if (!response.ok) throw new Error(response.error.message);
+    splitView.dismissSplitView();
+    setShowSettings(false);
+    await manager.switchSession(response.value.runtimeSessionId, response.value);
+    setPendingHistoryLocation(response.value);
+  }, [manager.switchSession, splitView.dismissSplitView, setShowSettings]);
+  useEffect(() => {
+    if (!pendingHistoryLocation || manager.activeSessionId !== pendingHistoryLocation.runtimeSessionId) return;
+    if (pendingHistoryLocation.messageId === null) { setPendingHistoryLocation(null); return; }
+    if (manager.messages.some((message) => message.id === pendingHistoryLocation.messageId)) {
+      setScrollToMessageId(pendingHistoryLocation.messageId);
+      setPendingHistoryLocation(null);
+    }
+  }, [pendingHistoryLocation, manager.activeSessionId, manager.messages, setScrollToMessageId]);
+
   const handleScrolledToMessage = useCallback(() => {
     setScrollToMessageId(undefined);
   }, []);
@@ -1027,6 +1048,14 @@ export function AppLayout() {
     !!manager.acpAuthSessionId &&
     manager.acpAuthRequired;
 
+  const quickCapture = useQuickCapture({
+    manager, focusedId: splitView.enabled ? (splitView.focusedSessionId ?? manager.activeSessionId) : manager.activeSessionId,
+    projectId: activeProjectId ?? null, selectedAgent, projects: projectManager.projects, agents,
+    blocked: !welcomeCompleted || showCodexAuthDialog || showAcpAuthDialog || !!manager.pendingPermission,
+    activate: () => setShowSettings(false), selectAgent: o.agentState.setSelectedAgent,
+    selectSpace: spaceManager.setActiveSpaceId, closeSplit: splitView.dismissSplitView,
+  });
+
   return (
     <ThemeProvider value={resolvedTheme}>
     <AgentProvider value={agentContextValue}>
@@ -1067,7 +1096,7 @@ export function AppLayout() {
           onUpdateProjectIcon: projectManager.updateProjectIcon,
           onImportCCSession: handleImportCCSession,
           onToggleSidebar: sidebar.toggle,
-          onNavigateToMessage: handleNavigateToMessage,
+          onNavigateHistory: handleNavigateHistory,
           onMoveProjectToSpace: handleMoveProjectToSpace,
           onReorderProject: projectManager.reorderProject,
           onCreateFolder: o.handleCreateFolder,
@@ -1812,6 +1841,9 @@ export function AppLayout() {
         )}
         </div>{/* end showSettings wrapper */}
       </div>
+      {quickCapture.request && <QuickCapturePanel key={quickCapture.request.requestId} request={quickCapture.request}
+        projects={projectManager.projects} agents={agents} onContinue={quickCapture.resume} onDismiss={quickCapture.dismiss}
+        onCreateProject={handleCreateProject} onOpenSettings={() => setShowSettings("engines")} />}
       {showCodexAuthDialog && (
         <CodexAuthDialog
           sessionId={manager.activeSessionId!}

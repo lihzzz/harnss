@@ -13,6 +13,7 @@ import {
   PanelLeft,
   Archive,
   Brain,
+  Search,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,10 +35,11 @@ import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { ArchivedSettings } from "@/components/settings/ArchivedSettings";
 import { MemorySettings } from "@/components/settings/MemorySettings";
 import { SkillsSettings } from "@/components/settings/SkillsSettings";
+import { HistorySettings } from "@/components/settings/HistorySettings";
 
 // ── Section definitions ──
 
-export type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "memory" | "skills" | "custom-agents" | "advanced" | "archived";
+export type SettingsSection = "general" | "appearance" | "notifications" | "analytics" | "agents" | "mcp" | "engines" | "memory" | "skills" | "custom-agents" | "advanced" | "archived" | "history";
 
 interface NavItem {
   id: SettingsSection;
@@ -56,6 +58,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "mcp", labelKey: "mcpServers", icon: Plug },
   { id: "engines", labelKey: "engines", icon: Cpu },
   { id: "memory", labelKey: "memory", icon: Brain },
+  { id: "history", labelKey: "Conversation history", icon: Search },
   { id: "skills", labelKey: "skills", icon: Sparkles },
   { id: "custom-agents", labelKey: "agents", icon: Users, comingSoon: true },
   { id: "advanced", labelKey: "advanced", icon: Wrench },
@@ -120,12 +123,13 @@ export const SettingsView = memo(function SettingsView({
     window.claude.settings.get().then((s: AppSettings | null) => {
       if (s) setAppSettings(s);
     });
+    return window.claude.settings.onChanged(setAppSettings);
   }, []);
 
   const updateAppSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    // Optimistic local update
-    setAppSettings((prev) => (prev ? { ...prev, ...patch } : null));
-    await window.claude.settings.set(patch);
+    const result = await window.claude.settings.set(patch);
+    if (result.error) throw new Error(result.error);
+    setAppSettings(await window.claude.settings.get());
   }, []);
 
   // Escape key closes settings
@@ -139,6 +143,8 @@ export const SettingsView = memo(function SettingsView({
 
   const renderSection = useCallback(() => {
     switch (activeSection) {
+      case "history":
+        return <HistorySettings appSettings={appSettings} onUpdateAppSettings={updateAppSettings} />;
       case "general":
         return (
           <GeneralSettings

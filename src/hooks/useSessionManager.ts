@@ -269,6 +269,14 @@ export function useSessionManager(
   };
 
   // ── Compose sub-hooks ──
+  const { reviveSession, reviveAcpSession, reviveCodexSession, reviveQueuedMessage } = useSessionRevival({
+    refs,
+    setters,
+    engines,
+    findProject,
+    getProjectCwd,
+  });
+
   const {
     enqueueMessage,
     clearQueue,
@@ -276,7 +284,7 @@ export function useSessionManager(
     sendQueuedMessageNext,
     continueQueuedBackgroundSession,
     sendNextId,
-  } = useMessageQueue({ refs, setters, engines, activeSessionId });
+  } = useMessageQueue({ refs, setters, engines, activeSessionId, reviveQueuedMessage });
 
   useBackgroundReaper({ refs });
 
@@ -306,14 +314,6 @@ export function useSessionManager(
       generateSessionTitle,
       applyCodexModelDefaultEffort,
     });
-
-  const { reviveSession, reviveAcpSession, reviveCodexSession } = useSessionRevival({
-    refs,
-    setters,
-    engines,
-    findProject,
-    getProjectCwd,
-  });
 
   const {
     createSession,
@@ -654,6 +654,16 @@ export function useSessionManager(
     sessionInfo: engine.sessionInfo,
     totalCost: engine.totalCost,
     send,
+    quickCaptureDraftIdentity: () => startOptionsRef.current.conversationId ?? null,
+    ownsQuickCaptureDraft: (target: { projectId: string; agentId: string }, identity: string) => activeSessionIdRef.current === DRAFT_ID
+      && draftProjectIdRef.current === target.projectId && (startOptionsRef.current.agentId ?? "claude-code") === target.agentId
+      && startOptionsRef.current.conversationId === identity,
+    quickCaptureDraftReadiness: (): "ready" | "preparing" | "authRequired" => {
+      if (startOptionsRef.current.engine !== "acp") return "ready";
+      if (acp.authRequired) return "authRequired";
+      const id = draftAcpSessionIdRef.current;
+      return id && liveSessionIdsRef.current.has(id) ? "ready" : "preparing";
+    },
     retryLastMessage,
     unqueueMessage,
     sendQueuedMessageNext,

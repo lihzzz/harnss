@@ -10,6 +10,7 @@ import { MessageBubble } from "./MessageBubble";
 import { SummaryBlock } from "./SummaryBlock";
 import { ToolCall } from "./ToolCall";
 import { ToolGroupBlock } from "./ToolGroupBlock";
+import { ToolResultSelection, SelectableToolGroup } from "./ToolResultSelection";
 import { TurnChangesSummary } from "./TurnChangesSummary";
 import { extractTurnSummaries } from "@/lib/chat/turn-changes";
 import type { TurnSummary } from "@/lib/chat/turn-changes";
@@ -180,6 +181,7 @@ interface ChatMessageRowProps {
   autoRetry?: AutoRetryState | null;
   onCancelAutoRetry?: () => void;
   onRemember?: (content: string) => void;
+  revealMessageId: string | undefined;
 }
 
 const ChatMessageRow = memo(function ChatMessageRow({
@@ -197,6 +199,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   autoRetry,
   onCancelAutoRetry,
   onRemember,
+  revealMessageId,
 }: ChatMessageRowProps) {
   // ── Display preferences from Zustand store ──
   const autoExpandTools = useSettingsStore((s) => s.autoExpandTools);
@@ -238,7 +241,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
     const isNewGroup = animatingGroupKeys.has(groupKey);
     return (
       <Fragment>
-        <ToolGroupBlock
+        <SelectableToolGroup tools={row.group.tools}><ToolGroupBlock
           tools={row.group.tools}
           messages={row.group.messages}
           showThinking={showThinking}
@@ -248,7 +251,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
           coloredToolIcons={coloredToolIcons}
           disableCollapseAnimation
           animate={isNewGroup}
-        />
+          revealMessageId={revealMessageId}
+        /></SelectableToolGroup>
         {row.groupTurnSummary ? <TurnChangesSummary summary={row.groupTurnSummary} /> : null}
       </Fragment>
     );
@@ -313,7 +317,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
   prev.onRetry === next.onRetry &&
   prev.autoRetry === next.autoRetry &&
   prev.onCancelAutoRetry === next.onCancelAutoRetry &&
-  prev.onRemember === next.onRemember,
+  prev.onRemember === next.onRemember &&
+  prev.revealMessageId === next.revealMessageId,
 );
 
 // ── ChatViewProps ──
@@ -416,7 +421,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   // spaceId ensures the spinner shows immediately when switching spaces (before the 60ms debounced
   // session switch fires). sessionId + messages[0]?.id handle same-space session switches.
   const contentKey = `${props.spaceId ?? "s"}-${props.sessionId ?? "__empty__"}-${messages[0]?.id ?? ""}`;
-  return <ChatViewContent key={contentKey} {...props} />;
+  return <ToolResultSelection key={contentKey} messages={messages}><ChatViewContent {...props} /></ToolResultSelection>;
 });
 
 // ── ChatViewContent (inner, module-level) ──
@@ -887,7 +892,8 @@ function ChatViewContent({
 
     // If target is in the unhydrated portion (no DOM element exists), force-hydrate first
     const targetIndex = rows.findIndex(
-      (row) => row.kind === "message" && row.msg.id === scrollToMessageId,
+      (row) => row.kind === "message" && row.msg.id === scrollToMessageId
+        || row.kind === "tool_group" && row.group.tools.some((tool) => tool.id === scrollToMessageId),
     );
     if (targetIndex >= 0 && targetIndex < effectiveHydratedFrom) {
       setHydratedFrom(Math.max(0, targetIndex - 2));
@@ -896,7 +902,7 @@ function ChatViewContent({
 
     // Find the DOM element by data-message-id and scroll into view
     requestAnimationFrame(() => {
-      const el = scrollContainerRef.current?.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+      const el = scrollContainerRef.current?.querySelector(`[data-message-id="${CSS.escape(scrollToMessageId)}"]`);
       if (el) {
         bottomLockedRef.current = false;
         el.scrollIntoView({ block: "center" });
@@ -966,6 +972,7 @@ function ChatViewContent({
                 <RowEntrance animate={isNewRow && motionLevel === "full"}>
                   <ChatMessageRow
                     row={row}
+                    revealMessageId={row.kind === "tool_group" && row.group.tools.some((tool) => tool.id === scrollToMessageId) ? scrollToMessageId : undefined}
                     showThinking={showThinking}
                     animatingGroupKeys={animatingGroupKeys}
                     assistantTurnDividerLabels={assistantTurnDividerLabels}

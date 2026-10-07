@@ -12,6 +12,7 @@ export interface MarkdownSubagentStep {
 }
 
 export interface MarkdownMessage {
+  id?: string;
   role?: string;
   content?: string;
   displayContent?: string;
@@ -21,6 +22,30 @@ export interface MarkdownMessage {
   toolResult?: unknown;
   subagentSteps?: MarkdownSubagentStep[];
   isError?: boolean;
+  toolError?: boolean;
+  timestamp?: number;
+}
+
+/** Decode stored content without assuming that legacy JSON contains typed messages. */
+export function markdownMessages(value: unknown): MarkdownMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).filter((message) => !message.isQueued).map((message) => ({
+    id: typeof message.id === "string" ? message.id : undefined,
+    role: typeof message.role === "string" ? message.role : undefined,
+    content: typeof message.content === "string" ? message.content : undefined,
+    displayContent: typeof message.displayContent === "string" ? message.displayContent : undefined,
+    thinking: typeof message.thinking === "string" ? message.thinking : undefined,
+    toolName: typeof message.toolName === "string" ? message.toolName : undefined,
+    toolInput: message.toolInput,
+    toolResult: message.toolResult,
+    isError: message.isError === true,
+    toolError: message.toolError === true,
+    timestamp: typeof message.timestamp === "number" ? message.timestamp : undefined,
+    subagentSteps: Array.isArray(message.subagentSteps) ? message.subagentSteps.filter(isRecord).map((step) => ({
+      toolName: typeof step.toolName === "string" ? step.toolName : undefined,
+      toolInput: step.toolInput, toolResult: step.toolResult, toolError: step.toolError === true,
+    })) : undefined,
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,9 +104,13 @@ function toolResultText(result: unknown): string {
   return "";
 }
 
-function renderToolCall(message: MarkdownMessage): string {
+export function renderToolCall(message: MarkdownMessage): string {
   const name = message.toolName || "Tool";
   const sections: string[] = [`### Tool call: ${name}`];
+  if (message.isError || message.toolError) sections.push("**Error**");
+  if (typeof message.timestamp === "number" && Number.isFinite(message.timestamp) && message.timestamp > 0) {
+    sections.push(`Time: ${new Date(message.timestamp).toISOString()}`);
+  }
 
   const input = stringify(message.toolInput).trim();
   if (input && input !== "{}") sections.push(codeBlock(input, "json"));
@@ -91,6 +120,7 @@ function renderToolCall(message: MarkdownMessage): string {
 
   for (const step of message.subagentSteps ?? []) {
     const stepParts: string[] = [`- ${step.toolName || "Tool"}`];
+    if (step.toolError) stepParts.push("**Error**");
     const stepInput = stringify(step.toolInput).trim();
     if (stepInput && stepInput !== "{}") stepParts.push(`\n${codeBlock(stepInput, "json")}`);
     const stepResult = toolResultText(step.toolResult);
@@ -99,6 +129,26 @@ function renderToolCall(message: MarkdownMessage): string {
   }
 
   return sections.join("\n\n");
+}
+
+export function buildToolResultsMarkdown(messages: MarkdownMessage[], selectedIds: ReadonlySet<string>): string {
+  const selected = messages.filter((message) => message.role === "tool_call" && message.id && selectedIds.has(message.id));
+  if (!selected.length) throw new Error("No tool results selected");
+  if (selected.some((message) => message.toolResult == null && !message.toolError && !message.isError)) throw new Error("Wait for the selected tools to finish");
+  const result = selected.map(renderToolCall).join("\n\n---\n\n") + "\n";
+  if (new TextEncoder().encode(result).byteLength > 5 * 1024 * 1024) throw new Error("Selected tool results exceed 5 MiB; select fewer results");
+  return result;
+}
+
+export function sanitizeExportFileName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").replace(/\s+/g, " ").replace(/[. ]+$/, "").trim();
+  const safe = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleaned) ? `session-${cleaned}` : cleaned;
+  let result = "";
+  for (const character of safe || "session") {
+    if (result.length >= 80 || new TextEncoder().encode(result + character).byteLength > 140) break;
+    result += character;
+  }
+  return result;
 }
 
 function renderMessage(message: MarkdownMessage): string {

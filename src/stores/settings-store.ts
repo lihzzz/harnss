@@ -5,6 +5,26 @@ import type { AcpPermissionBehavior, ClaudeEffort, DensityOption, EngineId, Lang
 import { DEFAULT_AUTO_DAY_START, DEFAULT_AUTO_NIGHT_START, normalizeHour } from "@/lib/theme-schedule";
 import { DEFAULT_THEME_ID, validateThemePreset, type ThemePreset } from "@/themes/theme-preset";
 import type { AmbientSoundMode } from "@/lib/audio/ambient-player";
+import type { HistoryMode } from "@shared/types/productivity";
+
+export interface HistoryPreferences {
+  scope: "all" | "space" | "project";
+  mode: HistoryMode;
+  sort: "recent" | "relevance";
+  engine: EngineId | "all";
+  includeArchived: boolean;
+}
+const DEFAULT_HISTORY_PREFERENCES: HistoryPreferences = { scope: "all", mode: "keyword", sort: "recent", engine: "all", includeArchived: true };
+function normalizeHistoryPreferences(value: unknown): HistoryPreferences {
+  if (!value || typeof value !== "object") return { ...DEFAULT_HISTORY_PREFERENCES };
+  return {
+    scope: "scope" in value && (value.scope === "space" || value.scope === "project") ? value.scope : "all",
+    mode: "mode" in value && (value.mode === "semantic" || value.mode === "hybrid") ? value.mode : "keyword",
+    sort: "sort" in value && value.sort === "relevance" ? "relevance" : "recent",
+    engine: "engine" in value && (value.engine === "claude" || value.engine === "codex" || value.engine === "acp") ? value.engine : "all",
+    includeArchived: !("includeArchived" in value) || value.includeArchived !== false,
+  };
+}
 
 // ── Constants ──
 
@@ -99,6 +119,7 @@ export interface ProjectSettings {
 
 /** Global settings state (not per-project) */
 interface GlobalSettingsState {
+  historyPreferences: HistoryPreferences;
   language: Language;
   theme: ThemePreference;
   /** Hour of day (0-23) when auto theme switches to light */
@@ -149,6 +170,7 @@ interface GlobalSettingsState {
 /** Actions (setters) — excluded from persistence via partialize */
 interface SettingsActions {
   // Global setters
+  setHistoryPreferences: (patch: Partial<HistoryPreferences>) => void;
   setLanguage: (language: Language) => void;
   setTheme: (t: ThemePreference) => void;
   setThemeAutoDayStart: (hour: number) => void;
@@ -352,6 +374,7 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
 
   return {
     language,
+    historyPreferences: { ...DEFAULT_HISTORY_PREFERENCES },
     theme,
     themeAutoDayStart: DEFAULT_AUTO_DAY_START,
     themeAutoNightStart: DEFAULT_AUTO_NIGHT_START,
@@ -513,6 +536,7 @@ export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
       // ── Global state defaults ──
+      historyPreferences: { ...DEFAULT_HISTORY_PREFERENCES },
       language: "zh-CN",
       theme: "dark",
       themeAutoDayStart: DEFAULT_AUTO_DAY_START,
@@ -549,6 +573,7 @@ export const useSettingsStore = create<SettingsStore>()(
 
       // ── Global setters ──
 
+      setHistoryPreferences: (patch) => set((state) => ({ historyPreferences: normalizeHistoryPreferences({ ...state.historyPreferences, ...patch }) })),
       setLanguage: (language) => set({ language }),
 
       setTheme: (t) => set({ theme: t }),
@@ -758,6 +783,7 @@ export const useSettingsStore = create<SettingsStore>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         // Global state
+        historyPreferences: state.historyPreferences,
         language: state.language,
         theme: state.theme,
         themeAutoDayStart: state.themeAutoDayStart,
@@ -800,6 +826,7 @@ export const useSettingsStore = create<SettingsStore>()(
           ...current,
           ...incoming,
           language: incoming.language === "en-US" ? "en-US" : "zh-CN",
+          historyPreferences: normalizeHistoryPreferences(incoming.historyPreferences),
           // Re-validate persisted custom themes; drop anything malformed.
           customThemes: sanitizePersistedThemes(incoming.customThemes),
           activeThemeId: typeof incoming.activeThemeId === "string" ? incoming.activeThemeId : DEFAULT_THEME_ID,

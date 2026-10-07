@@ -289,6 +289,7 @@ export function useAppOrchestrator() {
   const agentState = {
     agents,
     selectedAgent,
+    setSelectedAgent,
     saveAgent,
     deleteAgent,
     handleAgentChange: sessionActions.handleAgentChange,

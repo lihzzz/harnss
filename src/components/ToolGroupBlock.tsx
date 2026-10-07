@@ -29,6 +29,8 @@ interface ToolGroupBlockProps {
   /** When true (live streaming), runs a one-time tools -> group morph animation.
    *  When false (restored session), renders collapsed immediately. */
   animate: boolean;
+  /** Search and timeline navigation can reveal a tool in an otherwise collapsed group. */
+  revealMessageId?: string;
 }
 
 const GROUP_HEADER_BASE_CLASS = "relative flex w-full items-center gap-2 py-1 text-[13px] leading-4 text-muted-foreground";
@@ -80,6 +82,7 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({
   coloredToolIcons = false,
   disableCollapseAnimation = false,
   animate,
+  revealMessageId,
 }: ToolGroupBlockProps) {
   // Lock animation decision at mount. Parent re-renders may flip `animate` to false
   // after first paint; we still want one morph animation for newly formed groups.
@@ -88,6 +91,9 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({
 
   // Final grouped state is always collapsed by default.
   const [isOpen, setIsOpen] = useChatPersistedState(`tool-group:${groupKey}`, false);
+  useLayoutEffect(() => {
+    if (revealMessageId && tools.some((tool) => tool.id === revealMessageId)) setIsOpen(true);
+  }, [revealMessageId, tools, setIsOpen]);
   const [isMorphing, setIsMorphing] = useState(animateOnMount);
   const [morphStarted, setMorphStarted] = useState(false);
   const [morphHeight, setMorphHeight] = useState<number | null>(null);
@@ -304,7 +310,7 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({
           />
         );
         return (
-          <div key={message.id} className="flex">
+          <div key={message.id} data-message-id={message.id} className="flex">
             {/* Tree connector: vertical trunk + horizontal branch pinned to top row */}
             <div className="relative w-3.5 shrink-0">
               <div className={`absolute start-0 top-0 w-px bg-foreground/15 ${isLast ? "h-[15px]" : "h-full"}`} />
@@ -363,5 +369,6 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({
   prev.showToolIcons === next.showToolIcons &&
   prev.coloredToolIcons === next.coloredToolIcons &&
   prev.disableCollapseAnimation === next.disableCollapseAnimation &&
+  prev.revealMessageId === next.revealMessageId &&
   prev.animate === next.animate,
 );

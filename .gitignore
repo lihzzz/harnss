@@ -5,6 +5,13 @@ logs/
 *.log
 .DS_Store
 docs/
+# Track the productivity system design while keeping other docs ignored.
+!/docs/
+/docs/*
+!/docs/productivity-enhancements/
+/docs/productivity-enhancements/*
+!/docs/productivity-enhancements/system-analysis.md
+!/docs/productivity-enhancements/implementation-status.md
 /release/
 .cache/
 .claude/agent-memory/

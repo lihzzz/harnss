@@ -1015,10 +1015,11 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     });
   }, []);
 
-  const refreshMcpStatus = useCallback(async () => {
-    if (!sessionIdRef.current) return;
-    const result = await window.claude.mcpStatus(sessionIdRef.current);
-    if (result.servers?.length) {
+  const refreshMcpStatus = useCallback(async (isCurrent: () => boolean = () => true) => {
+    const id = sessionIdRef.current;
+    if (!id) return;
+    const result = await window.claude.mcpStatus(id);
+    if (sessionIdRef.current === id && isCurrent() && result.servers) {
       setMcpServerStatuses(result.servers as McpServerStatus[]);
     }
   }, []);
@@ -1062,6 +1063,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   }, []);
 
   return {
+    isReadyForSession: base.isReadyForSession,
     messages,
     setMessages,
     isProcessing,

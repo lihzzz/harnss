@@ -24,6 +24,9 @@ import {
 } from "../lib/computer-use-runtime";
 import { getHindsightCodexMcpOverrides, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeCodexNotification, completeMemoryTurn } from "../lib/memory/service";
 import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
+import { getSessionRepository } from "../lib/session-service";
+import type { SessionRuntimeLease } from "../lib/session-repository";
+import type { SessionResumeSource } from "@shared/types/productivity";
 
 import type {
   CodexServerNotification,
@@ -64,6 +67,7 @@ interface CodexSession {
   goal: CodexThreadGoal | null;
   goalMutation: Promise<void>;
   threadStart: Promise<string> | null;
+  runtimeLease?: SessionRuntimeLease;
 }
 
 export type CodexGoalResult =
@@ -74,9 +78,42 @@ import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, listModelsWi
 
 const codexSessions = new Map<string, CodexSession>();
 
+function assertCodexSessionActive(session: CodexSession): void {
+  if (codexSessions.get(session.internalId) !== session) throw new Error("Codex session stopped");
+  session.runtimeLease?.assertActive();
+}
+
+export async function stopForDeletion(sessionId: string): Promise<void> {
+  stopUsageSession(sessionId);
+  const session = codexSessions.get(sessionId);
+  if (!session) return;
+  await session.rpc.destroyAndWait();
+  codexSessions.delete(sessionId);
+  unregisterMemorySession(sessionId);
+}
+
 /** Expose the currently selected model for utility prompts (title/commit generation). */
 export function getCodexSessionModel(internalId: string): string | undefined {
   return codexSessions.get(internalId)?.model;
+}
+
+/** Check the target project's account configuration before dispatching clipboard text. */
+export async function hasConfiguredCodexAccount(cwd: string): Promise<boolean> {
+  const proc = spawnCodexAppServer(await getCodexBinaryPath(), cwd);
+  const rpc = new CodexRpcClient(proc);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const readAccount = async () => {
+      await rpc.request<CodexInitializeResponse>("initialize", { clientInfo: getAppServerClientInfo(), capabilities: { experimentalApi: true } });
+      rpc.notify("initialized", {});
+      const response = await rpc.request<CodexAccountResponse>("account/read", { refreshToken: false });
+      return !response.requiresOpenaiAuth || response.account !== null;
+    };
+    return await Promise.race([
+      readAccount(),
+      new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Account check timed out; retry after the agent starts")), 4_000); }),
+    ]);
+  } finally { if (timeout) clearTimeout(timeout); rpc.destroy(); }
 }
 
 function getAppServerClientInfo(): { name: string; title: string; version: string } {
@@ -492,13 +529,17 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       },
     ) => {
       const internalId = crypto.randomUUID();
+      let runtimeLease: SessionRuntimeLease | undefined;
 
       try {
+        if (options.memoryContext?.projectId) runtimeLease = await getSessionRepository().bindProjectRuntime(options.memoryContext.projectId, internalId, () => stopForDeletion(internalId));
         const codexPath = await getCodexBinaryPath();
+        runtimeLease?.assertActive();
         log("codex",` Starting app-server: ${codexPath} (session=${internalId})`);
 
         if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "codex");
         const proc = spawnCodexAppServer(codexPath, options.cwd, internalId);
+        if (runtimeLease) proc.once("exit", runtimeLease.release);
 
         if (!proc.pid) {
           throw new Error("Failed to spawn codex app-server process");
@@ -520,6 +561,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           goal: null,
           goalMutation: Promise.resolve(),
           threadStart: null,
+          runtimeLease,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -531,11 +573,13 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             experimentalApi: true,
           },
         });
+        assertCodexSessionActive(session);
         rpc.notify("initialized", {});
         log("codex",` Initialized: ${JSON.stringify(initResult).slice(0, 200)}`);
 
         // ── Check auth status ──
         const authResult = await rpc.request<CodexAccountResponse>("account/read", { refreshToken: false });
+        assertCodexSessionActive(session);
 
         const needsAuth = authResult.requiresOpenaiAuth && !authResult.account;
         if (needsAuth) {
@@ -560,6 +604,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         } catch (err) {
           reportError("CODEX_MODEL_LIST_ERR", err, { engine: "codex", sessionId: internalId });
         }
+        assertCodexSessionActive(session);
         // Honor explicitly requested models as-is: custom providers accept
         // model IDs that never appear in the account catalog.
         selectedModel = options.model?.trim() || pickModelId(undefined, models);
@@ -581,6 +626,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         // collaborationMode is set per-turn via turn/start, not on thread/start
 
         const threadResult = await rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
+        assertCodexSessionActive(session);
         session.threadId = threadResult.thread.id;
         log("codex",` Thread started: ${session.threadId}`);
 
@@ -597,13 +643,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       } catch (err) {
         void captureEvent("session_error", { engine: "codex", phase: "start" });
         const errMsg = reportError("CODEX_START_ERR", err, { engine: "codex", sessionId: internalId });
-        // Clean up on failure
-        const session = codexSessions.get(internalId);
-        if (session) {
-          session.rpc.destroy();
-          codexSessions.delete(internalId);
-        }
-        unregisterMemorySession(internalId);
+        try { await stopForDeletion(internalId); }
+        catch (stopError) { reportError("CODEX_START_STOP_ERR", stopError, { engine: "codex", sessionId: internalId }); }
+        if (!codexSessions.has(internalId)) { runtimeLease?.release(); unregisterMemorySession(internalId); }
         return { error: errMsg };
       }
     },
@@ -643,6 +685,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       try {
         const memory = await beforeMemorySend(data.sessionId, data.text);
+        assertCodexSessionActive(session);
         const input: unknown[] = [{ type: "text", text: memory.text }];
         if (data.images) {
           input.push(...data.images);
@@ -676,12 +719,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   // ─── codex:stop ───
   ipcMain.handle("codex:stop", async (_, sessionId: string) => {
-    stopUsageSession(sessionId);
-    const session = codexSessions.get(sessionId);
-    if (!session) return;
-    session.rpc.destroy();
-    codexSessions.delete(sessionId);
-    unregisterMemorySession(sessionId);
+    await stopForDeletion(sessionId);
     log("codex",` Session stopped: ${sessionId}`);
   });
 
@@ -995,20 +1033,23 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         approvalPolicy?: string;
         sandbox?: string;
         memoryContext?: { projectId: string };
+        source: SessionResumeSource;
       },
     ) => {
       const internalId = crypto.randomUUID();
+      let runtimeLease: SessionRuntimeLease | undefined;
 
       try {
+        runtimeLease = await getSessionRepository().bindRuntime(data.source, "codex", internalId, () => stopForDeletion(internalId));
         const codexPath = await getCodexBinaryPath();
+        runtimeLease.assertActive();
         log("codex",` Resuming thread ${data.threadId} in new process (session=${internalId})`);
 
         if (data.memoryContext?.projectId) registerMemorySession(internalId, data.memoryContext.projectId, "codex");
         const proc = spawnCodexAppServer(codexPath, data.cwd, internalId);
-
-        if (!proc.pid) throw new Error("Failed to spawn codex app-server");
-
+        proc.once("exit", runtimeLease.release);
         const rpc = new CodexRpcClient(proc);
+        if (!proc.pid) throw new Error("Failed to spawn codex app-server");
         const session: CodexSession = {
           rpc,
           internalId,
@@ -1023,6 +1064,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           goal: null,
           goalMutation: Promise.resolve(),
           threadStart: null,
+          runtimeLease,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -1032,6 +1074,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           clientInfo: getAppServerClientInfo(),
           capabilities: { experimentalApi: true },
         });
+        assertCodexSessionActive(session);
         rpc.notify("initialized", {});
 
         // Resume thread — persistExtendedHistory is required by ThreadResumeParams
@@ -1043,21 +1086,23 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         if (data.sandbox) threadParams.sandbox = data.sandbox;
 
         const threadResult = await rpc.request<CodexThreadResumeResponse>("thread/resume", threadParams);
+        assertCodexSessionActive(session);
         session.threadId = threadResult.thread.id;
         log("codex",` Thread resumed: ${session.threadId}`);
         const goal = await refreshGoal(session, getMainWindow);
+        assertCodexSessionActive(session);
 
         void captureEvent("session_revived", { engine: "codex", success: true });
         return { sessionId: internalId, threadId: session.threadId, goal: goal.goal, goalSupported: goal.supported };
       } catch (err) {
         void captureEvent("session_revived", { engine: "codex", success: false });
         const errMsg = reportError("CODEX_RESUME_ERR", err, { engine: "codex", sessionId: internalId });
-        const session = codexSessions.get(internalId);
-        if (session) {
-          session.rpc.destroy();
-          codexSessions.delete(internalId);
+        try { await stopForDeletion(internalId); }
+        catch (stopError) { reportError("CODEX_RESUME_STOP_ERR", stopError, { engine: "codex", sessionId: internalId }); }
+        if (!codexSessions.has(internalId)) {
+          runtimeLease?.release();
+          unregisterMemorySession(internalId);
         }
-        unregisterMemorySession(internalId);
         return { error: errMsg };
       }
     },

@@ -13,6 +13,7 @@ import fs from "fs";
 import { getDataDir } from "./data-dir";
 import type { AppSettings, NotificationSettings } from "@shared/types/settings";
 import type { MemorySettings } from "@shared/types/memory";
+import { GLOBAL_SHORTCUT_DEFAULTS, HISTORY_DEFAULTS, mergeGlobalShortcuts, mergeHistorySettings, parseQuickCaptureTarget } from "@shared/lib/productivity-settings";
 
 // Re-export shared types so existing `import from "./app-settings"` consumers still work
 export type { AppSettings, MacBackgroundEffect, PreferredEditor, VoiceDictationMode, NotificationTrigger, NotificationEventSettings, NotificationSettings, CodexBinarySource, ClaudeBinarySource } from "@shared/types/settings";
@@ -41,6 +42,9 @@ const MEMORY_DEFAULTS: MemorySettings = {
 };
 
 const DEFAULTS: AppSettings = {
+  globalShortcuts: GLOBAL_SHORTCUT_DEFAULTS,
+  quickCaptureTarget: null,
+  history: HISTORY_DEFAULTS,
   defaultChatLimit: 10,
   preferredEditor: "auto",
   voiceDictation: "native",
@@ -88,6 +92,9 @@ export function getAppSettings(): AppSettings {
     cached = {
       ...DEFAULTS,
       ...parsed,
+      globalShortcuts: mergeGlobalShortcuts(parsed.globalShortcuts),
+      quickCaptureTarget: parseQuickCaptureTarget(parsed.quickCaptureTarget),
+      history: mergeHistorySettings(parsed.history),
       computerUseEnabled,
       notifications: {
         exitPlanMode: { ...NOTIFICATION_DEFAULTS.exitPlanMode, ...parsedNotif?.exitPlanMode },
@@ -114,14 +121,19 @@ export function setAppSettings(patch: Partial<AppSettings>): AppSettings {
   const next = {
     ...current,
     ...patch,
+    globalShortcuts: mergeGlobalShortcuts(patch.globalShortcuts, current.globalShortcuts),
+    quickCaptureTarget: "quickCaptureTarget" in patch ? parseQuickCaptureTarget(patch.quickCaptureTarget) : current.quickCaptureTarget,
+    history: mergeHistorySettings(patch.history, current.history),
     ...(patch.memory ? { memory: { ...current.memory, ...patch.memory } } : {}),
   };
-  cached = next;
-
+  const destination = filePath();
+  const temporary = `${destination}.${process.pid}-${Date.now()}.tmp`;
   try {
-    fs.writeFileSync(filePath(), JSON.stringify(next, null, 2), "utf-8");
-  } catch {
-    // Non-fatal — setting is still cached in memory for this session
+    fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: "utf-8", flag: "wx" });
+    fs.renameSync(temporary, destination);
+  } finally {
+    fs.rmSync(temporary, { force: true });
   }
+  cached = next;
   return next;
 }

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { getSessionRecoveryVersion, isSessionFrozen, isSessionRecovering, subscribeSessionRecoveries } from "@/lib/session/batch-runtime";
 import type { ImageAttachment, UIMessage } from "../../types";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/engine/codex-adapter";
@@ -9,10 +10,12 @@ import { buildCodexCollabMode, DRAFT_ID } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks, QueuedMessage } from "./types";
 
 interface UseMessageQueueParams {
-  refs: SharedSessionRefs;
-  setters: SharedSessionSetters;
-  engines: EngineHooks;
+  refs: Pick<SharedSessionRefs, "activeSessionIdRef" | "sessionsRef" | "liveSessionIdsRef" | "backgroundStoreRef" | "messageQueueRef" | "messagesRef" | "startOptionsRef" | "codexEffortRef">;
+  setters: Pick<SharedSessionSetters, "setQueuedCount">;
+  engines: { [K in "claude" | "acp" | "codex"]: Pick<EngineHooks[K], "setMessages" | "setIsProcessing"> }
+    & { engine: Pick<EngineHooks["engine"], "setMessages" | "isProcessing" | "messages"> };
   activeSessionId: string | null;
+  reviveQueuedMessage: (messageId: string) => Promise<void>;
 }
 
 type BoundaryWaitState =
@@ -20,7 +23,8 @@ type BoundaryWaitState =
   | { kind: "after_tool"; pendingToolMessageIdsAtClick: string[] }
   | { kind: "asap" };
 
-export function useMessageQueue({ refs, setters, engines, activeSessionId }: UseMessageQueueParams) {
+export function useMessageQueue({ refs, setters, engines, activeSessionId, reviveQueuedMessage }: UseMessageQueueParams) {
+  const recoveryVersion = useSyncExternalStore(subscribeSessionRecoveries, getSessionRecoveryVersion);
   const { claude, acp, codex, engine } = engines;
   const { setQueuedCount } = setters;
   const {
@@ -211,6 +215,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
   }, [activeSessionIdRef, clearQueueForSession, setQueuedCount]);
 
   const drainQueuedMessageForSession = useCallback(async (sessionId: string) => {
+    if (isSessionFrozen(sessionId) || isSessionRecovering(sessionId)) return false;
     if (!sessionId || sessionId === DRAFT_ID) return false;
     if (drainingSessionIdsRef.current.has(sessionId)) return false;
     if (!liveSessionIdsRef.current.has(sessionId)) return false;
@@ -315,6 +320,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
   }, [activeSessionIdRef, drainQueuedMessageForSession]);
 
   const continueQueuedBackgroundSession = useCallback((sessionId: string) => {
+    if (isSessionFrozen(sessionId) || isSessionRecovering(sessionId)) return false;
     if (!sessionId || sessionId === DRAFT_ID) return false;
     if (sessionId === activeSessionIdRef.current) return false;
     if (drainingSessionIdsRef.current.has(sessionId)) return false;
@@ -357,7 +363,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
 
   const sendQueuedMessageNext = useCallback(async (messageId: string) => {
     const activeId = activeSessionIdRef.current;
-    if (!activeId || activeId === DRAFT_ID) return;
+    if (!activeId || activeId === DRAFT_ID || isSessionFrozen(activeId) || isSessionRecovering(activeId)) return;
 
     const queue = messageQueueRef.current.get(activeId) ?? [];
     const queueIndex = queue.findIndex((entry) => entry.messageId === messageId);
@@ -387,7 +393,11 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
       return;
     }
 
-    if (!liveSessionIdsRef.current.has(activeId)) return;
+    if (!liveSessionIdsRef.current.has(activeId)) {
+      await reviveQueuedMessage(messageId);
+      setSendNextId((previous) => previous === messageId ? null : previous);
+      return;
+    }
     await drainNextQueuedMessage();
   }, [
     activeSessionIdRef,
@@ -399,6 +409,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     messagesRef,
     messageQueueRef,
     reorderQueuedMessagesInUI,
+    reviveQueuedMessage,
     setQueuedCount,
   ]);
 
@@ -481,7 +492,7 @@ export function useMessageQueue({ refs, setters, engines, activeSessionId }: Use
     }
     if (engine.isProcessing) return;
     void drainNextQueuedMessage();
-  }, [activeSessionId, drainNextQueuedMessage, engine.isProcessing, switchDrainRetryTick]);
+  }, [activeSessionId, drainNextQueuedMessage, engine.isProcessing, switchDrainRetryTick, recoveryVersion]);
 
   return {
     enqueueMessage,

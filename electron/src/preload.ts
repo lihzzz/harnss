@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import type { CodexFingerprintProbeRequest } from "@shared/types/codex-fingerprint";
 import type { BackgroundEffectState } from "@shared/types/background-effect";
+import type { BatchJob, BatchPreparedRequest, BatchStartRequest, HistoryApi, HistoryIndexStatus, QuickCaptureApi, QuickCaptureTarget, QuickCaptureUpdate, SessionBatchApi, SessionResumeSource } from "@shared/types/productivity";
 import { applyBackgroundEffectClasses } from "@shared/lib/background-effect-classes";
 
 interface PreloadDocument {
@@ -180,6 +181,23 @@ contextBridge.exposeInMainWorld("claude", {
     reorder: (projectId: string, targetProjectId: string) => ipcRenderer.invoke("projects:reorder", projectId, targetProjectId),
   },
   sessions: {
+    batch: {
+      recoveries: () => ipcRenderer.invoke("sessions:batch-recoveries"),
+      start: (request: BatchStartRequest) => ipcRenderer.invoke("sessions:batch-start", request),
+      status: (jobId: string) => ipcRenderer.invoke("sessions:batch-status", jobId),
+      cancel: (jobId: string) => ipcRenderer.invoke("sessions:batch-cancel", jobId),
+      prepared: (request: BatchPreparedRequest) => ipcRenderer.invoke("sessions:batch-prepared", request),
+      onProgress: (listener: (job: BatchJob) => void) => {
+        const handler = (_event: IpcRendererEvent, job: BatchJob) => listener(job);
+        ipcRenderer.on("sessions:batch-progress", handler);
+        return () => { ipcRenderer.removeListener("sessions:batch-progress", handler); };
+      },
+      onPrepare: (listener: (job: BatchJob) => void) => {
+        const handler = (_event: IpcRendererEvent, job: BatchJob) => listener(job);
+        ipcRenderer.on("sessions:batch-prepare", handler);
+        return () => { ipcRenderer.removeListener("sessions:batch-prepare", handler); };
+      },
+    } satisfies SessionBatchApi,
     save: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:save", data, previousSessionId),
     append: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:append", data, previousSessionId),
     load: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:load", projectId, sessionId),
@@ -264,7 +282,7 @@ contextBridge.exposeInMainWorld("claude", {
   },
   acp: {
     log: (label: string, data: unknown) => ipcRenderer.send("acp:log", label, data),
-    start: (options: { agentId: string; cwd: string; mcpServers?: unknown[] }) => ipcRenderer.invoke("acp:start", options),
+    start: (options: { agentId: string; cwd: string; mcpServers?: unknown[]; source?: SessionResumeSource }) => ipcRenderer.invoke("acp:start", options),
     authenticate: (sessionId: string, methodId: string) =>
       ipcRenderer.invoke("acp:authenticate", { sessionId, methodId }),
     prompt: (sessionId: string, text: string, images?: unknown[]) =>
@@ -272,7 +290,7 @@ contextBridge.exposeInMainWorld("claude", {
     stop: (sessionId: string) => ipcRenderer.invoke("acp:stop", sessionId),
     reloadSession: (sessionId: string, mcpServers?: unknown[], cwd?: string) =>
       ipcRenderer.invoke("acp:reload-session", { sessionId, mcpServers, cwd }),
-    reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: unknown[] }) =>
+    reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: unknown[]; source: SessionResumeSource }) =>
       ipcRenderer.invoke("acp:revive-session", options),
     cancel: (sessionId: string) => ipcRenderer.invoke("acp:cancel", sessionId),
     abortPendingStart: () => ipcRenderer.invoke("acp:abort-pending-start"),
@@ -331,7 +349,7 @@ contextBridge.exposeInMainWorld("claude", {
     authStatus: () => ipcRenderer.invoke("codex:auth-status"),
     login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) =>
       ipcRenderer.invoke("codex:login", { sessionId, type, apiKey }),
-    resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access" }) =>
+    resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; source: SessionResumeSource }) =>
       ipcRenderer.invoke("codex:resume", options),
     setModel: (sessionId: string, model: string) =>
       ipcRenderer.invoke("codex:set-model", { sessionId, model }),
@@ -409,6 +427,33 @@ contextBridge.exposeInMainWorld("claude", {
     get: (days: number) => ipcRenderer.invoke("usage:get", days),
     activity: (start: number, end: number) => ipcRenderer.send("usage:activity", start, end),
   },
+  shortcuts: { getStatus: () => ipcRenderer.invoke("shortcuts:get-status") },
+  history: {
+    search: (request) => ipcRenderer.invoke("history:search", request),
+    timeline: (request) => ipcRenderer.invoke("history:timeline", request),
+    activity: (request) => ipcRenderer.invoke("history:activity", request),
+    resolve: (location) => ipcRenderer.invoke("history:resolve", location),
+    cancel: (id) => ipcRenderer.invoke("history:cancel", id),
+    status: () => ipcRenderer.invoke("history:status"),
+    rebuild: (kind) => ipcRenderer.invoke("history:rebuild", kind ?? "keyword"),
+    cancelRebuild: () => ipcRenderer.invoke("history:cancelRebuild"),
+    semanticControl: (action) => ipcRenderer.invoke("history:semantic-control", action),
+    onStatus: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: HistoryIndexStatus) => listener(status);
+      ipcRenderer.on("history:status-changed", handler);
+      return () => { ipcRenderer.removeListener("history:status-changed", handler); };
+    },
+  } satisfies HistoryApi,
+  quickCapture: {
+    checkTarget: (requestId: string, target: QuickCaptureTarget) => ipcRenderer.invoke("quick-capture:check-target", { requestId, target }),
+    pending: () => ipcRenderer.invoke("quick-capture:pending"),
+    update: (request: QuickCaptureUpdate) => ipcRenderer.invoke("quick-capture:update", request),
+    onRequested: (listener) => {
+      const handler = (_event: IpcRendererEvent, request: Parameters<typeof listener>[0]) => listener(request);
+      ipcRenderer.on("quick-capture:requested", handler);
+      return () => { ipcRenderer.removeListener("quick-capture:requested", handler); };
+    },
+  } satisfies QuickCaptureApi,
   speech: {
     startNativeDictation: () => ipcRenderer.invoke("speech:start-native-dictation"),
     getPlatform: () => ipcRenderer.invoke("speech:get-platform"),

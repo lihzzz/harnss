@@ -1251,6 +1251,7 @@ export function useCodex({
   }, []);
 
   return {
+    isReadyForSession: base.isReadyForSession,
     messages, setMessages,
     isProcessing, setIsProcessing,
     isConnected, setIsConnected,

@@ -5,6 +5,10 @@ import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { capture } from "../../lib/analytics/analytics";
 import { bgAgentStore } from "../../lib/background/agent-store";
 import { invalidatePersistedCursor, saveSessionSmart } from "../../lib/session/persistence";
+import { startBatchJob, waitForBatchJob } from "@/lib/session/batch-runtime";
+import { conversationKey } from "@shared/lib/session-identity";
+import type { HistoryLocation } from "@shared/types/productivity";
+import { toChatSession } from "@/lib/session/records";
 import {
   DRAFT_ID,
   DEFAULT_PERMISSION_MODE,
@@ -135,7 +139,7 @@ export function useSessionCrud({
       seedBackgroundStore();
       void saveCurrentSession();
       const draftEngine = options?.engine ?? "claude";
-      const nextStartOptions = options ?? {};
+      const nextStartOptions = { ...options, conversationId: options?.conversationId ?? crypto.randomUUID() };
       // Keep the ref-backed routing state in sync with the setters so a
       // programmatic create-then-send cannot send through the old session.
       startOptionsRef.current = nextStartOptions;
@@ -185,9 +189,26 @@ export function useSessionCrud({
   // ── Switch to an existing session ──
 
   const switchSession = useCallback(
-    async (id: string) => {
-      if (id === activeSessionIdRef.current) return;
+    async (id: string, historyLocation?: HistoryLocation) => {
       const requestId = ++switchRequestIdRef.current;
+      if (historyLocation) {
+        const [data, metadata] = await Promise.all([
+          window.claude.sessions.load(historyLocation.projectId, id),
+          window.claude.sessions.list(historyLocation.projectId),
+        ]);
+        if (requestId !== switchRequestIdRef.current) throw new Error("History navigation was cancelled");
+        const meta = metadata.find((entry) => entry.id === id && conversationKey(entry) === historyLocation.conversationKey);
+        if (!data || !meta) throw new Error("The original conversation is no longer available");
+        const messages = id === activeSessionIdRef.current ? refs.messagesRef.current : backgroundStoreRef.current.get(id)?.messages ?? data.messages;
+        if (historyLocation.messageId !== null && !messages.some((message) => message.id === historyLocation.messageId)) throw new Error("The original message is no longer available");
+        if (!sessionsRef.current.some((session) => session.id === id && session.projectId === historyLocation.projectId)) {
+          const session = toChatSession(meta, false);
+          sessionsRef.current = [...sessionsRef.current, session];
+          setSessions((previous) => previous.some((entry) => entry.id === id) ? previous : [...previous, session]);
+        }
+        if (id !== activeSessionIdRef.current && !backgroundStoreRef.current.get(id)) cacheSessionPayload(data);
+      }
+      if (id === activeSessionIdRef.current) return;
 
       // A draft can be in the middle of materializing after its first prompt.
       // Keep that startup alive so switching chats does not discard the only
@@ -218,9 +239,9 @@ export function useSessionCrud({
       // Switch to the correct space for this session's project — ensures that
       // clicking a permission toast (or any cross-space navigation) lands in the right space
       const sessionProject = refs.projectsRef.current.find((p) => p.id === session.projectId);
-      if (sessionProject) {
-        onSpaceChangeRef.current?.(sessionProject.spaceId || "default");
-      }
+      // Commit the space and session in the same transition. An earlier space
+      // render would otherwise restore its remembered chat over this selection.
+      const activateSpace = () => { if (sessionProject) onSpaceChangeRef.current?.(sessionProject.spaceId || "default"); };
 
       // Restore from the in-memory session cache if available.
       const bgState = backgroundStoreRef.current.consume(id);
@@ -232,6 +253,7 @@ export function useSessionCrud({
             }
           : bgState.sessionInfo;
         startTransition(() => {
+          activateSpace();
           setInitialMessages(bgState.messages);
           setInitialMeta({
             isProcessing: bgState.isProcessing,
@@ -263,7 +285,7 @@ export function useSessionCrud({
 
       const cachedData = consumeCachedSessionPayload(id);
       if (cachedData) {
-        applyLoadedSession(id, { ...cachedData, planMode: false });
+        startTransition(() => { activateSpace(); applyLoadedSession(id, { ...cachedData, planMode: false }); });
         return;
       }
 
@@ -274,7 +296,7 @@ export function useSessionCrud({
         cacheSessionPayload({ ...data, planMode: false });
         const restored = consumeCachedSessionPayload(id);
         if (restored) {
-          applyLoadedSession(id, { ...restored, planMode: false });
+          startTransition(() => { activateSpace(); applyLoadedSession(id, { ...restored, planMode: false }); });
         }
       }
     },
@@ -307,27 +329,21 @@ export function useSessionCrud({
     async (id: string) => {
       const session = sessionsRef.current.find((s) => s.id === id);
       if (!session) return;
-      evictFromCache(id);
-      if (liveSessionIdsRef.current.has(id)) {
-        if (session.engine === "codex") {
-          suppressNextSessionCompletion(id);
-          await window.claude.codex.stop(id);
-        } else if (session.engine === "acp") {
-          suppressNextSessionCompletion(id);
-          await window.claude.acp.stop(id);
-        } else {
-          suppressNextSessionCompletion(id);
-          await window.claude.stop(id, "session_delete");
-        }
-        liveSessionIdsRef.current.delete(id);
+      suppressNextSessionCompletion(id);
+      const started = await startBatchJob({ requestId: crypto.randomUUID(), action: "delete", targets: [{ projectId: session.projectId, conversationKey: conversationKey(session) }] });
+      const result = await waitForBatchJob(started.jobId);
+      if (result.items[0]?.state !== "succeeded") {
+        toast.error("Failed to delete conversation", { description: result.items[0]?.error?.message });
+        return;
       }
+      evictFromCache(id);
+      liveSessionIdsRef.current.delete(id);
       backgroundStoreRef.current.delete(id);
       messageQueueRef.current.delete(id);
       bgAgentStore.clearSession(id);
       invalidatePersistedCursor(id);
       // Dismiss any permission toast for this session
       toast.dismiss(`permission-${id}`);
-      await window.claude.sessions.delete(session.projectId, id);
       if (activeSessionIdRef.current === id) {
         clearQueue();
         setActiveSessionId(null);

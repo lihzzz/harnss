@@ -1,7 +1,6 @@
-import { toast } from "sonner";
 import type { PersistedSession, UIMessage } from "@/types";
 import { getLastUserMessageTimestamp } from "@shared/lib/session-persistence";
-import { reportError } from "@/lib/analytics/analytics";
+import { isSessionFrozen, isSessionRecovering, isSessionRetired, replaceSessionRuntime } from "./batch-runtime";
 
 // ── Incremental persistence cursor ──
 // Last successfully persisted message array per session (element references shared with
@@ -31,6 +30,8 @@ export function invalidatePersistedCursor(sessionId: string): void {
  * save, or when the main process has no snapshot to append to.
  */
 export async function saveSessionSmart(data: PersistedSession, previousSessionId?: string): Promise<void> {
+  if (isSessionFrozen(data.id) || isSessionRetired(data.id) || (previousSessionId && isSessionFrozen(previousSessionId))) return;
+  if (!previousSessionId && isSessionRecovering(data.id)) return;
   const messages = (data.messages ?? []) as UIMessage[];
   const prev = persistedCursors.get(data.id);
 
@@ -63,6 +64,7 @@ export async function saveSessionSmart(data: PersistedSession, previousSessionId
     // No snapshot on disk yet — fall through to a full save.
   }
 
+  if (isSessionFrozen(data.id) || isSessionRetired(data.id) || (previousSessionId && isSessionFrozen(previousSessionId))) throw new Error("Session is no longer available to save");
   const result = await window.claude.sessions.save(data, previousSessionId);
   if (result.error) throw new Error(result.error);
   rememberCursor(data.id, messages);
@@ -70,10 +72,8 @@ export async function saveSessionSmart(data: PersistedSession, previousSessionId
 
 /** Save the new runtime's history before retiring its previous on-disk snapshot. */
 export async function persistSessionReplacement(previousSessionId: string, data: PersistedSession): Promise<void> {
-  try {
-    await saveSessionSmart(data, previousSessionId);
-  } catch (error) {
-    const message = reportError("SESSIONS:REPLACE_ERR", error, { sessionId: data.id });
-    toast.error(`Failed to update saved session: ${message}`);
-  }
+  if (isSessionFrozen(data.id) || isSessionFrozen(previousSessionId) || isSessionRetired(previousSessionId) || isSessionRetired(data.id)) throw new Error("Session is no longer available to replace");
+  await saveSessionSmart(data, previousSessionId);
+  replaceSessionRuntime(previousSessionId, data.id);
+  if (previousSessionId !== data.id) invalidatePersistedCursor(previousSessionId);
 }

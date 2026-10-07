@@ -12,6 +12,8 @@ import { useSessionCache } from "./useSessionCache";
 import { useSessionCrud } from "./useSessionCrud";
 import { useSessionSettings } from "./useSessionSettings";
 import { useSessionRestart } from "./useSessionRestart";
+import { useSessionBatch } from "./useSessionBatch";
+import { isSessionFrozen, isSessionRecovering } from "@/lib/session/batch-runtime";
 
 interface UseSessionLifecycleParams {
   refs: SharedSessionRefs;
@@ -87,9 +89,12 @@ export function useSessionLifecycle({
     activeEngine,
     getProjectCwd,
     prefetchCodexModels,
+    abandonEagerSession,
+    abandonDraftAcpSession,
   });
 
   // ── Session CRUD: create, switch, delete, rename, deselect, import, draft agent ──
+  useSessionBatch(refs, setters, evictFromCache);
   const {
     createSession,
     switchSession,
@@ -159,6 +164,7 @@ export function useSessionLifecycle({
   const send = useCallback(
     async (text: string, images?: ImageAttachment[], displayText?: string) => {
       const activeId = refs.activeSessionIdRef.current;
+      if (isSessionFrozen(activeId)) return { error: "Conversation is being deleted" };
       const sendEngine = refs.activeSessionIdRef.current === DRAFT_ID
         ? (refs.startOptionsRef.current.engine ?? "claude")
         : (refs.sessionsRef.current.find(s => s.id === refs.activeSessionIdRef.current)?.engine ?? "claude");
@@ -367,7 +373,7 @@ export function useSessionLifecycle({
       }
 
       // Queue check: if engine is processing, enqueue instead of sending directly
-      if (refs.isProcessingRef.current && refs.liveSessionIdsRef.current.has(activeId)) {
+      if (isSessionRecovering(activeId) || (refs.isProcessingRef.current && refs.liveSessionIdsRef.current.has(activeId))) {
         trackMessageSent(activeSessionEngine === "acp" ? activeId : undefined);
         enqueueMessage(text, images, displayText);
         return;
@@ -380,6 +386,7 @@ export function useSessionLifecycle({
           const promptResult = await acp.send(text, images, displayText, true);
           if (!promptResult.ok) {
             refs.liveSessionIdsRef.current.delete(activeId);
+            if (refs.activeSessionIdRef.current !== activeId || isSessionFrozen(activeId)) return;
             const errorText = `ACP prompt error: ${promptResult.error || "Unable to send message."}`;
             if (isRetryableUpstreamError(promptResult.error ?? "")) {
               await reviveAcpSession(text, images, displayText, true);
@@ -413,6 +420,7 @@ export function useSessionLifecycle({
           const sendResult = await codex.send(text, images, displayText, codexCollabMode);
           if (!sendResult.ok && isRetryableUpstreamError(sendResult.error ?? "")) {
             refs.liveSessionIdsRef.current.delete(activeId);
+            if (refs.activeSessionIdRef.current !== activeId || isSessionFrozen(activeId)) return;
             await reviveCodexSession(text, images, displayText, true);
           }
           return;
@@ -427,6 +435,7 @@ export function useSessionLifecycle({
         const sent = await claude.send(text, images, displayText);
         if (sent) return;
         refs.liveSessionIdsRef.current.delete(activeId);
+        if (refs.activeSessionIdRef.current !== activeId || isSessionFrozen(activeId)) return;
       }
 
       if (refs.activeSessionIdRef.current !== DRAFT_ID) {

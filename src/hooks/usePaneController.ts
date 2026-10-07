@@ -17,6 +17,7 @@ import { canonicalizeModelValue, findEquivalentModel } from "@/lib/model-utils";
 import type { PaneController } from "@/types";
 import { getRetryRequest, isRetryableUpstreamError } from "@/lib/session/retry";
 import { useAutoRetry } from "./useAutoRetry";
+import { isSessionFrozen } from "@/lib/session/batch-runtime";
 
 // ── Model catalog builders (moved from AppLayout) ──
 
@@ -244,6 +245,7 @@ export function usePaneController(
     };
 
     const handlePaneSend = async (text: string, images?: ImageAttachment[], displayText?: string) => {
+      if (isSessionFrozen(sessionId)) return;
       ctx.splitView?.setFocusedSession(sessionId);
 
       if (isActiveSessionPane) {
@@ -302,6 +304,7 @@ export function usePaneController(
     };
 
     const handlePaneRetry = async (errorMessageId: string) => {
+      if (isSessionFrozen(sessionId)) return;
       if (paneState.isProcessing) return;
       if (retryInFlightRef.current.has(errorMessageId)) return;
       if (isActiveSessionPane) {

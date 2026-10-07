@@ -34,7 +34,7 @@ export function insertTextAtCursor(
   el.focus();
 
   const sel = window.getSelection();
-  if (!sel || !sel.rangeCount) {
+  if (!sel || !sel.rangeCount || !el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
     // No cursor -- append to end
     el.appendChild(document.createTextNode(text));
   } else {
