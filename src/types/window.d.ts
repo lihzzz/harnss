@@ -26,7 +26,7 @@ import type { Model as CodexModel } from "./codex-protocol/v2/Model";
 import type { CollaborationMode } from "./codex-protocol/CollaborationMode";
 import type { SkillsListEntry } from "./codex-protocol/v2/SkillsListEntry";
 import type { AppInfo } from "./codex-protocol/v2/AppInfo";
-import type { CodexFingerprintProbeResult } from "./codex-fingerprint";
+import type { CodexFingerprintProbeRequest, CodexFingerprintProbeResult } from "./codex-fingerprint";
 import type { BackgroundEffectState } from "@shared/types/background-effect";
 import type { SessionMeta as SessionListItem } from "@shared/lib/session-persistence";
 
@@ -360,7 +360,7 @@ declare global {
           error?: string;
         }>;
         listModels: () => Promise<{ models: CodexModel[]; error?: string }>;
-        fingerprintProbe: (model: string) => Promise<CodexFingerprintProbeResult | { error: string }>;
+        fingerprintProbe: (options: CodexFingerprintProbeRequest) => Promise<CodexFingerprintProbeResult | { error: string }>;
         authStatus: () => Promise<{ account: unknown; requiresOpenaiAuth: boolean }>;
         login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) => Promise<unknown>;
         resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; memoryContext?: { projectId: string } }) =>

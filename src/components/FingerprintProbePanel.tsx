@@ -33,6 +33,7 @@ export const FingerprintProbePanel = memo(function FingerprintProbePanel({
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [selectedEffort, setSelectedEffort] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<CodexFingerprintProbeResult | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -66,13 +67,19 @@ export const FingerprintProbePanel = memo(function FingerprintProbePanel({
     };
   }, []);
 
+  const currentModel = models.find((model) => model.id === selectedModel);
+  const effortOptions = currentModel?.supportedReasoningEfforts ?? [];
+  const activeEffort = effortOptions.find((option) => option.reasoningEffort === selectedEffort)?.reasoningEffort
+    ?? effortOptions.find((option) => option.reasoningEffort === currentModel?.defaultReasoningEffort)?.reasoningEffort
+    ?? effortOptions[0]?.reasoningEffort;
+
   const runProbe = async () => {
     if (!selectedModel || running) return;
     setRunning(true);
     setProbeError(null);
     setResult(null);
     try {
-      const response = await window.claude.codex.fingerprintProbe(selectedModel);
+      const response = await window.claude.codex.fingerprintProbe({ model: selectedModel, effort: activeEffort });
       if ("error" in response && response.error) {
         setProbeError(response.error);
       } else if ("error" in response) {
@@ -126,6 +133,23 @@ export const FingerprintProbePanel = memo(function FingerprintProbePanel({
                 Run
               </Button>
             </div>
+            {effortOptions.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-medium text-muted-foreground">Reasoning effort</span>
+                <Select value={activeEffort} onValueChange={setSelectedEffort} disabled={modelsLoading || running}>
+                  <SelectTrigger size="sm" className="w-full capitalize text-foreground/80" aria-label="Reasoning effort">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {effortOptions.map((option) => (
+                      <SelectItem key={option.reasoningEffort} value={option.reasoningEffort} className="capitalize">
+                        {option.reasoningEffort}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <p className="text-[10px] leading-relaxed text-muted-foreground/50">
               Runs three fresh, ephemeral Codex turns and compares their random-number fingerprint with a local
               ModelTrace bank. This uses three short model responses from your Codex account.
@@ -179,6 +203,7 @@ export const FingerprintProbePanel = memo(function FingerprintProbePanel({
               </div>
 
               <div className="grid gap-1 text-[10px] text-muted-foreground">
+                {result.reasoningEffort && <span>Reasoning effort: {result.reasoningEffort}</span>}
                 <span>
                   Selected-model probability: {formatPercent(result.verdict.selectedModelProbability)}
                 </span>

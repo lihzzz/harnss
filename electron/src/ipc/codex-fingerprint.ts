@@ -12,6 +12,7 @@ import {
   parseFingerprintNumbers,
 } from "@shared/lib/codex-fingerprint";
 import type {
+  CodexFingerprintProbeRequest,
   CodexFingerprintProbeResult,
   CodexFingerprintSample,
 } from "@shared/types/codex-fingerprint";
@@ -127,7 +128,7 @@ function setupFingerprintNotifications(rpc: CodexRpcClient, states: ProbeState[]
   };
 }
 
-async function runFingerprintProbe(model: string): Promise<CodexFingerprintProbeResult> {
+async function runFingerprintProbe({ model, effort }: CodexFingerprintProbeRequest): Promise<CodexFingerprintProbeResult> {
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
   const codexPath = await getCodexBinaryPath();
@@ -158,6 +159,7 @@ async function runFingerprintProbe(model: string): Promise<CodexFingerprintProbe
       const prompt = makePrompt(sampleId);
       const threadResponse = await rpc.request<CodexThreadStartResponse>("thread/start", {
         model,
+        ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
         cwd: process.cwd(),
         ephemeral: true,
         approvalPolicy: "never",
@@ -168,6 +170,11 @@ async function runFingerprintProbe(model: string): Promise<CodexFingerprintProbe
       if (threadResponse.model !== model || threadResponse.thread.path) {
         throw new Error(
           `临时会话设置异常：请求 ${model}，实际 ${threadResponse.model}`,
+        );
+      }
+      if (effort && threadResponse.reasoningEffort !== effort) {
+        throw new Error(
+          `临时会话推理强度异常：请求 ${effort}，实际 ${threadResponse.reasoningEffort ?? "default"}`,
         );
       }
       actualModel = threadResponse.model;
@@ -189,6 +196,7 @@ async function runFingerprintProbe(model: string): Promise<CodexFingerprintProbe
       const turnResponse = await rpc.request<CodexTurnStartResponse>("turn/start", {
         threadId: state.threadId,
         input: [{ type: "text", text: state.prompt }],
+        ...(effort ? { effort } : {}),
       });
       state.turnId = turnResponse.turn.id;
     }
@@ -221,20 +229,21 @@ async function runFingerprintProbe(model: string): Promise<CodexFingerprintProbe
 }
 
 export function registerCodexFingerprintIpc(): void {
-  ipcMain.handle("codex:fingerprint-probe", async (_event, data: { model?: string }) => {
+  ipcMain.handle("codex:fingerprint-probe", async (_event, data: CodexFingerprintProbeRequest) => {
     const model = data?.model?.trim();
     if (!model) return { error: "请选择一个模型" };
+    const effort = data.effort;
 
-    log("codex-fingerprint", `Probe requested model=${model}`);
+    log("codex-fingerprint", `Probe requested model=${model} effort=${effort ?? "default"}`);
     try {
-      const result = await runFingerprintProbe(model);
+      const result = await runFingerprintProbe({ model, effort });
       log(
         "codex-fingerprint",
         `Probe completed model=${model} verdict=${result.verdict.verdict} top=${result.analysis?.prediction ?? "none"}`,
       );
       return result;
     } catch (error) {
-      const message = reportError("CODEX_FINGERPRINT_PROBE_ERR", error, { engine: "codex", model });
+      const message = reportError("CODEX_FINGERPRINT_PROBE_ERR", error, { engine: "codex", model, effort });
       log("codex-fingerprint", `Probe failed model=${model}: ${message}`);
       return { error: message };
     }

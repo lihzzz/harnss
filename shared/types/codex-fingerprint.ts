@@ -8,6 +8,7 @@ export interface CodexFingerprintSamplePrompt {
 
 export interface CodexFingerprintProbeRequest {
   model: string;
+  effort?: ReasoningEffort;
 }
 
 export interface CodexFingerprintSample extends CodexFingerprintSamplePrompt {
