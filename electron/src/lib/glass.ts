@@ -58,15 +58,15 @@ if (process.platform === "darwin") {
   }
 }
 
-function isMacOSSequoiaOrLater(): boolean {
+function isMacOSTahoeOrLater(): boolean {
   if (process.platform !== "darwin") return false;
-  // Darwin 25 = macOS 15 Sequoia (NSVisualEffectView fallback)
-  // Darwin 26 = macOS 26 Tahoe (native NSGlassEffectView)
+  // Darwin 25 = macOS 26 Tahoe (native NSGlassEffectView).
+  // Older macOS versions use Electron's NSVisualEffectView vibrancy instead.
   const major = parseInt(os.release().split(".")[0], 10);
   return major >= 25;
 }
 
-export const glassEnabled = !!(liquidGlass && isMacOSSequoiaOrLater());
+export const glassEnabled = !!(liquidGlass && isMacOSTahoeOrLater());
 
 // ── Dynamic tint support ──
 // Store the window handle so we can re-call addView() with updated tintColor.
@@ -74,14 +74,22 @@ export const glassEnabled = !!(liquidGlass && isMacOSSequoiaOrLater());
 // new ones in a single dispatch_sync block, so there is no visual gap.
 
 let storedHandle: Buffer | null = null;
+let storedTint: string | null = null;
+let storedViewId = -1;
 
 export function applyGlass(handle: Buffer, opts?: GlassOptions): number {
   if (!liquidGlass) return -1;
-  storedHandle = handle;
-  return liquidGlass.addView(handle, opts ?? {});
+  const viewId = liquidGlass.addView(handle, opts ?? {});
+  if (viewId >= 0) {
+    storedHandle = handle;
+    storedTint = opts?.tintColor ?? null;
+    storedViewId = viewId;
+  }
+  return viewId;
 }
 
 export function setGlassTint(tintColor: string | null): number {
   if (!liquidGlass || !storedHandle) return -1;
-  return liquidGlass.addView(storedHandle, tintColor ? { tintColor } : {});
+  if (tintColor === storedTint) return storedViewId;
+  return applyGlass(storedHandle, tintColor ? { tintColor } : {});
 }

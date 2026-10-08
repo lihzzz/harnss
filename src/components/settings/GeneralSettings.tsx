@@ -1,8 +1,11 @@
 import { memo, useState, useCallback, useEffect } from "react";
-import { MessageSquare, Code, Mic } from "lucide-react";
+import { MessageSquare, Code, Mic, Languages } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import type { AppSettings, PreferredEditor, VoiceDictationMode } from "@/types";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useI18n } from "@/lib/i18n";
+import { ShortcutSettings } from "./ShortcutSettings";
 
 interface GeneralSettingsProps {
   appSettings: AppSettings | null;
@@ -15,6 +18,9 @@ export const GeneralSettings = memo(function GeneralSettings({
   appSettings,
   onUpdateAppSettings,
 }: GeneralSettingsProps) {
+  const { t } = useI18n();
+  const language = useSettingsStore((s) => s.language);
+  const setLanguage = useSettingsStore((s) => s.setLanguage);
   // Local optimistic state — synced from props once loaded
   const [chatLimit, setChatLimit] = useState(10);
   const [preferredEditor, setPreferredEditor] = useState<PreferredEditor>("auto");
@@ -55,15 +61,31 @@ export const GeneralSettings = memo(function GeneralSettings({
 
   return (
     <div className="flex h-full flex-col">
-      <SettingsHeader title="General" description="Application-wide preferences" />
+      <SettingsHeader title={t("general")} description={t("settingsGeneralDescription")} />
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-6 py-2">
-          {/* ── Sidebar section ── */}
-          <SettingsSection icon={MessageSquare} label="Sidebar" first>
+          <SettingsSection icon={Languages} label={t("settingsLanguageSection")} first>
             <SettingRow
-              label="Recent chats per project"
-              description="Number of chats shown by default in each project. Click 'Show more' in the sidebar to load additional chats."
+              label={t("settingsLanguageLabel")}
+              description={t("settingsLanguageDescription")}
+            >
+              <SettingsSelect
+                value={language}
+                onValueChange={setLanguage}
+                options={[
+                  { value: "zh-CN", label: "中文" },
+                  { value: "en-US", label: "English" },
+                ]}
+              />
+            </SettingRow>
+          </SettingsSection>
+
+          {/* ── Sidebar section ── */}
+          <SettingsSection icon={MessageSquare} label={t("settingsSidebar")}>
+            <SettingRow
+              label={t("settingsRecentChats")}
+              description={t("settingsRecentChatsDescription")}
             >
               <SettingsSelect
                 value={String(chatLimit)}
@@ -74,16 +96,16 @@ export const GeneralSettings = memo(function GeneralSettings({
           </SettingsSection>
 
           {/* ── Editor section ── */}
-          <SettingsSection icon={Code} label="Editor">
+          <SettingsSection icon={Code} label={t("settingsEditor")}>
             <SettingRow
-              label="Default editor"
-              description="Choose which editor opens when you click 'Open in Editor'. Auto tries Cursor, VS Code, then Zed."
+              label={t("settingsDefaultEditor")}
+              description={t("settingsDefaultEditorDescription")}
             >
               <SettingsSelect
                 value={preferredEditor}
                 onValueChange={handleEditorChange}
                 options={[
-                  { value: "auto", label: "Auto" },
+                  { value: "auto", label: t("auto") },
                   { value: "cursor", label: "Cursor" },
                   { value: "code", label: "VS Code" },
                   { value: "zed", label: "Zed" },
@@ -93,17 +115,18 @@ export const GeneralSettings = memo(function GeneralSettings({
           </SettingsSection>
 
           {/* ── Voice Dictation section ── */}
-          <SettingsSection icon={Mic} label="Voice Dictation">
+          <ShortcutSettings appSettings={appSettings} onUpdate={onUpdateAppSettings} />
+          <SettingsSection icon={Mic} label={t("settingsVoiceDictation")}>
             <SettingRow
-              label="Dictation mode"
-              description="Native uses your OS dictation (macOS only). Whisper runs a local AI model for speech-to-text on all platforms (~40 MB download on first use)."
+              label={t("settingsDictationMode")}
+              description={t("settingsDictationDescription")}
             >
               <SettingsSelect
                 value={voiceDictation}
                 onValueChange={handleVoiceDictationChange}
                 options={[
-                  { value: "native", label: "Native (OS)" },
-                  { value: "whisper", label: "Whisper (Local AI)" },
+                  { value: "native", label: t("nativeOs") },
+                  { value: "whisper", label: t("whisperLocalAi") },
                 ]}
               />
             </SettingRow>

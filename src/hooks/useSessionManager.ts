@@ -4,6 +4,7 @@ import { toMcpStatusState } from "../lib/mcp-utils";
 import { toChatSession } from "../lib/session/records";
 import { BackgroundSessionStore } from "../lib/background/session-store";
 import { createSystemMessage } from "../lib/message-factory";
+import { getRetryRequest, isRetryableUpstreamError } from "../lib/session/retry";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
 import {
   DRAFT_ID,
@@ -20,6 +21,7 @@ import {
 import { useSessionPane } from "./session/useSessionPane";
 import { useMessageQueue } from "./session/useMessageQueue";
 import { useSessionPersistence } from "./session/useSessionPersistence";
+import { useBackgroundReaper } from "./session/useBackgroundReaper";
 import { useDraftMaterialization } from "./session/useDraftMaterialization";
 import { useSessionRevival } from "./session/useSessionRevival";
 import { useSessionLifecycle } from "./session/useSessionLifecycle";
@@ -155,6 +157,7 @@ export function useSessionManager(
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageQueueRef = useRef<Map<string, QueuedMessage[]>>(new Map());
   const pendingAcpDraftPromptRef = useRef<PendingAcpDraftPrompt | null>(null);
+  const retryInFlightRef = useRef<Set<string>>(new Set());
   const acpAgentIdRef = useRef<string | null>(null);
   const acpAgentSessionIdRef = useRef<string | null>(null);
   const codexRawModelsRef = useRef(codexRawModels);
@@ -266,6 +269,14 @@ export function useSessionManager(
   };
 
   // ── Compose sub-hooks ──
+  const { reviveSession, reviveAcpSession, reviveCodexSession, reviveQueuedMessage } = useSessionRevival({
+    refs,
+    setters,
+    engines,
+    findProject,
+    getProjectCwd,
+  });
+
   const {
     enqueueMessage,
     clearQueue,
@@ -273,7 +284,9 @@ export function useSessionManager(
     sendQueuedMessageNext,
     continueQueuedBackgroundSession,
     sendNextId,
-  } = useMessageQueue({ refs, setters, engines, activeSessionId });
+  } = useMessageQueue({ refs, setters, engines, activeSessionId, reviveQueuedMessage });
+
+  useBackgroundReaper({ refs });
 
   const { saveCurrentSession, seedBackgroundStore, generateSessionTitle } = useSessionPersistence({
     refs,
@@ -301,14 +314,6 @@ export function useSessionManager(
       generateSessionTitle,
       applyCodexModelDefaultEffort,
     });
-
-  const { reviveSession, reviveAcpSession, reviveCodexSession } = useSessionRevival({
-    refs,
-    setters,
-    engines,
-    findProject,
-    getProjectCwd,
-  });
 
   const {
     createSession,
@@ -359,6 +364,48 @@ export function useSessionManager(
     resetCodexEffortToModelDefault,
   });
 
+  const ensureCodexSessionForGoal = useCallback(async (): Promise<string | null> => {
+    if (activeEngine !== "codex") return null;
+    if (codexSessionId) return codexSessionId;
+    if (activeSessionId !== DRAFT_ID) return null;
+    const sessionId = await materializeDraft("");
+    if (!sessionId) return null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return sessionId;
+  }, [activeEngine, activeSessionId, codexSessionId, materializeDraft]);
+
+  const getCodexGoal = useCallback(async () => {
+    const sessionId = await ensureCodexSessionForGoal();
+    if (sessionId) await codex.getGoal(sessionId);
+  }, [codex.getGoal, ensureCodexSessionForGoal]);
+  const setCodexGoal = useCallback(async (input: { objective: string; tokenBudget: number | null }) => {
+    const sessionId = await ensureCodexSessionForGoal();
+    if (!sessionId) return false;
+    return codex.setGoal(input, sessionId);
+  }, [codex.setGoal, ensureCodexSessionForGoal]);
+  const clearCodexGoal = useCallback(async () => codex.clearGoal(), [codex.clearGoal]);
+  const pauseCodexGoal = useCallback(async () => codex.pauseGoal(), [codex.pauseGoal]);
+  const resumeCodexGoal = useCallback(async () => codex.resumeGoal(), [codex.resumeGoal]);
+
+  const retryLastMessage = useCallback(async (errorMessageId: string) => {
+    if (isProcessingRef.current) return;
+    if (retryInFlightRef.current.has(errorMessageId)) return;
+    const request = getRetryRequest(messagesRef.current, errorMessageId);
+    if (!request) return;
+
+    retryInFlightRef.current.add(errorMessageId);
+    // Disable this action before sending so a slow upstream cannot receive
+    // duplicate requests from repeated clicks.
+    engine.setMessages((prev) => prev.map((message) =>
+      message.id === errorMessageId ? { ...message, retryable: false } : message,
+    ));
+    try {
+      await send(request.content, request.images, request.displayContent);
+    } finally {
+      retryInFlightRef.current.delete(errorMessageId);
+    }
+  }, [engine, send]);
+
   const seedDevExampleConversation = useCallback(async () => {
     if (!import.meta.env.DEV) return;
     const { buildDevExampleConversation } = await import("../lib/dev-seeding/chat-seed");
@@ -396,6 +443,7 @@ export function useSessionManager(
         map.set(session.id, existing
           ? {
               ...session,
+              ...(session.agentSessionId ? {} : existing.agentSessionId ? { agentSessionId: existing.agentSessionId } : {}),
               isProcessing: existing.isProcessing,
               hasPendingPermission: existing.hasPendingPermission,
               hasUnreadCompletion: existing.hasUnreadCompletion,
@@ -476,7 +524,11 @@ export function useSessionManager(
     if (promptResult?.error) {
       acp.setMessages((prev) => [
         ...prev,
-        createSystemMessage(`ACP prompt error: ${promptResult.error}`, true),
+        createSystemMessage(
+          `ACP prompt error: ${promptResult.error}`,
+          true,
+          isRetryableUpstreamError(promptResult.error ?? ""),
+        ),
       ]);
       acp.setIsProcessing(false);
     }
@@ -520,6 +572,9 @@ export function useSessionManager(
           totalCost: backgroundState.totalCost,
           contextUsage: backgroundState.contextUsage,
           isCompacting: backgroundState.isCompacting,
+          codexGoal: backgroundState.codexGoal,
+          codexGoalSupported: backgroundState.codexGoalSupported,
+          reconnectMessage: backgroundState.reconnectMessage,
         },
         initialPermission: backgroundState.pendingPermission,
         initialConfigOptions: [],
@@ -571,6 +626,7 @@ export function useSessionManager(
     setCurrentBranch,
     currentBranch,
     activeSession,
+    activeEngine,
     isDraft,
     draftProjectId,
     createSession,
@@ -598,6 +654,17 @@ export function useSessionManager(
     sessionInfo: engine.sessionInfo,
     totalCost: engine.totalCost,
     send,
+    quickCaptureDraftIdentity: () => startOptionsRef.current.conversationId ?? null,
+    ownsQuickCaptureDraft: (target: { projectId: string; agentId: string }, identity: string) => activeSessionIdRef.current === DRAFT_ID
+      && draftProjectIdRef.current === target.projectId && (startOptionsRef.current.agentId ?? "claude-code") === target.agentId
+      && startOptionsRef.current.conversationId === identity,
+    quickCaptureDraftReadiness: (): "ready" | "preparing" | "authRequired" => {
+      if (startOptionsRef.current.engine !== "acp") return "ready";
+      if (acp.authRequired) return "authRequired";
+      const id = draftAcpSessionIdRef.current;
+      return id && liveSessionIdsRef.current.has(id) ? "ready" : "preparing";
+    },
+    retryLastMessage,
     unqueueMessage,
     sendQueuedMessageNext,
     sendNextId,
@@ -627,6 +694,7 @@ export function useSessionManager(
     respondPermission: engine.respondPermission,
     contextUsage: engine.contextUsage,
     isCompacting: "isCompacting" in engine ? !!engine.isCompacting : false,
+    reconnectMessage: engine.reconnectMessage ?? null,
     compact: engine.compact,
     slashCommands: isCodex
       ? codex.slashCommands
@@ -745,5 +813,14 @@ export function useSessionManager(
     codexModelsLoadingMessage,
     // Codex plan steps (from turn/plan/updated events — separate from Claude's TodoWrite tool)
     codexTodoItems: codex.todoItems,
+    codexGoal: isCodex ? codex.codexGoal : null,
+    codexGoalSupported: isCodex ? codex.codexGoalSupported : null,
+    codexGoalLoading: isCodex ? codex.goalLoading : false,
+    codexGoalError: isCodex ? codex.goalError : null,
+    getCodexGoal: isCodex ? getCodexGoal : async () => undefined,
+    setCodexGoal: isCodex ? setCodexGoal : async () => false,
+    clearCodexGoal: isCodex ? clearCodexGoal : async () => false,
+    pauseCodexGoal: isCodex ? pauseCodexGoal : async () => false,
+    resumeCodexGoal: isCodex ? resumeCodexGoal : async () => false,
   };
 }

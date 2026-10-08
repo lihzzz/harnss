@@ -12,6 +12,7 @@ export function toChatSession(
 ): ChatSession {
   return {
     id: session.id,
+    conversationId: session.conversationId ?? session.id,
     projectId: session.projectId,
     title: session.title,
     createdAt: session.createdAt,
@@ -29,6 +30,8 @@ export function toChatSession(
     archived: session.archived,
     branch: session.branch,
     agentId: session.agentId,
+    agentSessionId: session.agentSessionId,
+    codexGoal: session.codexGoal,
   };
 }
 
@@ -40,6 +43,7 @@ export function buildPersistedSession(
 ): PersistedSession {
   return {
     id: session.id,
+    conversationId: session.conversationId ?? session.id,
     projectId: session.projectId,
     title: session.title,
     createdAt: session.createdAt,
@@ -58,5 +62,6 @@ export function buildPersistedSession(
     ...(session.agentId ? { agentId: session.agentId } : {}),
     ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
     ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
+    ...(session.engine === "codex" ? { codexGoal: session.codexGoal ?? null } : {}),
   };
 }

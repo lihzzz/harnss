@@ -5,7 +5,7 @@
  * Supports optional safeStorage encryption with automatic plaintext-to-encrypted
  * migration for backward compatibility.
  *
- * Used by: mcp-oauth-store, mcp-store, jira-oauth-store, jira-store.
+ * Used by: mcp-oauth-store, mcp-store.
  */
 
 import fs from "node:fs";
@@ -16,7 +16,7 @@ import { log } from "./logger";
 import { reportError } from "./error-utils";
 
 interface JsonFileStoreOptions {
-  /** Subdirectory under the app data dir (e.g. "mcp-oauth", "jira"). */
+  /** Subdirectory under the app data dir (e.g. "mcp-oauth"). */
   subDir: string;
   /**
    * Transform the caller-supplied key into a filesystem-safe filename stem.

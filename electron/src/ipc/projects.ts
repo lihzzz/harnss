@@ -5,38 +5,24 @@ import crypto from "crypto";
 import { getDataDir } from "../lib/data-dir";
 import { reportError } from "../lib/error-utils";
 import { captureEvent } from "../lib/posthog";
+import { readProjectCatalog, writeProjectCatalog, type Project } from "../lib/project-catalog";
+import { deleteProject, getSessionRepository } from "../lib/session-service";
+import { assertMainRenderer } from "../lib/productivity-ipc";
+import { assertStorageId, ProductivityError } from "../lib/productivity-errors";
+export { onProjectsChanged } from "../lib/project-catalog";
 
-interface Project {
-  id: string;
-  name: string;
-  path: string;
-  createdAt: number;
-  spaceId?: string;
-  icon?: string;
-  iconType?: "emoji" | "lucide";
-}
-
-function getProjectsFilePath(): string {
-  return path.join(getDataDir(), "projects.json");
-}
-
-function readProjects(): Project[] {
-  const filePath = getProjectsFilePath();
-  if (!fs.existsSync(filePath)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-  } catch {
-    return [];
-  }
+export function readProjects(strict = false): Project[] {
+  return readProjectCatalog(getDataDir(), strict);
 }
 
 function writeProjects(projects: Project[]): void {
-  fs.writeFileSync(getProjectsFilePath(), JSON.stringify(projects, null, 2), "utf-8");
+  writeProjectCatalog(getDataDir(), projects, reportError);
 }
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle("projects:list", () => {
+  ipcMain.handle("projects:list", async () => {
     try {
+      await getSessionRepository().initialize();
       return readProjects();
     } catch (err) {
       reportError("PROJECTS:LIST_ERR", err);
@@ -114,14 +100,13 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
   });
 
-  ipcMain.handle("projects:delete", (_event, projectId: string) => {
+  ipcMain.handle("projects:delete", async (event, projectId: string) => {
     try {
-      const projects = readProjects().filter((p) => p.id !== projectId);
-      writeProjects(projects);
-      const sessionsDir = path.join(getDataDir(), "sessions", projectId);
-      if (fs.existsSync(sessionsDir)) {
-        fs.rmSync(sessionsDir, { recursive: true, force: true });
-      }
+      assertMainRenderer(event, getMainWindow);
+      assertStorageId(projectId);
+      await getSessionRepository().initialize();
+      if (!readProjects(true).some((project) => project.id === projectId) && !getSessionRepository().isProjectBlocked(projectId)) throw new ProductivityError("INVALID_TARGET", "The project no longer exists");
+      await deleteProject(projectId);
       return { ok: true };
     } catch (err) {
       return { error: reportError("PROJECTS:DELETE_ERR", err) };

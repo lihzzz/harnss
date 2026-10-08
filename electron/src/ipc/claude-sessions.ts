@@ -7,6 +7,7 @@ import { safeSend } from "../lib/safe-send";
 import { AsyncChannel } from "../lib/async-channel";
 import { getSDK, clientAppEnv, getCliPath } from "../lib/sdk";
 import type { QueryHandle } from "../lib/sdk";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { getMcpAuthHeaders } from "../lib/mcp-oauth-flow";
 import { getClaudeModelsCache, setClaudeModelsCache } from "../lib/claude-model-cache";
 import { reportError } from "../lib/error-utils";
@@ -14,6 +15,12 @@ import { buildSdkMcpConfig } from "@shared/lib/mcp-config";
 import type { McpServerInput } from "@shared/lib/mcp-config";
 import { getClaudeBinaryMetadata, getClaudeBinaryPath, getClaudeBinaryStatus, getClaudeVersion } from "../lib/claude-binary";
 import { captureEvent } from "../lib/posthog";
+import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
+import { withHindsightMcpServers, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeClaudeEvent, completeMemoryTurn } from "../lib/memory/service";
+import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
+import { getSessionRepository } from "../lib/session-service";
+import type { SessionRuntimeLease } from "../lib/session-repository";
+import type { SessionResumeSource } from "@shared/types/productivity";
 
 /** SDK options for file checkpointing — enables Write/Edit/NotebookEdit revert support */
 function fileCheckpointOptions(): Record<string, unknown> {
@@ -44,9 +51,42 @@ interface SessionEntry {
   stopping?: boolean;
   /** Why the stop was requested (user action, cleanup, etc.). */
   stopReason?: string;
+  runtimeLease?: SessionRuntimeLease;
 }
 
 export const sessions = new Map<string, SessionEntry>();
+
+function assertClaudeSessionActive(sessionId: string, session: SessionEntry): void {
+  if (sessions.get(sessionId) !== session || (session.stopping && session.stopReason !== "interrupt") || session.restarting) throw new Error("Claude session stopped");
+  session.runtimeLease?.assertActive();
+}
+
+async function stopSession(sessionId: string, reason: string): Promise<void> {
+  stopUsageSession(sessionId);
+  const session = sessions.get(sessionId);
+  if (!session) return;
+  session.stopping = true;
+  session.stopReason = reason;
+  for (const pending of session.pendingPermissions.values()) pending.resolve({ behavior: "deny", message: "Session deleted" });
+  session.pendingPermissions.clear();
+  session.channel.close();
+  session.queryHandle?.close();
+  if (!session.queryHandle) {
+    sessions.delete(sessionId);
+    session.runtimeLease?.release();
+    unregisterMemorySession(sessionId);
+    return;
+  }
+  const deadline = Date.now() + 5_000;
+  while (sessions.get(sessionId) === session) {
+    if (Date.now() >= deadline) throw new Error("Claude session did not stop before the deletion deadline");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+export async function stopForDeletion(sessionId: string): Promise<void> {
+  await stopSession(sessionId, "session_delete");
+}
 
 function toSdkModelOverride(model?: string | null): string | undefined {
   const normalized = model?.trim();
@@ -262,6 +302,12 @@ function startEventLoop(
         if (msgObj.type === "user" || msgObj.type === "result") {
           log("EVENT_FULL", message);
         }
+        observeClaudeEvent(sessionId, msgObj);
+        if (msgObj.type === "system" && typeof msgObj.task_id === "string") {
+          if (msgObj.subtype === "task_started") beginUsageTurn(sessionId, `task:${msgObj.task_id}`);
+          if (msgObj.subtype === "task_notification") endUsageTurn(sessionId, `task:${msgObj.task_id}`);
+        }
+        if (msgObj.type === "result" && !msgObj.parent_tool_use_id) endUsageTurn(sessionId);
         safeSend(getMainWindow, "claude:event", { ...(message as object), _sessionId: sessionId });
 
         // Index tool names from assistant tool_use blocks for later lookup by tool_use_id
@@ -280,6 +326,7 @@ function startEventLoop(
 
         // Track session completion on result events
         if (msgObj.type === "result") {
+          void completeMemoryTurn(sessionId);
           void captureEvent("session_completed", {
             engine: "claude",
             total_cost: msgObj.total_cost_usd,
@@ -312,12 +359,18 @@ function startEventLoop(
       queryError = reportError("QUERY_ERROR", err, { engine: "claude", sessionId });
       log("QUERY_ERROR", `${logPrefix} stopping=${!!session.stopping} reason=${session.stopReason ?? "none"}`);
     } finally {
-      if (!session.restarting) {
+      session.runtimeLease?.release();
+      const ownsSession = sessions.get(sessionId) === session;
+      if (ownsSession) {
+        sessions.delete(sessionId);
+        unregisterMemorySession(sessionId);
+      }
+      if (!session.restarting && ownsSession) {
+        stopUsageSession(sessionId);
         // Requested stop: treat teardown errors as clean exit
         const stopRequested = session.stopping;
         const exitCode = (queryError && !stopRequested) ? 1 : 0;
         log("EXIT", `${logPrefix} total_events=${session.eventCounter} stopRequested=${!!stopRequested} stopReason=${session.stopReason ?? "none"} error=${queryError ?? "none"}`);
-        sessions.delete(sessionId);
         safeSend(getMainWindow, "claude:exit", {
           code: exitCode, _sessionId: sessionId,
           ...((queryError && !stopRequested) ? { error: queryError } : {}),
@@ -355,6 +408,8 @@ interface StartOptions {
   /** Resume at a specific message UUID — used with forkSession to truncate history */
   resumeSessionAt?: string;
   mcpServers?: McpServerInput[];
+  memoryContext?: { projectId: string };
+  source?: SessionResumeSource;
 }
 
 function buildThinkingConfig(): { type: "adaptive" } {
@@ -370,6 +425,30 @@ function logSdkCliPath(context: string, cliPath?: string): void {
 }
 
 let modelsRevalidationPromise: Promise<{ models: Array<Record<string, unknown>>; updatedAt?: number; error?: string }> | null = null;
+
+/** Read credential configuration without sending a user turn or retaining account details. */
+export async function hasConfiguredClaudeAccount(cwd: string): Promise<boolean> {
+  const query = await getSDK();
+  const channel = new AsyncChannel<SDKUserMessage>();
+  const handle = query({ prompt: channel, options: {
+    cwd, settingSources: ["user", "project", "local"],
+    pathToClaudeCodeExecutable: getClaudeBinaryMetadata({ installIfMissing: false, allowSdkFallback: true })?.path,
+    env: { ...process.env, ...clientAppEnv() },
+  } });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const account = await Promise.race([
+      handle.accountInfo(),
+      new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Account check timed out; retry after the agent starts")), 4_000); }),
+    ]);
+    if (account.apiProvider && account.apiProvider !== "firstParty") return true;
+    return [account.email, account.tokenSource, account.apiKeySource].some((value) => !!value && !/^(none|unknown)$/i.test(value));
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    channel.close();
+    handle.close();
+  }
+}
 
 async function revalidateClaudeModelsCache(cwd?: string): Promise<{ models: Array<Record<string, unknown>>; updatedAt?: number; error?: string }> {
   if (modelsRevalidationPromise) return modelsRevalidationPromise;
@@ -499,247 +578,205 @@ async function restartSession(
   if (!session?.queryHandle || !session.startOptions) {
     return { error: "No active session to restart" };
   }
-
-  const logPrefix = `session=${sessionId.slice(0, 8)}`;
-  log("SESSION_RESTART", `${logPrefix} (rebuilding with fresh MCP config)`);
-
-  // Mark old session so its event loop doesn't send claude:exit
-  session.restarting = true;
-  session.channel.close();
-  session.queryHandle.close();
-
-  // Deny all pending permissions
-  for (const [reqId, pending] of session.pendingPermissions) {
-    pending.resolve({ behavior: "deny", message: "Session restarting" });
-    session.pendingPermissions.delete(reqId);
-  }
-
   const opts = session.startOptions;
-  const mcpServers = mcpServersOverride ?? opts.mcpServers;
-  const cwd = cwdOverride || opts.cwd || process.cwd();
-  const query = await getSDK();
-  const newChannel = new AsyncChannel<unknown>();
-  const cliPath = await getClaudeBinaryPath();
-  logSdkCliPath(`restart session=${sessionId.slice(0, 8)}`, cliPath);
-
-  const newSession: SessionEntry = {
-    channel: newChannel,
-    queryHandle: null,
-    eventCounter: session.eventCounter,
-    pendingPermissions: new Map(),
-    startOptions: {
-      ...opts,
-      cwd,
-      mcpServers,
-      ...(effortOverride ? { effort: effortOverride } : {}),
-      ...(modelOverride ? { model: modelOverride } : {}),
-    },
-  };
-
-  const canUseTool = (toolName: string, input: unknown, context: { toolUseID: string; suggestions: unknown; decisionReason: string }) => {
-    return new Promise<PermissionResult>((resolve) => {
-      const requestId = crypto.randomUUID();
-      newSession.pendingPermissions.set(requestId, { resolve });
-      safeSend(getMainWindow,"claude:permission_request", {
-        _sessionId: sessionId,
-        requestId,
-        toolName,
-        toolInput: input,
-        toolUseId: context.toolUseID,
-        suggestions: context.suggestions,
-        decisionReason: context.decisionReason,
-      });
-    });
-  };
-
-  const queryOptions: Record<string, unknown> = {
-    cwd,
-    includePartialMessages: true,
-    thinking: buildThinkingConfig(),
-    canUseTool,
-    settingSources: ["user", "project", "local"],
-    pathToClaudeCodeExecutable: cliPath,
-    agentProgressSummaries: true,
-    ...fileCheckpointOptions(),
-    resume: sessionId,
-    stderr: (data: string) => {
-      const trimmed = data.trim();
-      log("STDERR", `${logPrefix} ${trimmed}`);
-      safeSend(getMainWindow,"claude:stderr", { data, _sessionId: sessionId });
-    },
-  };
-
-  applyPermissionModeOptions(queryOptions, opts.permissionMode);
-  const restartModel = toSdkModelOverride(modelOverride ?? opts.model);
-  if (restartModel) queryOptions.model = restartModel;
-  if (effortOverride ?? opts.effort) {
-    queryOptions.effort = effortOverride ?? opts.effort;
-  }
-
-  if (mcpServers?.length) {
-    queryOptions.mcpServers = await buildSdkMcpConfig(mcpServers, mcpConfigOptions);
-  }
-
-  log("SESSION_RESTART_SPAWN", { sessionId, options: summarizeSpawnOptions(queryOptions) });
-
-  let q;
+  const projectId = opts.memoryContext?.projectId ?? opts.source?.projectId;
+  if (!projectId) return { error: "Save the session before restarting it" };
   try {
-    q = query({ prompt: newChannel, options: queryOptions });
-    newSession.queryHandle = q;
-    sessions.set(sessionId, newSession);
+    if (!await getSessionRepository().load(projectId, sessionId)) return { error: "Save the session before restarting it" };
+    assertClaudeSessionActive(sessionId, session);
+    // Wait for the old event loop before reusing its runtime ID.
+    session.restarting = true;
+    await stopSession(sessionId, "restart");
+    if (session.stopReason !== "restart") return { error: "Claude session stopped" };
+    const result = await startSession({
+      ...opts,
+      cwd: cwdOverride ?? opts.cwd,
+      mcpServers: mcpServersOverride ?? opts.mcpServers,
+      effort: effortOverride ?? opts.effort,
+      model: modelOverride ?? opts.model,
+      resume: sessionId,
+      forkSession: false,
+      resumeSessionAt: undefined,
+      source: { projectId, runtimeSessionId: sessionId },
+    }, getMainWindow, session.eventCounter);
+    return result.error ? { error: result.error } : { ok: true, restarted: true };
   } catch (err) {
-    // Restart failed — clean up and notify renderer
-    sessions.delete(sessionId);
     const errMsg = reportError("SESSION_RESTART_ERR", err, { engine: "claude", sessionId });
-    safeSend(getMainWindow,"claude:exit", {
-      code: 1, _sessionId: sessionId, error: errMsg,
-    });
     return { error: `Restart failed: ${errMsg}` };
   }
+}
 
-  // Restarted sessions always resume — enforce permission mode on the live handle.
-  await enforcePermissionMode(sessionId, q, opts.permissionMode, "restart");
+async function startSession(options: StartOptions, getMainWindow: () => BrowserWindow | null, eventCounter = 0) {
+  // Fork sessions get a fresh IPC-level ID to avoid race with old session's
+  // async cleanup (which would delete the new Map entry if we reused the old key).
+  const sessionId = (options.resume && options.forkSession)
+    ? crypto.randomUUID()
+    : (options.resume || crypto.randomUUID());
+  let runtimeLease: SessionRuntimeLease | undefined;
+  let ownedSession: SessionEntry | undefined;
+  try {
+    if (sessions.has(sessionId)) throw new Error("Claude session is already running");
+    if (options.resume && !options.source) throw new Error("A saved source is required to resume a session");
+    if (options.source) runtimeLease = await getSessionRepository().bindRuntime(options.source, "claude", sessionId, () => stopForDeletion(sessionId));
+    else if (options.memoryContext?.projectId) runtimeLease = await getSessionRepository().bindProjectRuntime(options.memoryContext.projectId, sessionId, () => stopForDeletion(sessionId));
+    const query = await getSDK();
+    runtimeLease?.assertActive();
+    if (sessions.has(sessionId)) throw new Error("Claude session is already running");
 
-  startEventLoop(sessionId, q, newSession, getMainWindow);
+    const channel = new AsyncChannel<unknown>();
+    const session: SessionEntry = {
+      channel,
+      queryHandle: null,
+      eventCounter,
+      pendingPermissions: new Map(),
+      startOptions: options,
+      runtimeLease,
+    };
+    ownedSession = session;
+    sessions.set(sessionId, session);
+    if (options.memoryContext?.projectId) registerMemorySession(sessionId, options.memoryContext.projectId, "claude");
 
-  return { ok: true, restarted: true };
+    const canUseTool = (toolName: string, input: unknown, context: { toolUseID: string; suggestions: unknown; decisionReason: string }) => {
+      return new Promise<PermissionResult>((resolve) => {
+        try { assertClaudeSessionActive(sessionId, session); }
+        catch { resolve({ behavior: "deny", message: "Session stopped" }); return; }
+        const requestId = crypto.randomUUID();
+        session.pendingPermissions.set(requestId, { resolve });
+        log("PERMISSION_REQUEST", {
+          session: sessionId.slice(0, 8),
+          tool: toolName,
+          requestId,
+          toolUseId: context.toolUseID,
+          reason: context.decisionReason,
+          hasSuggestions: Array.isArray(context.suggestions) && context.suggestions.length > 0,
+        });
+        safeSend(getMainWindow,"claude:permission_request", {
+          _sessionId: sessionId,
+          requestId,
+          toolName,
+          toolInput: input,
+          toolUseId: context.toolUseID,
+          suggestions: context.suggestions,
+          decisionReason: context.decisionReason,
+        });
+      });
+    };
+
+    const cliPath = await getClaudeBinaryPath();
+    assertClaudeSessionActive(sessionId, session);
+    logSdkCliPath(`start session=${sessionId.slice(0, 8)}`, cliPath);
+    const queryOptions: Record<string, unknown> = {
+      cwd: options.cwd || process.cwd(),
+      includePartialMessages: true,
+      thinking: buildThinkingConfig(),
+      canUseTool,
+      settingSources: ["user", "project", "local"],
+      pathToClaudeCodeExecutable: cliPath,
+      agentProgressSummaries: true,
+      ...fileCheckpointOptions(),
+      stderr: (data: string) => {
+        const trimmed = data.trim();
+        log("STDERR", `session=${sessionId.slice(0, 8)} ${trimmed}`);
+        safeSend(getMainWindow,"claude:stderr", { data, _sessionId: sessionId });
+      },
+    };
+
+    if (options.resume) {
+      queryOptions.resume = options.resume;
+      if (options.forkSession) {
+        queryOptions.forkSession = true;
+        // Use our IPC-level ID as the fork's session ID so future resume works
+        queryOptions.sessionId = sessionId;
+      }
+      if (options.resumeSessionAt) queryOptions.resumeSessionAt = options.resumeSessionAt;
+    } else {
+      queryOptions.sessionId = sessionId;
+    }
+
+    applyPermissionModeOptions(queryOptions, options.permissionMode);
+    const startModel = toSdkModelOverride(options.model);
+    if (startModel) {
+      queryOptions.model = startModel;
+    }
+    if (options.effort) {
+      queryOptions.effort = options.effort;
+    }
+
+    const mcpServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), sessionId);
+    if (mcpServers.length) {
+      queryOptions.mcpServers = await buildSdkMcpConfig(mcpServers, mcpConfigOptions);
+    }
+    assertClaudeSessionActive(sessionId, session);
+
+    log("SPAWN", { sessionId, resume: options.resume || null, options: summarizeSpawnOptions(queryOptions) });
+
+    const q = query({ prompt: channel, options: queryOptions });
+    session.queryHandle = q;
+    startEventLoop(sessionId, q, session, getMainWindow);
+
+    // For resumed sessions, explicitly enforce the permission mode on the live
+    // handle — the SDK CLI may load its own saved state and ignore the query option.
+    if (options.resume) {
+      await enforcePermissionMode(sessionId, q, options.permissionMode, "start-resume");
+    }
+
+    assertClaudeSessionActive(sessionId, session);
+
+    void captureEvent("session_created", {
+      engine: "claude",
+      model: options.model,
+      is_resume: !!options.resume,
+    });
+
+    return { sessionId, pid: 0 };
+  } catch (err) {
+    if (ownedSession && sessions.get(sessionId) === ownedSession) {
+      try { await stopSession(sessionId, "start_failed"); }
+      catch (stopError) { reportError("START_STOP_ERR", stopError, { engine: "claude", sessionId }); }
+    }
+    if (!ownedSession || sessions.get(sessionId) !== ownedSession) runtimeLease?.release();
+    const errMsg = reportError("START_ERROR", err, { engine: "claude", sessionId });
+    if (!sessions.has(sessionId)) safeSend(getMainWindow,"claude:exit", {
+      code: 1, _sessionId: sessionId, error: errMsg,
+    });
+    void captureEvent("session_error", { engine: "claude", phase: "start" });
+    return { sessionId, pid: 0, error: errMsg };
+  }
 }
 
 // ── IPC Registration ──
 
 export function register(getMainWindow: () => BrowserWindow | null): void {
-  ipcMain.handle("claude:start", async (_event, options: StartOptions = {}) => {
-    // Fork sessions get a fresh IPC-level ID to avoid race with old session's
-    // async cleanup (which would delete the new Map entry if we reused the old key).
-    const sessionId = (options.resume && options.forkSession)
-      ? crypto.randomUUID()
-      : (options.resume || crypto.randomUUID());
+  ipcMain.handle("claude:start", (_event, options: StartOptions = {}) => startSession(options, getMainWindow));
 
-    try {
-      const query = await getSDK();
-
-      const channel = new AsyncChannel<unknown>();
-      const session: SessionEntry = {
-        channel,
-        queryHandle: null,
-        eventCounter: 0,
-        pendingPermissions: new Map(),
-        startOptions: options,
-      };
-      sessions.set(sessionId, session);
-
-      const canUseTool = (toolName: string, input: unknown, context: { toolUseID: string; suggestions: unknown; decisionReason: string }) => {
-        return new Promise<PermissionResult>((resolve) => {
-          const requestId = crypto.randomUUID();
-          session.pendingPermissions.set(requestId, { resolve });
-          log("PERMISSION_REQUEST", {
-            session: sessionId.slice(0, 8),
-            tool: toolName,
-            requestId,
-            toolUseId: context.toolUseID,
-            reason: context.decisionReason,
-            hasSuggestions: Array.isArray(context.suggestions) && context.suggestions.length > 0,
-          });
-          safeSend(getMainWindow,"claude:permission_request", {
-            _sessionId: sessionId,
-            requestId,
-            toolName,
-            toolInput: input,
-            toolUseId: context.toolUseID,
-            suggestions: context.suggestions,
-            decisionReason: context.decisionReason,
-          });
-        });
-      };
-
-      const cliPath = await getClaudeBinaryPath();
-      logSdkCliPath(`start session=${sessionId.slice(0, 8)}`, cliPath);
-      const queryOptions: Record<string, unknown> = {
-        cwd: options.cwd || process.cwd(),
-        includePartialMessages: true,
-        thinking: buildThinkingConfig(),
-        canUseTool,
-        settingSources: ["user", "project", "local"],
-        pathToClaudeCodeExecutable: cliPath,
-        agentProgressSummaries: true,
-        ...fileCheckpointOptions(),
-        stderr: (data: string) => {
-          const trimmed = data.trim();
-          log("STDERR", `session=${sessionId.slice(0, 8)} ${trimmed}`);
-          safeSend(getMainWindow,"claude:stderr", { data, _sessionId: sessionId });
-        },
-      };
-
-      if (options.resume) {
-        queryOptions.resume = options.resume;
-        if (options.forkSession) {
-          queryOptions.forkSession = true;
-          // Use our IPC-level ID as the fork's session ID so future resume works
-          queryOptions.sessionId = sessionId;
-        }
-        if (options.resumeSessionAt) queryOptions.resumeSessionAt = options.resumeSessionAt;
-      } else {
-        queryOptions.sessionId = sessionId;
-      }
-
-      applyPermissionModeOptions(queryOptions, options.permissionMode);
-      const startModel = toSdkModelOverride(options.model);
-      if (startModel) {
-        queryOptions.model = startModel;
-      }
-      if (options.effort) {
-        queryOptions.effort = options.effort;
-      }
-
-      if (options.mcpServers?.length) {
-        queryOptions.mcpServers = await buildSdkMcpConfig(options.mcpServers, mcpConfigOptions);
-      }
-
-      log("SPAWN", { sessionId, resume: options.resume || null, options: summarizeSpawnOptions(queryOptions) });
-
-      const q = query({ prompt: channel, options: queryOptions });
-      session.queryHandle = q;
-
-      // For resumed sessions, explicitly enforce the permission mode on the live
-      // handle — the SDK CLI may load its own saved state and ignore the query option.
-      if (options.resume) {
-        await enforcePermissionMode(sessionId, q, options.permissionMode, "start-resume");
-      }
-
-      startEventLoop(sessionId, q, session, getMainWindow);
-
-      void captureEvent("session_created", {
-        engine: "claude",
-        model: options.model,
-        is_resume: !!options.resume,
-      });
-
-      return { sessionId, pid: 0 };
-    } catch (err) {
-      // getSDK() or query() threw — clean up and return error
-      sessions.delete(sessionId);
-      const errMsg = reportError("START_ERROR", err, { engine: "claude", sessionId });
-      safeSend(getMainWindow,"claude:exit", {
-        code: 1, _sessionId: sessionId, error: errMsg,
-      });
-      void captureEvent("session_error", { engine: "claude", phase: "start" });
-      return { sessionId, pid: 0, error: errMsg };
-    }
-  });
-
-  ipcMain.handle("claude:send", (_event, { sessionId, message }: { sessionId: string; message: { message: { content: unknown } } }) => {
+  ipcMain.handle("claude:send", async (_event, { sessionId, message }: { sessionId: string; message: { message: { content: unknown } } }) => {
     const session = sessions.get(sessionId);
     if (!session) {
       log("SEND", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
       return { error: "Claude session not found" };
     }
-    log("SEND", `session=${sessionId.slice(0, 8)} content=${JSON.stringify(message).slice(0, 500)}`);
+    const originalContent = message.message.content;
+    const originalText = typeof originalContent === "string"
+      ? originalContent
+      : Array.isArray(originalContent)
+        ? originalContent.map((block) => typeof block === "object" && block && "text" in block && typeof (block as { text?: unknown }).text === "string" ? (block as { text: string }).text : "").join("\n")
+        : "";
+    const memory = await beforeMemorySend(sessionId, originalText);
+    try { assertClaudeSessionActive(sessionId, session); }
+    catch (error) { return { error: reportError("SEND_STOPPED", error, { engine: "claude", sessionId }) }; }
+    const content = memory.text === originalText || !originalText
+      ? originalContent
+      : Array.isArray(originalContent)
+        ? [{ type: "text", text: memory.text.slice(0, memory.text.length - originalText.length) }, ...originalContent]
+        : memory.text;
+    log("SEND", `session=${sessionId.slice(0, 8)} content=${JSON.stringify(originalContent).slice(0, 500)}`);
     session.channel.push({
       type: "user",
-      message: { role: "user", content: message.message.content },
+      message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: sessionId,
     });
+    beginUsageTurn(sessionId);
     return { ok: true };
   });
 
@@ -874,6 +911,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     "claude:stop",
     (_event, payload: string | { sessionId: string; reason?: string }) => {
       const { sessionId, reason } = parseStopRequest(payload);
+      stopUsageSession(sessionId);
       const session = sessions.get(sessionId);
       if (session) {
         // Mark as requested stop so teardown errors are suppressed
@@ -898,6 +936,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       log("INTERRUPT", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
       return { error: "Session not found" };
     }
+    try { assertClaudeSessionActive(sessionId, session); }
+    catch (error) { return { error: reportError("INTERRUPT_STOPPED", error, { engine: "claude", sessionId }) }; }
 
     log("INTERRUPT", `session=${sessionId.slice(0, 8)}`);
 
@@ -929,6 +969,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
     try {
       await session.queryHandle.stopTask(taskId);
+      endUsageTurn(sessionId, `task:${taskId}`);
       log("STOP_TASK", `session=${sessionId.slice(0, 8)} task=${taskId}`);
       return { ok: true };
     } catch (err) {
@@ -1063,13 +1104,16 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     cwd,
     effort,
     model,
+    memoryContext,
   }: {
     sessionId: string;
     mcpServers?: McpServerInput[];
     cwd?: string;
     effort?: StartOptions["effort"];
     model?: string;
+    memoryContext?: { projectId: string };
   }) => {
+    if (memoryContext?.projectId) registerMemorySession(sessionId, memoryContext.projectId, "claude");
     return restartSession(sessionId, getMainWindow, mcpServers, cwd, effort, model);
   });
 }
@@ -1077,6 +1121,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 /** Stop all Claude sessions (called on app quit). Idempotent. */
 export function stopAll(): void {
   for (const [sessionId, session] of sessions) {
+    stopUsageSession(sessionId);
     log("CLEANUP", `Closing Claude session ${sessionId.slice(0, 8)}`);
     session.stopping = true;
     session.stopReason = "app-quit";
@@ -1086,6 +1131,7 @@ export function stopAll(): void {
     session.pendingPermissions.clear();
     session.channel.close();
     session.queryHandle?.close();
+    unregisterMemorySession(sessionId);
   }
   sessions.clear();
 }

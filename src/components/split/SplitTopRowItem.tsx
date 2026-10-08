@@ -18,7 +18,7 @@ import { PanelDockPreview } from "@/components/PanelDockPreview";
 import { ToolIslandContent } from "@/components/workspace/ToolIslandContent";
 import { SplitChatPane } from "@/components/split/SplitChatPane";
 import { SplitPaneHost } from "@/components/split/SplitPaneHost";
-import type { ToolId } from "@/types/tools";
+import type { PanelToolId, ToolId } from "@/types/tools";
 import type { ChatSession, InstalledAgent, Project, TodoItem, BackgroundAgent } from "@/types";
 import type { SessionPaneState } from "@/hooks/session/useSessionPane";
 import type { CodexModelSummary, SessionPaneBootstrap } from "@/hooks/session/types";
@@ -239,7 +239,7 @@ function renderToolIsland(
       }}
     >
       <ToolIslandContent
-        toolId={island.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">}
+        toolId={island.toolId as PanelToolId}
         persistKey={island.persistKey}
         headerControls={controls}
         projectPath={paneProjectPath}

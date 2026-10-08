@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import type { Project } from "../types";
+import { toast } from "sonner";
 
 export function useProjectManager() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -29,8 +30,11 @@ export function useProjectManager() {
   }, []);
 
   const deleteProject = useCallback(async (id: string) => {
-    await window.claude.projects.delete(id);
-    setProjects((prev) => prev.filter((p) => p.id !== id));
+    try {
+      const result = await window.claude.projects.delete(id);
+      if (result.error) { toast.error(result.error); return; }
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
   }, []);
 
   const renameProject = useCallback(async (id: string, name: string) => {

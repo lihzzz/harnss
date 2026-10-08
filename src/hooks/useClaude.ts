@@ -34,6 +34,7 @@ import {
   buildSdkContent,
 } from "../lib/engine/protocol";
 import { createSystemMessage, createUserMessage, formatResultError, nextId } from "../lib/message-factory";
+import { isRetryableUpstreamError } from "../lib/session/retry";
 import { bgAgentStore } from "../lib/background/agent-store";
 import { suppressNextSessionCompletion } from "../lib/notification-utils";
 import { advancePermissionQueue, enqueuePermissionRequest } from "../lib/engine/permission-queue";
@@ -67,6 +68,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     pendingPermission, setPendingPermission,
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,
+    reconnectMessage,
     sessionIdRef, messagesRef,
     scheduleFlush: scheduleRaf,
     cancelPendingFlush,
@@ -513,7 +515,9 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
                 ...(textContent ? { isStreaming: false } : {}),
                 ...(thinkingContent ? { thinkingComplete: true } : {}),
               };
-              if (!merged.content.trim() && !merged.thinking) {
+              // Snapshots arrive per content block. An empty thinking snapshot
+              // must not remove the target for subsequent text deltas.
+              if (!merged.isStreaming && !merged.content.trim() && !merged.thinking) {
                 return prev.filter((m) => m.id !== target.id);
               }
               return prev.map((m) => (m.id === target.id ? merged : m));
@@ -707,9 +711,12 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
             const errorMsg = resultEvent.errors?.join("\n")
               || resultEvent.result
               || "An error occurred";
+            const canRetry = isRetryableUpstreamError(errorMsg)
+              && (resultEvent.subtype === "error"
+                || resultEvent.subtype === "error_during_execution");
             setMessages((prev) => [
               ...prev,
-              createSystemMessage(formatResultError(resultEvent.subtype, errorMsg), true),
+              createSystemMessage(formatResultError(resultEvent.subtype, errorMsg), true, canRetry),
             ]);
           }
 
@@ -963,7 +970,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
         const errorDetail = data.error || `Process exited with code ${data.code}`;
         setMessages((prev) => [
           ...prev,
-          createSystemMessage(errorDetail, true),
+          createSystemMessage(errorDetail, true, isRetryableUpstreamError(errorDetail)),
         ]);
       }
     });
@@ -1008,10 +1015,11 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     });
   }, []);
 
-  const refreshMcpStatus = useCallback(async () => {
-    if (!sessionIdRef.current) return;
-    const result = await window.claude.mcpStatus(sessionIdRef.current);
-    if (result.servers?.length) {
+  const refreshMcpStatus = useCallback(async (isCurrent: () => boolean = () => true) => {
+    const id = sessionIdRef.current;
+    if (!id) return;
+    const result = await window.claude.mcpStatus(id);
+    if (sessionIdRef.current === id && isCurrent() && result.servers) {
       setMcpServerStatuses(result.servers as McpServerStatus[]);
     }
   }, []);
@@ -1055,6 +1063,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
   }, []);
 
   return {
+    isReadyForSession: base.isReadyForSession,
     messages,
     setMessages,
     isProcessing,
@@ -1066,6 +1075,7 @@ export function useClaude({ sessionId, initialMessages, initialMeta, initialPerm
     setTotalCost,
     contextUsage,
     isCompacting,
+    reconnectMessage,
     send,
     sendRaw,
     stop,

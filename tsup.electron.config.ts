@@ -4,11 +4,16 @@ export default defineConfig({
   entry: {
     main: "electron/src/main.ts",
     preload: "electron/src/preload.ts",
+    "computer-use-mcp": "electron/src/computer-use-mcp.ts",
+    "history-worker": "electron/src/lib/history/worker.ts",
+    "embedding-worker": "electron/src/lib/history/embedding-worker.ts",
   },
   outDir: "electron/dist",
   format: ["cjs"],
   target: "es2020",
   platform: "node",
+  // node:sqlite is prefix-only; stripping "node:" turns it into a missing npm package.
+  removeNodeProtocol: false,
   splitting: false,
   clean: true,
   external: [
@@ -17,7 +22,10 @@ export default defineConfig({
     "electron-liquid-glass",
     "@anthropic-ai/claude-agent-sdk",
     "posthog-node",
+    "@huggingface/transformers",
+    "@trycua/cua-driver",
+    "@trycua/cua-driver/electron",
   ],
-  noExternal: [],
+  noExternal: ["@modelcontextprotocol/sdk"],
   treeshake: true,
 });

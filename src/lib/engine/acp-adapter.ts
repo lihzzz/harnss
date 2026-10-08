@@ -1,4 +1,5 @@
 export { SimpleStreamingBuffer as ACPStreamingBuffer } from "./streaming-buffer";
+import { extractToolResultImages } from "./protocol";
 
 /**
  * Normalize ACP tool input into Claude SDK-compatible shape so ToolCall.tsx
@@ -215,6 +216,8 @@ export function normalizeToolResult(rawOutput: unknown, content?: unknown[]): Re
     if (textContent && typeof result.content !== "string") {
       result.content = textContent;
     }
+    const images = extractToolResultImages(content);
+    if (images.length > 0 && !result.images) result.images = images;
   }
 
   if (typeof result.output === "string" && typeof result.content !== "string") {

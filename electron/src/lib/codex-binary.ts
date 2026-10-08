@@ -46,6 +46,12 @@ function getManagedBinaryPath(): string {
   return path.join(getManagedBinDir(), name);
 }
 
+/** Resolve the Codex home directory used by app-server and its configured MCP servers. */
+export function getCodexHome(): string {
+  const configured = process.env.CODEX_HOME?.trim();
+  return configured || path.join(os.homedir(), ".codex");
+}
+
 function isExecutable(filePath: string): boolean {
   try {
     fs.accessSync(filePath, fs.constants.X_OK);

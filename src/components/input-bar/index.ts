@@ -4,6 +4,7 @@ export type { InputBarProps } from "./InputBar";
 // Re-export slash command utilities for external consumers (tests, other components)
 export {
   LOCAL_CLEAR_COMMAND,
+  LOCAL_REMEMBER_COMMAND,
   getAvailableSlashCommands,
   getSlashCommandReplacement,
   isClearCommandText,

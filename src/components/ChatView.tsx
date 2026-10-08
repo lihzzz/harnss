@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useState, startTransition, memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useState, startTransition, memo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { Loader2, Minus } from "lucide-react";
+import { Loader2, Minus, WifiOff } from "lucide-react";
 import type { UIMessage } from "@/types";
+import type { AutoRetryState } from "@/lib/session/auto-retry";
 import { AgentIcon } from "./AgentIcon";
 import { getAgentIcon } from "@/lib/engine-icons";
 import { useAgentContext } from "./AgentContext";
@@ -9,6 +10,7 @@ import { MessageBubble } from "./MessageBubble";
 import { SummaryBlock } from "./SummaryBlock";
 import { ToolCall } from "./ToolCall";
 import { ToolGroupBlock } from "./ToolGroupBlock";
+import { ToolResultSelection, SelectableToolGroup } from "./ToolResultSelection";
 import { TurnChangesSummary } from "./TurnChangesSummary";
 import { extractTurnSummaries } from "@/lib/chat/turn-changes";
 import type { TurnSummary } from "@/lib/chat/turn-changes";
@@ -24,8 +26,11 @@ import {
   shouldUnlockBottomLock,
 } from "@/lib/chat/scroll";
 import { estimateRowHeight } from "@/lib/chat/virtualization";
+import { useDensityFactor } from "@/hooks/useDensity";
+import { useMotionLevel } from "@/hooks/useMotionLevel";
 import { CHAT_ROW_CLASS } from "@/components/lib/chat-layout";
 import { useSettingsStore } from "@/stores/settings-store";
+import { toast } from "sonner";
 
 // ── Row model ──
 
@@ -33,7 +38,8 @@ export type RowDescriptor =
   | { kind: "message"; msg: UIMessage; originalIndex: number }
   | { kind: "tool_group"; group: ToolGroup; originalIndex: number; groupTurnSummary?: TurnSummary }
   | { kind: "turn_summary"; summary: TurnSummary }
-  | { kind: "processing" };
+  | { kind: "processing" }
+  | { kind: "reconnect"; message: string };
 
 const EMPTY_TOOL_GROUP_INFO: ToolGroupInfo = {
   groups: new Map(),
@@ -41,6 +47,24 @@ const EMPTY_TOOL_GROUP_INFO: ToolGroupInfo = {
 };
 const EMPTY_STRING_SET: Set<string> = new Set();
 const PROCESSING_ROW: RowDescriptor = { kind: "processing" };
+
+/**
+ * Entrance animation wrapper for newly appended chat rows.
+ * Always renders the same motion.div so the tree shape stays stable when the
+ * `animate` flag flips false after the row has been seen — initial={false}
+ * simply skips the entrance for history/hydrated rows.
+ */
+function RowEntrance({ animate, children }: { animate: boolean; children: ReactNode }) {
+  return (
+    <motion.div
+      initial={animate ? { opacity: 0, y: 14 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 260, damping: 30 }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 const CHAT_TOP_PADDING_PX = 56;
 const CHAT_BOTTOM_PADDING_PX = 144;
 const CHAT_EXTRA_BOTTOM_PADDING_PX = 280;
@@ -58,6 +82,7 @@ function buildRows(
   groupedIndices: Set<number>,
   turnSummaryByEndIndex: Map<number, TurnSummary>,
   showProcessingIndicator: boolean,
+  reconnectMessage: string | null,
 ): RowDescriptor[] {
   const rows: RowDescriptor[] = [];
 
@@ -93,7 +118,11 @@ function buildRows(
     }
   }
 
-  if (showProcessingIndicator) {
+  // A reconnect status supersedes the generic processing indicator — it is
+  // more specific about what the turn is waiting on.
+  if (reconnectMessage) {
+    rows.push({ kind: "reconnect", message: reconnectMessage });
+  } else if (showProcessingIndicator) {
     rows.push(PROCESSING_ROW);
   }
 
@@ -101,6 +130,7 @@ function buildRows(
 }
 
 function getRowKey(row: RowDescriptor): string {
+  if (row.kind === "reconnect") return "__reconnect__";
   if (row.kind === "processing") return "__processing__";
   if (row.kind === "turn_summary") return `ts-${row.summary.userMessageId}`;
   if (row.kind === "tool_group") return `group-${row.group.tools[0].id}`;
@@ -109,6 +139,10 @@ function getRowKey(row: RowDescriptor): string {
 
 function canReuseRowDescriptor(previous: RowDescriptor | undefined, next: RowDescriptor): boolean {
   if (!previous) return false;
+
+  if (next.kind === "reconnect") {
+    return previous.kind === "reconnect" && previous.message === next.message;
+  }
 
   if (next.kind === "processing") {
     return previous.kind === "processing";
@@ -143,6 +177,11 @@ interface ChatMessageRowProps {
   onFullRevert?: (checkpointId: string) => void;
   onSendQueuedNow?: (messageId: string) => void;
   onUnqueueQueuedMessage?: (messageId: string) => void;
+  onRetry?: (errorMessageId: string) => void | Promise<void>;
+  autoRetry?: AutoRetryState | null;
+  onCancelAutoRetry?: () => void;
+  onRemember?: (content: string) => void;
+  revealMessageId: string | undefined;
 }
 
 const ChatMessageRow = memo(function ChatMessageRow({
@@ -156,6 +195,11 @@ const ChatMessageRow = memo(function ChatMessageRow({
   onFullRevert,
   onSendQueuedNow,
   onUnqueueQueuedMessage,
+  onRetry,
+  autoRetry,
+  onCancelAutoRetry,
+  onRemember,
+  revealMessageId,
 }: ChatMessageRowProps) {
   // ── Display preferences from Zustand store ──
   const autoExpandTools = useSettingsStore((s) => s.autoExpandTools);
@@ -175,6 +219,19 @@ const ChatMessageRow = memo(function ChatMessageRow({
     );
   }
 
+  if (row.kind === "reconnect") {
+    return (
+      <div className={`flex justify-start ${CHAT_ROW_CLASS}`}>
+        <div className="flex items-center gap-1.5 text-xs">
+          <WifiOff className="h-3 w-3 text-foreground/40" />
+          <TextShimmer as="span" className="italic opacity-60" duration={1.8} spread={1.5}>
+            {row.message}
+          </TextShimmer>
+        </div>
+      </div>
+    );
+  }
+
   if (row.kind === "turn_summary") {
     return <TurnChangesSummary summary={row.summary} />;
   }
@@ -184,7 +241,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
     const isNewGroup = animatingGroupKeys.has(groupKey);
     return (
       <Fragment>
-        <ToolGroupBlock
+        <SelectableToolGroup tools={row.group.tools}><ToolGroupBlock
           tools={row.group.tools}
           messages={row.group.messages}
           showThinking={showThinking}
@@ -194,7 +251,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
           coloredToolIcons={coloredToolIcons}
           disableCollapseAnimation
           animate={isNewGroup}
-        />
+          revealMessageId={revealMessageId}
+        /></SelectableToolGroup>
         {row.groupTurnSummary ? <TurnChangesSummary summary={row.groupTurnSummary} /> : null}
       </Fragment>
     );
@@ -238,6 +296,10 @@ const ChatMessageRow = memo(function ChatMessageRow({
         onFullRevert={onFullRevert}
         onSendQueuedNow={onSendQueuedNow}
         onUnqueueQueued={onUnqueueQueuedMessage}
+        onRetry={onRetry}
+        autoRetry={autoRetry}
+        onCancelAutoRetry={onCancelAutoRetry}
+        onRemember={onRemember}
       />
     </div>
   );
@@ -251,7 +313,12 @@ const ChatMessageRow = memo(function ChatMessageRow({
   prev.onRevert === next.onRevert &&
   prev.onFullRevert === next.onFullRevert &&
   prev.onSendQueuedNow === next.onSendQueuedNow &&
-  prev.onUnqueueQueuedMessage === next.onUnqueueQueuedMessage,
+  prev.onUnqueueQueuedMessage === next.onUnqueueQueuedMessage &&
+  prev.onRetry === next.onRetry &&
+  prev.autoRetry === next.autoRetry &&
+  prev.onCancelAutoRetry === next.onCancelAutoRetry &&
+  prev.onRemember === next.onRemember &&
+  prev.revealMessageId === next.revealMessageId,
 );
 
 // ── ChatViewProps ──
@@ -270,6 +337,13 @@ interface ChatViewProps {
   onSendQueuedNow?: (messageId: string) => void;
   onUnqueueQueuedMessage?: (messageId: string) => void;
   sendNextId?: string | null;
+  onRetry?: (errorMessageId: string) => void | Promise<void>;
+  /** Scheduled auto-retry of a failed turn — countdown shown on the error bubble. */
+  autoRetry?: AutoRetryState | null;
+  onCancelAutoRetry?: () => void;
+  onRemember?: (content: string) => void;
+  /** Upstream reconnect in progress — transient status row at the bottom. */
+  reconnectMessage?: string | null;
   /** Current space ID — included in remount key so space switches show spinner immediately */
   spaceId?: string;
 }
@@ -347,7 +421,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   // spaceId ensures the spinner shows immediately when switching spaces (before the 60ms debounced
   // session switch fires). sessionId + messages[0]?.id handle same-space session switches.
   const contentKey = `${props.spaceId ?? "s"}-${props.sessionId ?? "__empty__"}-${messages[0]?.id ?? ""}`;
-  return <ChatViewContent key={contentKey} {...props} />;
+  return <ToolResultSelection key={contentKey} messages={messages}><ChatViewContent {...props} /></ToolResultSelection>;
 });
 
 // ── ChatViewContent (inner, module-level) ──
@@ -356,12 +430,19 @@ function ChatViewContent({
   messages, isProcessing, showThinking, extraBottomPadding, scrollToMessageId, onScrolledToMessage,
   sessionId, onRevert, onFullRevert, onTopScrollProgress,
   onSendQueuedNow, onUnqueueQueuedMessage, sendNextId,
+  onRetry, autoRetry, onCancelAutoRetry, onRemember, reconnectMessage,
 }: ChatViewProps) {
   // ── Display preferences from Zustand store (only those used directly in ChatViewContent) ──
   const autoGroupTools = useSettingsStore((s) => s.autoGroupTools);
   const avoidGroupingEdits = useSettingsStore((s) => s.avoidGroupingEdits);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [useFullWidthMessages, setUseFullWidthMessages] = useState(false);
+  const rememberMessage = useCallback(async (content: string) => {
+    if (!sessionId) return;
+    const result = await window.claude.memory.retainManual(sessionId, content);
+    if (result.ok) toast.success("Saved to long-term memory.");
+    else toast.error(result.error ?? "Unable to save to long-term memory.");
+  }, [sessionId]);
 
   // ── Scroll state (refs, not state — rerender-use-ref-transient-values) ──
   const bottomLockedRef = useRef(true);
@@ -553,6 +634,7 @@ function ChatViewContent({
       groupedIndices,
       turnSummaryByEndIndex,
       showProcessingIndicator,
+      reconnectMessage ?? null,
     );
     if (queuedMessages.length > 0) {
       builtRows.push(...queuedMessages.map((msg, index) => ({
@@ -580,10 +662,25 @@ function ChatViewContent({
     groupedIndices,
     nonQueuedMessages,
     queuedMessages,
+    reconnectMessage,
     showProcessingIndicator,
     toolGroups,
     turnSummaryByEndIndex,
   ]);
+
+  // ── Row entrance animation: only rows appended after the initial commit
+  // animate in. History, hydrated batches, and session replays are pre-seeded
+  // as "seen" so they render statically. Remounting (session switch) reseeds.
+  const motionLevel = useMotionLevel();
+  const seenRowKeysRef = useRef<Set<string> | null>(null);
+  if (seenRowKeysRef.current === null) {
+    seenRowKeysRef.current = new Set(rows.map(getRowKey));
+  }
+  useEffect(() => {
+    const seen = seenRowKeysRef.current;
+    if (!seen) return;
+    for (const row of rows) seen.add(getRowKey(row));
+  }, [rows]);
 
   // ── Progressive rendering: render bottom rows immediately, hydrate upward in background ──
   // `hydratedFrom` is the index from which rows are fully rendered.
@@ -599,13 +696,14 @@ function ChatViewContent({
   const effectiveHydratedFrom = Math.min(hydratedFrom, Math.max(0, rows.length - INITIAL_RENDER_ROWS));
 
   // Single spacer height for all unhydrated rows — replaces 500 placeholder divs with 1
+  const densityFactor = useDensityFactor();
   const unhydratedHeight = useMemo(() => {
     let h = 0;
     for (let i = 0; i < effectiveHydratedFrom; i++) {
-      h += estimateRowHeight(rows[i]);
+      h += estimateRowHeight(rows[i], densityFactor);
     }
     return h;
-  }, [rows, effectiveHydratedFrom]);
+  }, [rows, effectiveHydratedFrom, densityFactor]);
 
   // Progressively hydrate older rows in background batches
   useEffect(() => {
@@ -794,7 +892,8 @@ function ChatViewContent({
 
     // If target is in the unhydrated portion (no DOM element exists), force-hydrate first
     const targetIndex = rows.findIndex(
-      (row) => row.kind === "message" && row.msg.id === scrollToMessageId,
+      (row) => row.kind === "message" && row.msg.id === scrollToMessageId
+        || row.kind === "tool_group" && row.group.tools.some((tool) => tool.id === scrollToMessageId),
     );
     if (targetIndex >= 0 && targetIndex < effectiveHydratedFrom) {
       setHydratedFrom(Math.max(0, targetIndex - 2));
@@ -803,7 +902,7 @@ function ChatViewContent({
 
     // Find the DOM element by data-message-id and scroll into view
     requestAnimationFrame(() => {
-      const el = scrollContainerRef.current?.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+      const el = scrollContainerRef.current?.querySelector(`[data-message-id="${CSS.escape(scrollToMessageId)}"]`);
       if (el) {
         bottomLockedRef.current = false;
         el.scrollIntoView({ block: "center" });
@@ -843,6 +942,7 @@ function ChatViewContent({
     <ChatUiStateProvider>
       <div
         ref={scrollContainerRef}
+        data-usage-chat
         className="relative min-h-0 flex-1 overflow-y-auto"
         style={{ overscrollBehaviorY: "contain" }}
         onScroll={handleScroll}
@@ -854,22 +954,43 @@ function ChatViewContent({
             <div style={{ height: `${unhydratedHeight}px` }} aria-hidden />
           )}
           {/* Only render hydrated rows — initial mount: ~20 divs instead of 500 */}
-          {rows.slice(effectiveHydratedFrom).map((row) => (
-            <div key={getRowKey(row)} className="flow-root">
-              <ChatMessageRow
-                row={row}
-                showThinking={showThinking}
-                animatingGroupKeys={animatingGroupKeys}
-                assistantTurnDividerLabels={assistantTurnDividerLabels}
-                continuationIds={continuationIds}
-                sendNextId={sendNextId}
-                onRevert={onRevert}
-                onFullRevert={onFullRevert}
-                onSendQueuedNow={onSendQueuedNow}
-                onUnqueueQueuedMessage={onUnqueueQueuedMessage}
-              />
-            </div>
-          ))}
+          {rows.slice(effectiveHydratedFrom).map((row) => {
+            // content-visibility lets the browser skip layout+paint for offscreen
+            // rows; contain-intrinsic-size seeds an estimate until first render
+            // (`auto` retains the measured size afterwards).
+            const rowKey = getRowKey(row);
+            const isNewRow = seenRowKeysRef.current?.has(rowKey) === false;
+            return (
+              <div
+                key={rowKey}
+                className="flow-root"
+                style={{
+                  contentVisibility: "auto",
+                  containIntrinsicSize: `auto ${estimateRowHeight(row, densityFactor)}px`,
+                }}
+              >
+                <RowEntrance animate={isNewRow && motionLevel === "full"}>
+                  <ChatMessageRow
+                    row={row}
+                    revealMessageId={row.kind === "tool_group" && row.group.tools.some((tool) => tool.id === scrollToMessageId) ? scrollToMessageId : undefined}
+                    showThinking={showThinking}
+                    animatingGroupKeys={animatingGroupKeys}
+                    assistantTurnDividerLabels={assistantTurnDividerLabels}
+                    continuationIds={continuationIds}
+                    sendNextId={sendNextId}
+                    onRevert={onRevert}
+                    onFullRevert={onFullRevert}
+                    onSendQueuedNow={onSendQueuedNow}
+                    onUnqueueQueuedMessage={onUnqueueQueuedMessage}
+                    onRetry={onRetry}
+                    autoRetry={autoRetry}
+                    onCancelAutoRetry={onCancelAutoRetry}
+                    onRemember={onRemember ?? rememberMessage}
+                  />
+                </RowEntrance>
+              </div>
+            );
+          })}
         </div>
       </div>
     </ChatUiStateProvider>

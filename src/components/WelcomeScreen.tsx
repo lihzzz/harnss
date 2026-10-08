@@ -5,9 +5,11 @@ import {
   getContinueMessage,
   getNextContinueMessageDelay,
   shouldRefreshContinueMessage,
+  localizeContinueMessage,
   type ContinueMessage,
 } from "@/lib/welcome-screen";
 import { projectSidebarArrowX } from "@/lib/welcome-screen-arrow";
+import { useI18n } from "@/lib/i18n";
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -278,11 +280,13 @@ export const WelcomeScreen = memo(function WelcomeScreen({
   hasProjects,
   onCreateProject,
 }: WelcomeScreenProps) {
+  const { t, language } = useI18n();
   const [subtitleElement, setSubtitleElement] = useState<HTMLParagraphElement | null>(null);
   const [continueMessage, setContinueMessage] = useState<ContinueMessage>(() =>
     getContinueMessage(),
   );
   const lastRefreshAtRef = useRef(new Date());
+  const displayedContinueMessage = localizeContinueMessage(continueMessage, language);
 
   useEffect(() => {
     if (!hasProjects) {
@@ -354,10 +358,10 @@ export const WelcomeScreen = memo(function WelcomeScreen({
               className="text-5xl italic"
               style={{ fontFamily: DISPLAY_FONT, color: "oklch(0.65 0.22 25)" }}
             >
-              Open a project
+              {t("openProject")}
             </h1>
             <p className="max-w-[300px] text-center text-base leading-relaxed text-muted-foreground">
-              Choose a folder to anchor your sessions, tools, and file context.
+              {t("openProjectDescription")}
             </p>
           </motion.div>
 
@@ -371,7 +375,7 @@ export const WelcomeScreen = memo(function WelcomeScreen({
             whileTap={{ scale: 0.97 }}
           >
             <FolderOpen className="h-4 w-4" />
-            Choose folder
+            {t("chooseFolder")}
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </motion.button>
         </motion.div>
@@ -401,24 +405,24 @@ export const WelcomeScreen = memo(function WelcomeScreen({
             transition={{ delay: 0.1, duration: 0.5 }}
           >
             <motion.h1
-              key={continueMessage.headline}
+              key={displayedContinueMessage.headline}
               className="text-5xl italic"
-              style={{ fontFamily: DISPLAY_FONT, color: continueMessage.accent }}
+              style={{ fontFamily: DISPLAY_FONT, color: displayedContinueMessage.accent }}
               initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
               animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
               transition={{ duration: 0.45, ease: EASE_OUT }}
             >
-              {continueMessage.headline}
+              {displayedContinueMessage.headline}
             </motion.h1>
             <motion.p
-              key={continueMessage.subtitle}
+              key={displayedContinueMessage.subtitle}
               ref={setSubtitleElement}
               className="max-w-[min(92vw,640px)] text-center text-base leading-relaxed text-muted-foreground"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.05, ease: EASE_OUT }}
             >
-              {continueMessage.subtitle}
+              {displayedContinueMessage.subtitle}
             </motion.p>
           </motion.div>
         </motion.div>

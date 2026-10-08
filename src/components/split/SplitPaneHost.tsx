@@ -1,4 +1,7 @@
 import type { ChatSession, EngineId } from "@/types";
+import { useEffect, useRef } from "react";
+import { registerLiveSnapshot } from "@/lib/session/batch-runtime";
+import { buildPersistedSession } from "@/lib/session/records";
 import type { SessionPaneState } from "@/hooks/session/useSessionPane";
 import type { SessionPaneBootstrap } from "@/hooks/session/types";
 import { useExtraPaneLoader } from "@/hooks/session/useExtraPaneLoader";
@@ -45,6 +48,18 @@ export function SplitPaneHost({
     initialRawAcpPermission: loader.initialRawAcpPermission,
     acpPermissionBehavior,
   });
+
+  const snapshotRef = useRef({ session: readySession, paneState });
+  snapshotRef.current = { session: readySession, paneState };
+  const readyId = readySession?.id ?? null;
+  useEffect(() => {
+    if (!readyId) return;
+    return registerLiveSnapshot(readyId, () => {
+      const latest = snapshotRef.current;
+      if (!latest.session) throw new Error("Split pane is not ready");
+      return { data: buildPersistedSession(latest.session, latest.paneState.messages.filter((message) => !message.isQueued), latest.paneState.totalCost, latest.paneState.contextUsage), inProgress: latest.paneState.isProcessing };
+    });
+  }, [readyId]);
 
   return <>{children({ session: readySession, paneState })}</>;
 }

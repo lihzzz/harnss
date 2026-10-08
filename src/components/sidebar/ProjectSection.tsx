@@ -8,7 +8,6 @@ import {
   FolderOpen,
   FolderPlus,
   SquarePen,
-  KanbanSquare,
   ChevronRight,
   ChevronDown,
   History,
@@ -48,6 +47,7 @@ import {
   clearSidebarDragPayload,
   writeSidebarDragPayload,
 } from "@/lib/sidebar/dnd";
+import { useI18n } from "@/lib/i18n";
 
 type ProjectDropIndicator = "before" | "after" | null;
 
@@ -57,11 +57,8 @@ export function ProjectSection({
   sessions,
   folders,
   activeSessionId,
-  jiraBoardEnabled,
-  isJiraBoardOpen,
   organizeByChatBranch,
   onNewChat,
-  onToggleJiraBoard,
   onDeleteProject,
   onRenameProject,
   onUpdateIcon,
@@ -82,11 +79,8 @@ export function ProjectSection({
   sessions: ChatSession[];
   folders: ChatFolder[];
   activeSessionId: string | null;
-  jiraBoardEnabled: boolean;
-  isJiraBoardOpen: boolean;
   organizeByChatBranch: boolean;
   onNewChat: () => void;
-  onToggleJiraBoard: () => void;
   onDeleteProject: () => void;
   onRenameProject: (name: string) => void;
   onUpdateIcon: (icon: string | null, iconType: "emoji" | "lucide" | null) => void;
@@ -102,6 +96,7 @@ export function ProjectSection({
   isDraggingProject: boolean;
   agents?: InstalledAgent[];
 }) {
+  const { t } = useI18n();
   const {
     selectSession,
     deleteSession,
@@ -296,22 +291,6 @@ export function ProjectSection({
           </button>
 
           <div className="absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-            {jiraBoardEnabled && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-7 w-7 shrink-0 rounded-lg transition-all ${
-                  isJiraBoardOpen
-                    ? "bg-black/10 text-sidebar-foreground dark:bg-white/15"
-                    : "text-sidebar-foreground/50 hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/10"
-                }`}
-                onClick={onToggleJiraBoard}
-                title="Open Jira board"
-              >
-                <KanbanSquare className="h-4 w-4" />
-              </Button>
-            )}
-
             <Button
               variant="ghost"
               size="icon"
@@ -364,19 +343,19 @@ export function ProjectSection({
             >
               <DropdownMenuItem onClick={onCreateFolder}>
                 <FolderPlus className="me-2 h-3.5 w-3.5" />
-                New folder
+                {t("newFolder")}
               </DropdownMenuItem>
               <DropdownMenuCheckboxItem
                 checked={organizeByChatBranch}
                 onCheckedChange={onSetOrganizeByChatBranch}
               >
                 <GitBranch className="me-2 h-3.5 w-3.5" />
-                Organize by branch
+                {t("organizeByBranch")}
               </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={startEditing}>
                 <Pencil className="me-2 h-3.5 w-3.5" />
-                Rename
+                {t("rename")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -387,19 +366,19 @@ export function ProjectSection({
                 }}
               >
                 <Smile className="me-2 h-3.5 w-3.5" />
-                Set icon
+                  {t("setIcon")}
               </DropdownMenuItem>
               {project.icon && (
                 <DropdownMenuItem onClick={() => onUpdateIcon(null, null)}>
                   <X className="me-2 h-3.5 w-3.5" />
-                  Remove icon
+                  {t("removeIcon")}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   <History className="me-2 h-3.5 w-3.5" />
-                  Resume CC Chat
+                  {t("resumeCcChat")}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="max-h-80 w-72 overflow-y-auto">
                   <CCSessionList projectPath={project.path} onSelect={onImportCCSession} />
@@ -409,7 +388,7 @@ export function ProjectSection({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <ArrowRightLeft className="me-2 h-3.5 w-3.5" />
-                    Move to space
+                    {t("moveToSpace")}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-44">
                     {otherSpaces.map((s) => {
@@ -434,7 +413,7 @@ export function ProjectSection({
                 onClick={onDeleteProject}
               >
                 <Trash2 className="me-2 h-3.5 w-3.5" />
-                Delete
+                {t("delete")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -466,7 +445,7 @@ export function ProjectSection({
             >
               <ChevronDown className="h-3 w-3 shrink-0 transition-transform group-hover/more:translate-y-0.5" />
               <span>
-                Show more
+                {t("showMore")}
                 <span className="ms-1 text-sidebar-foreground/35">
                   ({Math.min(20, remainingCount)} of {remainingCount})
                 </span>
@@ -476,7 +455,7 @@ export function ProjectSection({
 
           {sessions.length === 0 && (
             <p className="px-3 py-2 text-[13px] font-medium text-sidebar-foreground/40">
-              No conversations yet
+              {t("noConversationsYet")}
             </p>
           )}
         </div>

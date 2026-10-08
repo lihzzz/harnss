@@ -7,6 +7,9 @@ import type { PermissionUpdate } from "./permissions";
 import type { GitRepoInfo, GitStatus, GitBranch, GitLogEntry } from "@shared/types/git";
 import type { InstalledAgent } from "@shared/types/registry";
 import type { AppSettings, MacBackgroundEffect, ThemeOption } from "@shared/types/settings";
+import type { MemoryFact, MemoryGoldenReport, MemoryProjectConfig, MemoryStatusResult } from "@shared/types/memory";
+import type { SkillsListResult } from "@shared/types/skills";
+import type { UsageRange, UsageReport } from "@shared/types/usage";
 import type {
   ACPSessionEvent,
   ACPPermissionEvent,
@@ -24,23 +27,10 @@ import type { Model as CodexModel } from "./codex-protocol/v2/Model";
 import type { CollaborationMode } from "./codex-protocol/CollaborationMode";
 import type { SkillsListEntry } from "./codex-protocol/v2/SkillsListEntry";
 import type { AppInfo } from "./codex-protocol/v2/AppInfo";
+import type { CodexFingerprintProbeRequest, CodexFingerprintProbeResult } from "./codex-fingerprint";
+import type { BackgroundEffectState } from "@shared/types/background-effect";
 import type { SessionMeta as SessionListItem } from "@shared/lib/session-persistence";
-import type {
-  JiraProjectConfig,
-  JiraBoard,
-  JiraIssue,
-  JiraSprint,
-  JiraComment,
-  JiraTransition,
-  JiraBoardConfiguration,
-  JiraProjectSummary,
-  JiraGetBoardsParams,
-  JiraGetIssuesParams,
-  JiraGetSprintsParams,
-  JiraGetCommentsParams,
-  JiraGetTransitionsParams,
-  JiraTransitionIssueParams,
-} from "@shared/types/jira";
+import type { HistoryApi, OperationResult, QuickCaptureApi, SessionBatchApi, SessionResumeSource, ShortcutStatus } from "@shared/types/productivity";
 
 /** Standard IPC result envelope — most IPC calls return this shape. */
 interface IpcResult {
@@ -54,6 +44,9 @@ declare global {
   interface Window {
     claude: {
       getGlassSupported: () => Promise<boolean>;
+      getBackgroundEffect: () => Promise<BackgroundEffectState>;
+      setTransparency: (enabled: boolean) => Promise<BackgroundEffectState>;
+      onBackgroundEffectChanged: (callback: (state: BackgroundEffectState) => void) => () => void;
       getMacBackgroundEffectSupport: () => Promise<{ liquidGlass: boolean; vibrancy: boolean }>;
       setThemeSource: (themeSource: ThemeOption) => void;
       setMacBackgroundEffect: (effect: MacBackgroundEffect) => void;
@@ -75,6 +68,8 @@ declare global {
         /** Resume at a specific message UUID — used with forkSession to truncate history */
         resumeSessionAt?: string;
         mcpServers?: McpServerConfig[];
+        memoryContext?: { projectId: string };
+        source?: SessionResumeSource;
       }) => Promise<{ sessionId: string; pid: number; error?: string }>;
       send: (
         sessionId: string,
@@ -94,7 +89,7 @@ declare global {
       mcpStatus: (sessionId: string) => Promise<{ servers: McpServerStatus[]; error?: string }>;
       mcpReconnect: (sessionId: string, serverName: string) => Promise<IpcResult & { restarted?: boolean }>;
       revertFiles: (sessionId: string, checkpointId: string) => Promise<IpcResult>;
-      restartSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string, effort?: ClaudeEffort, model?: string) => Promise<IpcResult & { restarted?: boolean }>;
+      restartSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string, effort?: ClaudeEffort, model?: string, memoryContext?: { projectId: string }) => Promise<IpcResult & { restarted?: boolean }>;
       readFile: (filePath: string) => Promise<{ content?: string; error?: string }>;
       renameFile: (oldPath: string, newPath: string) => Promise<IpcResult>;
       trashItem: (filePath: string) => Promise<IpcResult>;
@@ -152,6 +147,8 @@ declare global {
       ) => Promise<IpcResult>;
       version: () => Promise<{ version?: string | null; error?: string }>;
       binaryStatus: () => Promise<{ installed: boolean; installing: boolean }>;
+      computerUseStatus: () => Promise<import("@shared/types/computer-use").ComputerUseRuntimeStatus>;
+      computerUseRequestPermissions: () => Promise<import("@shared/types/computer-use").ComputerUseRuntimeStatus["permissions"]>;
       projects: {
         list: () => Promise<Project[]>;
         create: (spaceId?: string) => Promise<Project | null>;
@@ -163,7 +160,13 @@ declare global {
         reorder: (projectId: string, targetProjectId: string) => Promise<IpcResult>;
       };
       sessions: {
-        save: (data: PersistedSession) => Promise<IpcResult>;
+        batch: SessionBatchApi;
+        save: (data: PersistedSession, previousSessionId?: string) => Promise<IpcResult>;
+        append: (data: Omit<PersistedSession, "messages"> & {
+          appendedMessages: UIMessage[];
+          messageCount: number;
+          lastMessageAt: number;
+        }, previousSessionId?: string) => Promise<IpcResult>;
         load: (projectId: string, sessionId: string) => Promise<PersistedSession | null>;
         list: (projectId: string) => Promise<SessionListItem[]>;
         delete: (projectId: string, sessionId: string) => Promise<IpcResult>;
@@ -177,6 +180,12 @@ declare global {
           branch?: string;
           archived?: boolean;
         }) => Promise<IpcResult>;
+        exportMarkdown: (projectId: string, sessionId: string) => Promise<{
+          ok?: boolean;
+          filePath?: string;
+          canceled?: boolean;
+          error?: string;
+        }>;
       };
       folders: {
         list: (projectId: string) => Promise<ChatFolder[]>;
@@ -281,12 +290,12 @@ declare global {
       };
       acp: {
         log: (label: string, data: unknown) => void;
-        start: (options: { agentId: string; cwd: string; mcpServers?: McpServerConfig[] }) => Promise<ACPStartResult>;
+        start: (options: { agentId: string; cwd: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string }; source?: SessionResumeSource }) => Promise<ACPStartResult>;
         authenticate: (sessionId: string, methodId: string) => Promise<ACPAuthenticateResult>;
         prompt: (sessionId: string, text: string, images?: unknown[]) => Promise<IpcResult>;
         stop: (sessionId: string) => Promise<IpcResult>;
         reloadSession: (sessionId: string, mcpServers?: McpServerConfig[], cwd?: string) => Promise<IpcResult & { supportsLoad?: boolean }>;
-        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[] }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
+        reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: McpServerConfig[]; memoryContext?: { projectId: string }; source: SessionResumeSource }) => Promise<{ sessionId?: string; agentSessionId?: string; usedLoad?: boolean; configOptions?: ACPConfigOption[]; mcpStatuses?: ACPStatusInfo[]; error?: string }>;
         cancel: (sessionId: string) => Promise<IpcResult>;
         abortPendingStart: () => Promise<{ ok?: boolean }>;
         respondPermission: (sessionId: string, requestId: string, optionId: string) => Promise<IpcResult>;
@@ -300,7 +309,7 @@ declare global {
       };
       codex: {
         log: (label: string, data: unknown) => void;
-        start: (options: { cwd: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; personality?: string; collaborationMode?: CollaborationMode }) =>
+        start: (options: { cwd: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; personality?: string; collaborationMode?: CollaborationMode; memoryContext?: { projectId: string } }) =>
           Promise<{
             sessionId?: string;
             threadId?: string;
@@ -328,6 +337,24 @@ declare global {
           message: string,
         ) => Promise<IpcResult>;
         compact: (sessionId: string) => Promise<{ error?: string }>;
+        getGoal: (sessionId: string) => Promise<{
+          supported: boolean;
+          goal: import("@shared/types/codex").CodexThreadGoal | null;
+          reason?: "method-not-found";
+          error?: string;
+        }>;
+        setGoal: (sessionId: string, input: { objective?: string | null; tokenBudget?: number | null; status?: "active" | "paused" }) => Promise<{
+          supported: boolean;
+          goal: import("@shared/types/codex").CodexThreadGoal | null;
+          reason?: "method-not-found";
+          error?: string;
+        }>;
+        clearGoal: (sessionId: string) => Promise<{
+          supported: boolean;
+          goal: import("@shared/types/codex").CodexThreadGoal | null;
+          reason?: "method-not-found";
+          error?: string;
+        }>;
         listSkills: (sessionId: string) => Promise<{
           skills: SkillsListEntry[];
           error?: string;
@@ -337,13 +364,15 @@ declare global {
           error?: string;
         }>;
         listModels: () => Promise<{ models: CodexModel[]; error?: string }>;
+        fingerprintProbe: (options: CodexFingerprintProbeRequest) => Promise<CodexFingerprintProbeResult | { error: string }>;
         authStatus: () => Promise<{ account: unknown; requiresOpenaiAuth: boolean }>;
         login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) => Promise<unknown>;
-        resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access" }) =>
-          Promise<{ sessionId?: string; threadId?: string; error?: string }>;
+        resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; memoryContext?: { projectId: string }; source: SessionResumeSource }) =>
+          Promise<{ sessionId?: string; threadId?: string; goal?: import("@shared/types/codex").CodexThreadGoal | null; goalSupported?: boolean; error?: string }>;
         setModel: (sessionId: string, model: string) => Promise<{ error?: string }>;
         version: () => Promise<{ version?: string; error?: string }>;
         binaryStatus: () => Promise<{ installed: boolean; downloading: boolean }>;
+        computerUseStatus: () => Promise<import("@shared/types/codex").CodexComputerUseStatus>;
         onEvent: (callback: (data: CodexSessionEvent) => void) => () => void;
         onApprovalRequest: (callback: (data: CodexServerRequest) => void) => () => void;
         onExit: (callback: (data: CodexExitEvent) => void) => () => void;
@@ -374,31 +403,37 @@ declare global {
         /** Subscribe to settings changes pushed from the main process. */
         onChanged: (callback: (settings: AppSettings) => void) => () => void;
       };
-      jira: {
-        getConfig: (projectId: string) => Promise<JiraProjectConfig | null>;
-        saveConfig: (projectId: string, config: JiraProjectConfig) => Promise<IpcResult>;
-        deleteConfig: (projectId: string) => Promise<IpcResult>;
-        authenticate: (
-          instanceUrl: string,
-          method: "oauth" | "apitoken",
-          apiToken?: string,
-          email?: string
-        ) => Promise<IpcResult>;
-        authStatus: (instanceUrl: string) => Promise<{ hasToken: boolean }>;
-        logout: (instanceUrl: string) => Promise<IpcResult>;
-        getProjects: (instanceUrl: string) => Promise<JiraProjectSummary[] | { error: string }>;
-        getBoards: (params: JiraGetBoardsParams) => Promise<JiraBoard[] | { error: string }>;
-        getBoardConfiguration: (params: JiraGetSprintsParams) => Promise<JiraBoardConfiguration | { error: string }>;
-        getSprints: (params: JiraGetSprintsParams) => Promise<JiraSprint[] | { error: string }>;
-        getIssues: (params: JiraGetIssuesParams) => Promise<JiraIssue[] | { error: string }>;
-        getComments: (params: JiraGetCommentsParams) => Promise<JiraComment[] | { error: string }>;
-        getTransitions: (params: JiraGetTransitionsParams) => Promise<JiraTransition[] | { error: string }>;
-        transitionIssue: (params: JiraTransitionIssueParams) => Promise<IpcResult>;
+      skills: {
+        list: () => Promise<SkillsListResult>;
+      };
+      memory: {
+        getStatus: () => Promise<MemoryStatusResult>;
+        setLlmKey: (key: string) => Promise<IpcResult & { hasLlmKey?: boolean }>;
+        clearLlmKey: () => Promise<IpcResult>;
+        testConnection: (key?: string) => Promise<{ ok: boolean; error?: string }>;
+        daemonStart: () => Promise<{ ok?: boolean; error?: string; status?: MemoryStatusResult }>;
+        daemonStop: () => Promise<{ ok?: boolean; error?: string }>;
+        daemonInstallDeps: () => Promise<{ ok?: boolean; error?: string; status?: MemoryStatusResult }>;
+        listDocuments: (bankId: string) => Promise<{ documents?: unknown[]; total?: number; error?: string }>;
+        listMemories: (bankId: string) => Promise<{ memories?: MemoryFact[]; total?: number; error?: string }>;
+        updateMemory: (bankId: string, memoryId: string, patch: Record<string, unknown>) => Promise<IpcResult>;
+        runGoldenSet: (bankId: string) => Promise<{ report?: MemoryGoldenReport; error?: string }>;
+        deleteDocument: (bankId: string, documentId: string) => Promise<IpcResult>;
+        retainManual: (sessionId: string, content: string) => Promise<IpcResult>;
+        getProjectConfig: (projectId: string) => Promise<MemoryProjectConfig | { error: string }>;
+        setProjectConfig: (projectId: string, patch: Partial<MemoryProjectConfig>) => Promise<MemoryProjectConfig | { error: string }>;
       };
       analytics: {
         /** Fire-and-forget analytics event via the main process PostHog client. */
         capture: (event: string, properties?: Record<string, unknown>) => void;
       };
+      usage: {
+        get: (days: UsageRange) => Promise<{ data?: UsageReport; error?: string }>;
+        activity: (start: number, end: number) => void;
+      };
+      shortcuts: { getStatus: () => Promise<OperationResult<ShortcutStatus[]>> };
+      quickCapture: QuickCaptureApi;
+      history: HistoryApi;
       speech: {
         /** Triggers macOS native dictation (Cocoa startDictation: selector). Returns { ok: false } on non-macOS. */
         startNativeDictation: () => Promise<{ ok: boolean; reason?: string }>;

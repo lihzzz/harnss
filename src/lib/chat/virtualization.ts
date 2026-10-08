@@ -51,8 +51,19 @@ function estimateLineCount(text: string): number {
   return lines;
 }
 
-export function estimateRowHeight(row: RowDescriptor): number {
+/**
+ * Estimate a row's rendered height in CSS pixels.
+ * `densityFactor` scales the estimate to match the active density mode
+ * (compact 0.85 / comfortable 1 / loose 1.15).
+ */
+export function estimateRowHeight(row: RowDescriptor, densityFactor = 1): number {
+  return Math.round(estimateRowHeightBase(row) * densityFactor);
+}
+
+function estimateRowHeightBase(row: RowDescriptor): number {
   if (row.kind === "processing") return 32;
+
+  if (row.kind === "reconnect") return 32;
 
   if (row.kind === "turn_summary") return 48;
 

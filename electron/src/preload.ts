@@ -1,9 +1,15 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+import type { CodexFingerprintProbeRequest } from "@shared/types/codex-fingerprint";
+import type { BackgroundEffectState } from "@shared/types/background-effect";
+import type { BatchJob, BatchPreparedRequest, BatchStartRequest, HistoryApi, HistoryIndexStatus, QuickCaptureApi, QuickCaptureTarget, QuickCaptureUpdate, SessionBatchApi, SessionResumeSource } from "@shared/types/productivity";
+import { applyBackgroundEffectClasses } from "@shared/lib/background-effect-classes";
 
 interface PreloadDocument {
+  addEventListener: (type: string, listener: () => void, options: { once: boolean }) => void;
   documentElement: {
     classList: {
       add: (token: string) => void;
+      toggle: (token: string, force: boolean) => boolean;
     };
   };
 }
@@ -18,12 +24,26 @@ interface PreloadGlobals {
 }
 
 import type { ThemeOption as ThemeSource, MacBackgroundEffect } from "@shared/types/settings";
+import type { MemoryProjectConfig } from "@shared/types/memory";
 
 function readStoredThemeSource(storage: PreloadStorage | undefined): ThemeSource {
   const stored = storage?.getItem("harnss-theme");
   return stored === "light" || stored === "dark" || stored === "system"
     ? stored
     : "dark";
+}
+
+function readStoredTransparency(storage: PreloadStorage | undefined): boolean {
+  try {
+    const persisted: unknown = JSON.parse(storage?.getItem("harnss-settings-store") ?? "null");
+    if (persisted && typeof persisted === "object" && "state" in persisted) {
+      const state = persisted.state;
+      if (state && typeof state === "object" && "transparency" in state && typeof state.transparency === "boolean") {
+        return state.transparency;
+      }
+    }
+  } catch { /* Invalid persisted JSON: fall back to the legacy preference. */ }
+  return storage?.getItem("harnss-transparency") !== "false";
 }
 
 // Early setup wrapped in try/catch so contextBridge.exposeInMainWorld always runs
@@ -33,15 +53,23 @@ try {
   const root = globals.document?.documentElement;
   const themeSource = readStoredThemeSource(globals.localStorage);
 
-  // Apply platform + glass classes as early as possible (before React mounts).
-  // On Windows, glass support does not mean the user has transparency enabled.
+  // Start opaque; expose transparent surfaces only after main confirms the material.
   root?.classList.add(`platform-${process.platform}`);
   ipcRenderer.send("app:set-theme-source", themeSource);
-  const transparencyEnabled = (globals.localStorage?.getItem("harnss-transparency") ?? null) !== "false";
-  const canUseTransparentWindow = process.platform === "darwin" || process.platform === "win32";
-  if (canUseTransparentWindow && transparencyEnabled) {
-    root?.classList.add("glass-enabled");
-  }
+  let latestEffect: BackgroundEffectState | undefined;
+  const applyEffect = (state: BackgroundEffectState) => {
+    latestEffect = state;
+    const classes = globals.document?.documentElement?.classList;
+    if (classes) applyBackgroundEffectClasses(classes, state);
+  };
+  globals.document?.addEventListener("DOMContentLoaded", () => {
+    globals.document?.documentElement?.classList.add(`platform-${process.platform}`);
+    if (latestEffect) applyEffect(latestEffect);
+  }, { once: true });
+  ipcRenderer.on("app:background-effect-changed", (_event, state: BackgroundEffectState) => applyEffect(state));
+  void ipcRenderer.invoke("app:set-transparency", readStoredTransparency(globals.localStorage))
+    .then(applyEffect)
+    .catch((error) => console.error("[preload] background effect setup failed:", error));
 
   // Push stored theme to main process early so glass appearance is correct
   // before React mounts. Default to "dark" to match useSettings, which falls
@@ -58,6 +86,13 @@ try {
 
 contextBridge.exposeInMainWorld("claude", {
   getGlassSupported: () => ipcRenderer.invoke("app:getGlassSupported"),
+  getBackgroundEffect: () => ipcRenderer.invoke("app:get-background-effect"),
+  setTransparency: (enabled: boolean) => ipcRenderer.invoke("app:set-transparency", enabled),
+  onBackgroundEffectChanged: (callback: (state: BackgroundEffectState) => void) => {
+    const listener = (_event: IpcRendererEvent, state: BackgroundEffectState) => callback(state);
+    ipcRenderer.on("app:background-effect-changed", listener);
+    return () => ipcRenderer.removeListener("app:background-effect-changed", listener);
+  },
   getMacBackgroundEffectSupport: () => ipcRenderer.invoke("app:get-mac-background-effect-support"),
   setThemeSource: (themeSource: ThemeSource) => ipcRenderer.send("app:set-theme-source", themeSource),
   setMacBackgroundEffect: (effect: MacBackgroundEffect) => ipcRenderer.send("app:set-mac-background-effect", effect),
@@ -109,6 +144,8 @@ contextBridge.exposeInMainWorld("claude", {
     ipcRenderer.invoke("claude:set-thinking", { sessionId, thinkingEnabled }),
   version: () => ipcRenderer.invoke("claude:version"),
   binaryStatus: () => ipcRenderer.invoke("claude:binary-status"),
+  computerUseStatus: () => ipcRenderer.invoke("computer-use:status"),
+  computerUseRequestPermissions: () => ipcRenderer.invoke("computer-use:request-permissions"),
   supportedModels: (sessionId: string) => ipcRenderer.invoke("claude:supported-models", sessionId),
   slashCommands: (sessionId: string) => ipcRenderer.invoke("claude:slash-commands", sessionId),
   modelsCacheGet: () => ipcRenderer.invoke("claude:models-cache:get"),
@@ -118,8 +155,8 @@ contextBridge.exposeInMainWorld("claude", {
     ipcRenderer.invoke("claude:mcp-reconnect", { sessionId, serverName }),
   revertFiles: (sessionId: string, checkpointId: string) =>
     ipcRenderer.invoke("claude:revert-files", { sessionId, checkpointId }),
-  restartSession: (sessionId: string, mcpServers?: unknown[], cwd?: string, effort?: string, model?: string) =>
-    ipcRenderer.invoke("claude:restart-session", { sessionId, mcpServers, cwd, effort, model }),
+  restartSession: (sessionId: string, mcpServers?: unknown[], cwd?: string, effort?: string, model?: string, memoryContext?: { projectId: string }) =>
+    ipcRenderer.invoke("claude:restart-session", { sessionId, mcpServers, cwd, effort, model, memoryContext }),
   readFile: (filePath: string) => ipcRenderer.invoke("file:read", filePath),
   renameFile: (oldPath: string, newPath: string) => ipcRenderer.invoke("file:rename", { oldPath, newPath }),
   trashItem: (filePath: string) => ipcRenderer.invoke("file:trash", filePath),
@@ -144,13 +181,33 @@ contextBridge.exposeInMainWorld("claude", {
     reorder: (projectId: string, targetProjectId: string) => ipcRenderer.invoke("projects:reorder", projectId, targetProjectId),
   },
   sessions: {
-    save: (data: unknown) => ipcRenderer.invoke("sessions:save", data),
+    batch: {
+      recoveries: () => ipcRenderer.invoke("sessions:batch-recoveries"),
+      start: (request: BatchStartRequest) => ipcRenderer.invoke("sessions:batch-start", request),
+      status: (jobId: string) => ipcRenderer.invoke("sessions:batch-status", jobId),
+      cancel: (jobId: string) => ipcRenderer.invoke("sessions:batch-cancel", jobId),
+      prepared: (request: BatchPreparedRequest) => ipcRenderer.invoke("sessions:batch-prepared", request),
+      onProgress: (listener: (job: BatchJob) => void) => {
+        const handler = (_event: IpcRendererEvent, job: BatchJob) => listener(job);
+        ipcRenderer.on("sessions:batch-progress", handler);
+        return () => { ipcRenderer.removeListener("sessions:batch-progress", handler); };
+      },
+      onPrepare: (listener: (job: BatchJob) => void) => {
+        const handler = (_event: IpcRendererEvent, job: BatchJob) => listener(job);
+        ipcRenderer.on("sessions:batch-prepare", handler);
+        return () => { ipcRenderer.removeListener("sessions:batch-prepare", handler); };
+      },
+    } satisfies SessionBatchApi,
+    save: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:save", data, previousSessionId),
+    append: (data: unknown, previousSessionId?: string) => ipcRenderer.invoke("sessions:append", data, previousSessionId),
     load: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:load", projectId, sessionId),
     list: (projectId: string) => ipcRenderer.invoke("sessions:list", projectId),
     delete: (projectId: string, sessionId: string) => ipcRenderer.invoke("sessions:delete", projectId, sessionId),
     search: (projectIds: string[], query: string) => ipcRenderer.invoke("sessions:search", { projectIds, query }),
     updateMeta: (projectId: string, sessionId: string, patch: { pinned?: boolean; folderId?: string | null; branch?: string; archived?: boolean }) =>
       ipcRenderer.invoke("sessions:update-meta", { projectId, sessionId, patch }),
+    exportMarkdown: (projectId: string, sessionId: string) =>
+      ipcRenderer.invoke("sessions:export-markdown", { projectId, sessionId }),
   },
   folders: {
     list: (projectId: string) => ipcRenderer.invoke("folders:list", projectId),
@@ -225,7 +282,7 @@ contextBridge.exposeInMainWorld("claude", {
   },
   acp: {
     log: (label: string, data: unknown) => ipcRenderer.send("acp:log", label, data),
-    start: (options: { agentId: string; cwd: string; mcpServers?: unknown[] }) => ipcRenderer.invoke("acp:start", options),
+    start: (options: { agentId: string; cwd: string; mcpServers?: unknown[]; source?: SessionResumeSource }) => ipcRenderer.invoke("acp:start", options),
     authenticate: (sessionId: string, methodId: string) =>
       ipcRenderer.invoke("acp:authenticate", { sessionId, methodId }),
     prompt: (sessionId: string, text: string, images?: unknown[]) =>
@@ -233,7 +290,7 @@ contextBridge.exposeInMainWorld("claude", {
     stop: (sessionId: string) => ipcRenderer.invoke("acp:stop", sessionId),
     reloadSession: (sessionId: string, mcpServers?: unknown[], cwd?: string) =>
       ipcRenderer.invoke("acp:reload-session", { sessionId, mcpServers, cwd }),
-    reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: unknown[] }) =>
+    reviveSession: (options: { agentId: string; cwd: string; agentSessionId?: string; mcpServers?: unknown[]; source: SessionResumeSource }) =>
       ipcRenderer.invoke("acp:revive-session", options),
     cancel: (sessionId: string) => ipcRenderer.invoke("acp:cancel", sessionId),
     abortPendingStart: () => ipcRenderer.invoke("acp:abort-pending-start"),
@@ -281,18 +338,24 @@ contextBridge.exposeInMainWorld("claude", {
     respondServerRequestError: (sessionId: string, rpcId: string | number, code: number, message: string) =>
       ipcRenderer.invoke("codex:server_request_error", { sessionId, rpcId, code, message }),
     compact: (sessionId: string) => ipcRenderer.invoke("codex:compact", sessionId),
+    getGoal: (sessionId: string) => ipcRenderer.invoke("codex:goal-get", { sessionId }),
+    setGoal: (sessionId: string, input: { objective?: string | null; tokenBudget?: number | null; status?: "active" | "paused" }) =>
+      ipcRenderer.invoke("codex:goal-set", { sessionId, ...input }),
+    clearGoal: (sessionId: string) => ipcRenderer.invoke("codex:goal-clear", { sessionId }),
     listSkills: (sessionId: string) => ipcRenderer.invoke("codex:list-skills", sessionId),
     listApps: (sessionId: string) => ipcRenderer.invoke("codex:list-apps", sessionId),
     listModels: () => ipcRenderer.invoke("codex:list-models"),
+    fingerprintProbe: (options: CodexFingerprintProbeRequest) => ipcRenderer.invoke("codex:fingerprint-probe", options),
     authStatus: () => ipcRenderer.invoke("codex:auth-status"),
     login: (sessionId: string, type: "apiKey" | "chatgpt", apiKey?: string) =>
       ipcRenderer.invoke("codex:login", { sessionId, type, apiKey }),
-    resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access" }) =>
+    resume: (options: { cwd: string; threadId: string; model?: string; approvalPolicy?: string; sandbox?: "read-only" | "workspace-write" | "danger-full-access"; source: SessionResumeSource }) =>
       ipcRenderer.invoke("codex:resume", options),
     setModel: (sessionId: string, model: string) =>
       ipcRenderer.invoke("codex:set-model", { sessionId, model }),
     version: () => ipcRenderer.invoke("codex:version"),
     binaryStatus: () => ipcRenderer.invoke("codex:binary-status"),
+    computerUseStatus: () => ipcRenderer.invoke("codex:computer-use-status"),
     onEvent: (callback: (data: unknown) => void) => {
       const listener = (_event: IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on("codex:event", listener);
@@ -336,35 +399,61 @@ contextBridge.exposeInMainWorld("claude", {
       return () => ipcRenderer.removeListener("settings:changed", listener);
     },
   },
-  jira: {
-    getConfig: (projectId: string) => ipcRenderer.invoke("jira:get-config", projectId),
-    saveConfig: (projectId: string, config: unknown) =>
-      ipcRenderer.invoke("jira:save-config", { projectId, config }),
-    deleteConfig: (projectId: string) => ipcRenderer.invoke("jira:delete-config", projectId),
-    authenticate: (instanceUrl: string, method: "oauth" | "apitoken", apiToken?: string, email?: string) =>
-      ipcRenderer.invoke("jira:authenticate", { instanceUrl, method, apiToken, email }),
-    authStatus: (instanceUrl: string) => ipcRenderer.invoke("jira:auth-status", instanceUrl),
-    logout: (instanceUrl: string) => ipcRenderer.invoke("jira:logout", instanceUrl),
-    getProjects: (instanceUrl: string) => ipcRenderer.invoke("jira:get-projects", instanceUrl),
-    getBoards: (params: { instanceUrl: string; projectKey?: string }) =>
-      ipcRenderer.invoke("jira:get-boards", params),
-    getBoardConfiguration: (params: { instanceUrl: string; boardId: string }) =>
-      ipcRenderer.invoke("jira:get-board-configuration", params),
-    getSprints: (params: { instanceUrl: string; boardId: string }) =>
-      ipcRenderer.invoke("jira:get-sprints", params),
-    getIssues: (params: { instanceUrl: string; boardId: string; sprintId?: string; maxResults?: number }) =>
-      ipcRenderer.invoke("jira:get-issues", params),
-    getComments: (params: { instanceUrl: string; issueKey: string }) =>
-      ipcRenderer.invoke("jira:get-comments", params),
-    getTransitions: (params: { instanceUrl: string; issueKey: string }) =>
-      ipcRenderer.invoke("jira:get-transitions", params),
-    transitionIssue: (params: { instanceUrl: string; issueKey: string; transitionId: string }) =>
-      ipcRenderer.invoke("jira:transition-issue", params),
+  skills: {
+    list: () => ipcRenderer.invoke("skills:list"),
+  },
+  memory: {
+    getStatus: () => ipcRenderer.invoke("memory:get-status"),
+    setLlmKey: (key: string) => ipcRenderer.invoke("memory:set-llm-key", key),
+    clearLlmKey: () => ipcRenderer.invoke("memory:clear-llm-key"),
+    testConnection: (key?: string) => ipcRenderer.invoke("memory:test-connection", key),
+    daemonStart: () => ipcRenderer.invoke("memory:daemon-start"),
+    daemonStop: () => ipcRenderer.invoke("memory:daemon-stop"),
+    daemonInstallDeps: () => ipcRenderer.invoke("memory:daemon-install-deps"),
+    listDocuments: (bankId: string) => ipcRenderer.invoke("memory:list-documents", bankId),
+    listMemories: (bankId: string) => ipcRenderer.invoke("memory:list-memories", bankId),
+    updateMemory: (bankId: string, memoryId: string, patch: Record<string, unknown>) => ipcRenderer.invoke("memory:update-memory", { bankId, memoryId, patch }),
+    runGoldenSet: (bankId: string) => ipcRenderer.invoke("memory:run-golden-set", bankId),
+    deleteDocument: (bankId: string, documentId: string) => ipcRenderer.invoke("memory:delete-document", { bankId, documentId }),
+    retainManual: (sessionId: string, content: string) => ipcRenderer.invoke("memory:retain-manual", { sessionId, content }),
+    getProjectConfig: (projectId: string) => ipcRenderer.invoke("memory:get-project-config", projectId),
+    setProjectConfig: (projectId: string, patch: Partial<MemoryProjectConfig>) => ipcRenderer.invoke("memory:set-project-config", { projectId, patch }),
   },
   analytics: {
     capture: (event: string, properties?: Record<string, unknown>) =>
       ipcRenderer.send("analytics:capture", event, properties),
   },
+  usage: {
+    get: (days: number) => ipcRenderer.invoke("usage:get", days),
+    activity: (start: number, end: number) => ipcRenderer.send("usage:activity", start, end),
+  },
+  shortcuts: { getStatus: () => ipcRenderer.invoke("shortcuts:get-status") },
+  history: {
+    search: (request) => ipcRenderer.invoke("history:search", request),
+    timeline: (request) => ipcRenderer.invoke("history:timeline", request),
+    activity: (request) => ipcRenderer.invoke("history:activity", request),
+    resolve: (location) => ipcRenderer.invoke("history:resolve", location),
+    cancel: (id) => ipcRenderer.invoke("history:cancel", id),
+    status: () => ipcRenderer.invoke("history:status"),
+    rebuild: (kind) => ipcRenderer.invoke("history:rebuild", kind ?? "keyword"),
+    cancelRebuild: () => ipcRenderer.invoke("history:cancelRebuild"),
+    semanticControl: (action) => ipcRenderer.invoke("history:semantic-control", action),
+    onStatus: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: HistoryIndexStatus) => listener(status);
+      ipcRenderer.on("history:status-changed", handler);
+      return () => { ipcRenderer.removeListener("history:status-changed", handler); };
+    },
+  } satisfies HistoryApi,
+  quickCapture: {
+    checkTarget: (requestId: string, target: QuickCaptureTarget) => ipcRenderer.invoke("quick-capture:check-target", { requestId, target }),
+    pending: () => ipcRenderer.invoke("quick-capture:pending"),
+    update: (request: QuickCaptureUpdate) => ipcRenderer.invoke("quick-capture:update", request),
+    onRequested: (listener) => {
+      const handler = (_event: IpcRendererEvent, request: Parameters<typeof listener>[0]) => listener(request);
+      ipcRenderer.on("quick-capture:requested", handler);
+      return () => { ipcRenderer.removeListener("quick-capture:requested", handler); };
+    },
+  } satisfies QuickCaptureApi,
   speech: {
     startNativeDictation: () => ipcRenderer.invoke("speech:start-native-dictation"),
     getPlatform: () => ipcRenderer.invoke("speech:get-platform"),

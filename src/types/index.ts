@@ -15,6 +15,7 @@ export type {
   AssistantMessageUsage,
   ContentBlock,
   ToolResultEvent,
+  ToolResultImage,
   ToolUseResult,
   ResultEvent,
   ModelUsageEntry,
@@ -41,6 +42,20 @@ export type {
   PersistedSession,
   CCSessionInfo,
 } from "./session";
+
+export type {
+  ConversationRef,
+  AttentionKind,
+  AttentionStatus,
+  AttentionPriority,
+  ExecutionPhase,
+  AttentionItem,
+  ReviewRange,
+  ReviewComment,
+  ReviewSnapshot,
+  HandoffPurpose,
+  HandoffRecord,
+} from "./workflow";
 
 // ── Space types ──
 
@@ -97,7 +112,11 @@ export type {
 export type {
   PreferredEditor,
   VoiceDictationMode,
+  Language,
   ThemeOption,
+  ThemePreference,
+  DensityOption,
+  MotionLevelOption,
   MacBackgroundEffect,
   CodexBinarySource,
   ClaudeBinarySource,
@@ -106,6 +125,7 @@ export type {
   NotificationSettings,
   AppSettings,
 } from "@shared/types/settings";
+export type { ComputerUseRuntimeStatus } from "@shared/types/computer-use";
 
 // ── Git types (shared) ──
 
@@ -181,7 +201,22 @@ export type {
   CodexAuthRequiredNotification,
   CodexTokenUsageNotification,
   CodexThreadItem,
+  CodexThreadGoal,
+  CodexThreadGoalStatus,
+  CodexThreadGoalUpdatedNotification,
+  CodexThreadGoalClearedNotification,
 } from "./codex";
+export type {
+  CodexFingerprintProbeRequest,
+  CodexFingerprintSamplePrompt,
+  CodexFingerprintSample,
+  CodexFingerprintCandidate,
+  CodexFingerprintDiagnostic,
+  CodexFingerprintCalibration,
+  CodexFingerprintAnalysis,
+  CodexFingerprintVerdict,
+  CodexFingerprintProbeResult,
+} from "./codex-fingerprint";
 
 // ── Tool types ──
 

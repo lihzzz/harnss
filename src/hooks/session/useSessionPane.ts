@@ -55,8 +55,11 @@ export interface SessionPaneState {
   isProcessing: boolean;
   isConnected: boolean;
   isCompacting: boolean;
+  reconnectMessage: string | null;
   sessionInfo: SessionInfo | null;
   pendingPermission: PermissionRequest | null;
+  codexGoal: ReturnType<typeof useCodex>["codexGoal"];
+  codexGoalSupported: ReturnType<typeof useCodex>["codexGoalSupported"];
 }
 
 export function useSessionPane({
@@ -120,7 +123,10 @@ export function useSessionPane({
     isProcessing: engine.isProcessing,
     isConnected: engine.isConnected,
     isCompacting: "isCompacting" in engine ? !!engine.isCompacting : false,
+    reconnectMessage: engine.reconnectMessage ?? null,
     sessionInfo: engine.sessionInfo,
     pendingPermission: engine.pendingPermission,
+    codexGoal: codex.codexGoal,
+    codexGoalSupported: codex.codexGoalSupported,
   };
 }

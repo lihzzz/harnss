@@ -12,6 +12,8 @@ import path from "path";
 import fs from "fs";
 import { getDataDir } from "./data-dir";
 import type { AppSettings, NotificationSettings } from "@shared/types/settings";
+import type { MemorySettings } from "@shared/types/memory";
+import { GLOBAL_SHORTCUT_DEFAULTS, HISTORY_DEFAULTS, mergeGlobalShortcuts, mergeHistorySettings, parseQuickCaptureTarget } from "@shared/lib/productivity-settings";
 
 // Re-export shared types so existing `import from "./app-settings"` consumers still work
 export type { AppSettings, MacBackgroundEffect, PreferredEditor, VoiceDictationMode, NotificationTrigger, NotificationEventSettings, NotificationSettings, CodexBinarySource, ClaudeBinarySource } from "@shared/types/settings";
@@ -23,21 +25,43 @@ const NOTIFICATION_DEFAULTS: NotificationSettings = {
   sessionComplete: { osNotification: "unfocused", sound: "always" },
 };
 
+const MEMORY_DEFAULTS: MemorySettings = {
+  enabled: false,
+  localPort: 8888,
+  llmProvider: "anthropic",
+  llmModel: "claude-sonnet-4-20250514",
+  llmBaseUrl: "",
+  injectionPolicy: "first-turn",
+  autoRetain: false,
+  clientSideRedact: true,
+  recallBudget: "mid",
+  recallMaxTokens: 1024,
+  recallMaxItems: 5,
+  recallTimeoutMs: 2000,
+  memoryDefense: "redact",
+};
+
 const DEFAULTS: AppSettings = {
+  globalShortcuts: GLOBAL_SHORTCUT_DEFAULTS,
+  quickCaptureTarget: null,
+  history: HISTORY_DEFAULTS,
   defaultChatLimit: 10,
   preferredEditor: "auto",
   voiceDictation: "native",
   notifications: NOTIFICATION_DEFAULTS,
   codexClientName: "Harnss",
   codexBinarySource: "auto",
+  codexComputerUseEnabled: false,
+  computerUseEnabled: false,
+  computerUseBinaryPath: "",
   codexCustomBinaryPath: "",
   claudeBinarySource: "auto",
   claudeCustomBinaryPath: "",
   opencodeCustomBinaryPath: "",
   showDevFillInChatTitleBar: false,
-  showJiraBoard: false,
   macBackgroundEffect: "liquid-glass",
   analyticsEnabled: true,
+  memory: MEMORY_DEFAULTS,
 };
 
 // ── Internal state ──
@@ -61,15 +85,24 @@ export function getAppSettings(): AppSettings {
     // Deep-merge `notifications` so upgrading users get defaults for each event type
     // even if their settings.json has a partial or missing notifications object.
     const parsedNotif = parsed.notifications as Partial<NotificationSettings> | undefined;
+    const parsedMemory = parsed.memory as Partial<MemorySettings> | undefined;
+    const computerUseEnabled = typeof parsed.computerUseEnabled === "boolean"
+      ? parsed.computerUseEnabled
+      : parsed.codexComputerUseEnabled === true;
     cached = {
       ...DEFAULTS,
       ...parsed,
+      globalShortcuts: mergeGlobalShortcuts(parsed.globalShortcuts),
+      quickCaptureTarget: parseQuickCaptureTarget(parsed.quickCaptureTarget),
+      history: mergeHistorySettings(parsed.history),
+      computerUseEnabled,
       notifications: {
         exitPlanMode: { ...NOTIFICATION_DEFAULTS.exitPlanMode, ...parsedNotif?.exitPlanMode },
         permissions: { ...NOTIFICATION_DEFAULTS.permissions, ...parsedNotif?.permissions },
         askUserQuestion: { ...NOTIFICATION_DEFAULTS.askUserQuestion, ...parsedNotif?.askUserQuestion },
         sessionComplete: { ...NOTIFICATION_DEFAULTS.sessionComplete, ...parsedNotif?.sessionComplete },
       },
+      memory: { ...MEMORY_DEFAULTS, ...parsedMemory },
     };
   } catch {
     cached = { ...DEFAULTS };
@@ -85,13 +118,22 @@ export function getAppSetting<K extends keyof AppSettings>(key: K): AppSettings[
 /** Update one or more settings and persist to disk. */
 export function setAppSettings(patch: Partial<AppSettings>): AppSettings {
   const current = getAppSettings();
-  const next = { ...current, ...patch };
-  cached = next;
-
+  const next = {
+    ...current,
+    ...patch,
+    globalShortcuts: mergeGlobalShortcuts(patch.globalShortcuts, current.globalShortcuts),
+    quickCaptureTarget: "quickCaptureTarget" in patch ? parseQuickCaptureTarget(patch.quickCaptureTarget) : current.quickCaptureTarget,
+    history: mergeHistorySettings(patch.history, current.history),
+    ...(patch.memory ? { memory: { ...current.memory, ...patch.memory } } : {}),
+  };
+  const destination = filePath();
+  const temporary = `${destination}.${process.pid}-${Date.now()}.tmp`;
   try {
-    fs.writeFileSync(filePath(), JSON.stringify(next, null, 2), "utf-8");
-  } catch {
-    // Non-fatal — setting is still cached in memory for this session
+    fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: "utf-8", flag: "wx" });
+    fs.renameSync(temporary, destination);
+  } finally {
+    fs.rmSync(temporary, { force: true });
   }
+  cached = next;
   return next;
 }

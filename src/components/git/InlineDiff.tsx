@@ -17,13 +17,13 @@ export function InlineDiff({ diff }: { diff: string }) {
           let textColor = "text-foreground/50";
           let bgColor = "";
           if (line.startsWith("+")) {
-            textColor = "text-emerald-700 dark:text-emerald-300/90";
-            bgColor = "bg-emerald-500/[0.08] dark:bg-emerald-500/[0.06]";
+            textColor = "text-(--diff-add-fg)";
+            bgColor = "bg-(--diff-add-bg)";
           } else if (line.startsWith("-")) {
-            textColor = "text-red-700 dark:text-red-300/90";
-            bgColor = "bg-red-500/[0.08] dark:bg-red-500/[0.06]";
+            textColor = "text-(--diff-remove-fg)";
+            bgColor = "bg-(--diff-remove-bg)";
           } else if (line.startsWith("@@")) {
-            textColor = "text-blue-600/70 dark:text-blue-300/70";
+            textColor = "text-(--diff-note-fg)";
             bgColor = "bg-blue-500/[0.06] dark:bg-blue-500/[0.04]";
           }
           return (

@@ -1,4 +1,4 @@
-import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttachment, McpServerStatus, ModelInfo, AcpPermissionBehavior, EngineId, Project, SlashCommand, ClaudeEffort, ContextUsage, ACPConfigOption, ACPPermissionEvent } from "@/types";
+import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttachment, McpServerStatus, ModelInfo, AcpPermissionBehavior, EngineId, Project, SlashCommand, ClaudeEffort, ContextUsage, ACPConfigOption, ACPPermissionEvent, CodexThreadGoal } from "@/types";
 import type { BackgroundSessionStore } from "../../lib/background/session-store";
 import { permissionModeToCodexPolicy, permissionModeToCodexSandbox } from "../../lib/engine/codex-adapter";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
@@ -7,6 +7,8 @@ export const DRAFT_ID = "__draft__";
 export const DEFAULT_PERMISSION_MODE = "default";
 
 export interface StartOptions {
+  /** Stable logical conversation ID for workflows that create a session programmatically. */
+  conversationId?: string;
   model?: string;
   permissionMode?: string;
   planMode?: boolean;
@@ -34,6 +36,9 @@ export interface InitialMeta {
   totalCost: number;
   contextUsage: ContextUsage | null;
   isCompacting?: boolean;
+  codexGoal?: CodexThreadGoal | null;
+  codexGoalSupported?: boolean | null;
+  reconnectMessage?: string | null;
 }
 
 export interface QueuedMessage {
@@ -178,9 +183,13 @@ export function normalizeCodexModels(rawModels: unknown[]): CodexModelSummary[] 
 export function pickCodexModel(
   requestedModel: string | undefined,
   models: CodexModelSummary[],
+  customModelId?: string,
 ): string | undefined {
   const requested = typeof requestedModel === "string" ? requestedModel.trim() : "";
-  if (requested.length > 0 && models.some((m) => m.id === requested)) {
+  const custom = typeof customModelId === "string" ? customModelId.trim() : "";
+  // A user-entered custom model ID is always valid: custom providers accept
+  // model IDs that never appear in model/list.
+  if (requested.length > 0 && (requested === custom || models.some((m) => m.id === requested))) {
     return requested;
   }
   return models.find((m) => m.isDefault)?.id ?? models[0]?.id;

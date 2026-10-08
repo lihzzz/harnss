@@ -9,6 +9,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { UIMessage, SessionInfo, PermissionRequest, ContextUsage, BackgroundSessionSnapshot } from "@/types";
+import { streamTick } from "@/lib/audio/stream-tick";
 
 export interface UseEngineBaseOptions {
   sessionId: string | null;
@@ -35,10 +36,13 @@ export interface EngineBaseState {
   setContextUsage: Dispatch<SetStateAction<ContextUsage | null>>;
   isCompacting: boolean;
   setIsCompacting: Dispatch<SetStateAction<boolean>>;
+  reconnectMessage: string | null;
+  setReconnectMessage: Dispatch<SetStateAction<string | null>>;
 
   // Refs
   sessionIdRef: React.RefObject<string | null>;
   messagesRef: React.RefObject<UIMessage[]>;
+  isReadyForSession: (id: string) => boolean;
 
   // rAF scheduling — engine hooks call scheduleFlush after pushing data to their buffer
   pendingFlush: React.RefObject<boolean>;
@@ -61,11 +65,14 @@ export function useEngineBase({
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(initialPermission ?? null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(initialMeta?.contextUsage ?? null);
   const [isCompacting, setIsCompacting] = useState(initialMeta?.isCompacting ?? false);
+  const [reconnectMessage, setReconnectMessage] = useState<string | null>(initialMeta?.reconnectMessage ?? null);
 
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   const messagesRef = useRef<UIMessage[]>(messages);
   messagesRef.current = messages;
+  const readySessionRef = useRef<string | null>(null);
+  const isReadyForSession = useCallback((id: string) => readySessionRef.current === id && sessionIdRef.current === id, []);
 
   // rAF scheduling refs
   const pendingFlush = useRef(false);
@@ -94,6 +101,9 @@ export function useEngineBase({
     }
     setPendingPermission(initialPermission ?? null);
     setIsCompacting(initialMeta?.isCompacting ?? false);
+    setReconnectMessage(initialMeta?.reconnectMessage ?? null);
+    readySessionRef.current = sessionId;
+    return () => { readySessionRef.current = null; };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared rAF scheduling — engines provide their own flush function
@@ -103,6 +113,8 @@ export function useEngineBase({
     rafId.current = requestAnimationFrame(() => {
       pendingFlush.current = false;
       flushFn();
+      // Opt-in stream tick; self-throttled and silent when disabled/hidden.
+      streamTick();
     });
   }, []);
 
@@ -123,6 +135,7 @@ export function useEngineBase({
   }, []);
 
   return {
+    isReadyForSession,
     messages, setMessages,
     isProcessing, setIsProcessing,
     isConnected, setIsConnected,
@@ -131,6 +144,7 @@ export function useEngineBase({
     pendingPermission, setPendingPermission,
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,
+    reconnectMessage, setReconnectMessage,
     sessionIdRef,
     messagesRef,
     pendingFlush,

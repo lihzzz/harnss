@@ -3,6 +3,7 @@ import { Archive, ChevronRight } from "lucide-react";
 import type { ChatSession, InstalledAgent } from "@/types";
 import { SessionItem } from "./SessionItem";
 import { useSidebarActions } from "./SidebarActionsContext";
+import { useI18n } from "@/lib/i18n";
 
 export function ArchivedSection({
   sessions,
@@ -15,6 +16,7 @@ export function ArchivedSection({
   islandLayout: boolean;
   agents?: InstalledAgent[];
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const {
     selectSession,
@@ -42,7 +44,7 @@ export function ArchivedSection({
       >
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
         <Archive className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/45" />
-        <span className="min-w-0 flex-1 truncate">Archived</span>
+        <span className="min-w-0 flex-1 truncate">{t("archived")}</span>
         <span className="text-[11px] font-normal text-sidebar-foreground/35">{sortedSessions.length}</span>
       </button>
 

@@ -3,6 +3,7 @@ import type { ImageAttachment, McpServerConfig, Project } from "@/types";
 import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/engine/codex-adapter";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
+import { isRetryableUpstreamError } from "../../lib/session/retry";
 import { buildSdkContent } from "../../lib/engine/protocol";
 import { capture } from "../../lib/analytics/analytics";
 import { DRAFT_ID, buildCodexCollabMode } from "./types";
@@ -11,6 +12,8 @@ import { useSessionCache } from "./useSessionCache";
 import { useSessionCrud } from "./useSessionCrud";
 import { useSessionSettings } from "./useSessionSettings";
 import { useSessionRestart } from "./useSessionRestart";
+import { useSessionBatch } from "./useSessionBatch";
+import { isSessionFrozen, isSessionRecovering } from "@/lib/session/batch-runtime";
 
 interface UseSessionLifecycleParams {
   refs: SharedSessionRefs;
@@ -34,8 +37,8 @@ interface UseSessionLifecycleParams {
   materializeDraft: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<string>;
   // From revival
   reviveSession: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
-  reviveAcpSession: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
-  reviveCodexSession: (text: string, images?: ImageAttachment[]) => Promise<void>;
+  reviveAcpSession: (text: string, images?: ImageAttachment[], displayText?: string, userMessageAlreadyAdded?: boolean) => Promise<void>;
+  reviveCodexSession: (text: string, images?: ImageAttachment[], displayText?: string, userMessageAlreadyAdded?: boolean) => Promise<void>;
   // From message queue
   enqueueMessage: (text: string, images?: ImageAttachment[], displayText?: string) => void;
   clearQueue: () => void;
@@ -69,6 +72,7 @@ export function useSessionLifecycle({
   resetCodexEffortToModelDefault,
 }: UseSessionLifecycleParams) {
   const { claude, acp, codex } = engines;
+  const { backgroundStoreRef } = refs;
 
   // ── Session cache: LRU payload cache, session list loading, model hydration ──
   const {
@@ -85,9 +89,12 @@ export function useSessionLifecycle({
     activeEngine,
     getProjectCwd,
     prefetchCodexModels,
+    abandonEagerSession,
+    abandonDraftAcpSession,
   });
 
   // ── Session CRUD: create, switch, delete, rename, deselect, import, draft agent ──
+  useSessionBatch(refs, setters, evictFromCache);
   const {
     createSession,
     switchSession,
@@ -157,6 +164,7 @@ export function useSessionLifecycle({
   const send = useCallback(
     async (text: string, images?: ImageAttachment[], displayText?: string) => {
       const activeId = refs.activeSessionIdRef.current;
+      if (isSessionFrozen(activeId)) return { error: "Conversation is being deleted" };
       const sendEngine = refs.activeSessionIdRef.current === DRAFT_ID
         ? (refs.startOptionsRef.current.engine ?? "claude")
         : (refs.sessionsRef.current.find(s => s.id === refs.activeSessionIdRef.current)?.engine ?? "claude");
@@ -186,7 +194,7 @@ export function useSessionLifecycle({
               refs.pendingAcpDraftPromptRef.current = null;
             }
             acp.setIsProcessing(false);
-            return;
+            return { error: "Unable to materialize the ACP session." };
           }
 
           trackMessageSent(sessionId);
@@ -194,42 +202,79 @@ export function useSessionLifecycle({
           // Session is live — send the prompt (user message already in UI)
           await new Promise((resolve) => setTimeout(resolve, 50));
           const promptResult = await window.claude.acp.prompt(sessionId, text, images);
+          const isActiveSession = refs.activeSessionIdRef.current === sessionId;
           if (promptResult?.error) {
-            acp.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(`ACP prompt error: ${promptResult.error}`, true),
-            ]);
-            acp.setIsProcessing(false);
+            const errorMessage = createSystemMessage(
+              `ACP prompt error: ${promptResult.error}`,
+              true,
+              isRetryableUpstreamError(promptResult.error ?? ""),
+            );
+            if (isActiveSession) {
+              acp.setMessages((prev) => [...prev, errorMessage]);
+            } else {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
+            if (isActiveSession) {
+              acp.setIsProcessing(false);
+            }
             refs.pendingAcpDraftPromptRef.current = null;
-            return;
+            return { sessionId, error: promptResult.error };
+          }
+          if (!isActiveSession) {
+            const userMessage = createUserMessage(text, images, displayText);
+            const backgroundState = backgroundStoreRef.current.get(sessionId);
+            const alreadyHasUserMessage = backgroundState?.messages.some((message) => (
+              message.role === "user" && message.content === userMessage.content
+            ));
+            if (!alreadyHasUserMessage) {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, userMessage]);
+            }
+            backgroundStoreRef.current.setProcessing(sessionId, true);
           }
           refs.pendingAcpDraftPromptRef.current = null;
-          return;
+          return { sessionId };
         }
 
         if (draftEngine === "codex") {
           trackMessageSent();
           const sessionId = await materializeDraft(text, images, displayText);
-          if (!sessionId) return;
+          if (!sessionId) return { error: "Unable to materialize the Codex session." };
           await new Promise((resolve) => setTimeout(resolve, 50));
 
-          codex.setMessages((prev) => [
-            ...prev,
-            createUserMessage(text, images, displayText),
-          ]);
-          codex.setIsProcessing(true);
+          const userMessage = createUserMessage(text, images, displayText);
+          const wasActiveBeforeSend = refs.activeSessionIdRef.current === sessionId;
+          if (wasActiveBeforeSend) {
+            codex.setMessages((prev) => [...prev, userMessage]);
+            codex.setIsProcessing(true);
+          }
+
+          const ensureBackgroundUserMessage = () => {
+            const backgroundState = backgroundStoreRef.current.get(sessionId);
+            const alreadyHasUserMessage = backgroundState?.messages.some((message) => (
+              message.role === "user" && message.content === userMessage.content
+            ));
+            if (!alreadyHasUserMessage) {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, userMessage]);
+            }
+          };
 
           const codexSession = refs.sessionsRef.current.find((s) => s.id === sessionId);
           let codexCollabMode: CollaborationMode | undefined;
           try {
             codexCollabMode = buildCodexCollabMode(refs.startOptionsRef.current.planMode, codexSession?.model);
           } catch (err) {
-            codex.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(err instanceof Error ? err.message : String(err), true),
-            ]);
-            codex.setIsProcessing(false);
-            return;
+            const isActiveSession = refs.activeSessionIdRef.current === sessionId;
+            const errorMessage = createSystemMessage(err instanceof Error ? err.message : String(err), true);
+            if (isActiveSession) {
+              codex.setMessages((prev) => [...prev, errorMessage]);
+              codex.setIsProcessing(false);
+            } else {
+              ensureBackgroundUserMessage();
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
+            return { sessionId, error: err instanceof Error ? err.message : String(err) };
           }
           const sendResult = await window.claude.codex.send(
             sessionId,
@@ -238,21 +283,35 @@ export function useSessionLifecycle({
             refs.codexEffortRef.current,
             codexCollabMode,
           );
+          const isActiveSession = refs.activeSessionIdRef.current === sessionId;
           if (sendResult?.error) {
             refs.liveSessionIdsRef.current.delete(sessionId);
-            codex.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(`Unable to send message: ${sendResult.error}`, true),
-            ]);
-            codex.setIsProcessing(false);
+            const errorMessage = createSystemMessage(
+              `Unable to send message: ${sendResult.error}`,
+              true,
+              isRetryableUpstreamError(sendResult.error ?? ""),
+            );
+            if (isActiveSession) {
+              codex.setMessages((prev) => [...prev, errorMessage]);
+              codex.setIsProcessing(false);
+            } else {
+              ensureBackgroundUserMessage();
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
+            return { sessionId, error: sendResult.error };
           }
-          return;
+          if (!isActiveSession) {
+            ensureBackgroundUserMessage();
+            backgroundStoreRef.current.setProcessing(sessionId, true);
+          }
+          return { sessionId };
         }
 
         // Claude SDK path
         trackMessageSent();
         const sessionId = await materializeDraft(text);
-        if (!sessionId) return;
+        if (!sessionId) return { error: "Unable to materialize the Claude session." };
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         {
@@ -261,27 +320,60 @@ export function useSessionLifecycle({
             type: "user",
             message: { role: "user", content },
           });
+          const isActiveSession = refs.activeSessionIdRef.current === sessionId;
           if (sendResult?.error) {
             refs.liveSessionIdsRef.current.delete(sessionId);
-            claude.setMessages((prev) => [
-              ...prev,
-              createSystemMessage(`Unable to send message: ${sendResult.error}`, true),
-            ]);
-            return;
+            const errorMessage = createSystemMessage(
+              `Unable to send message: ${sendResult.error}`,
+              true,
+              isRetryableUpstreamError(sendResult.error ?? ""),
+            );
+            if (isActiveSession) {
+              claude.setMessages((prev) => [...prev, errorMessage]);
+            } else {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, errorMessage]);
+              backgroundStoreRef.current.setProcessing(sessionId, false);
+            }
+            return { sessionId, error: sendResult.error };
           }
-          claude.setMessages((prev) => [
-            ...prev,
-            createUserMessage(text, images, displayText),
-          ]);
+          const userMessage = createUserMessage(text, images, displayText);
+          if (isActiveSession) {
+            claude.setMessages((prev) => [...prev, userMessage]);
+          } else {
+            const backgroundState = backgroundStoreRef.current.get(sessionId);
+            const alreadyHasUserMessage = backgroundState?.messages.some((message) => (
+              message.role === "user" && message.content === userMessage.content
+            ));
+            if (!alreadyHasUserMessage) {
+              backgroundStoreRef.current.updateMessages(sessionId, (prev) => [...prev, userMessage]);
+            }
+            backgroundStoreRef.current.setProcessing(sessionId, true);
+          }
         }
-        return;
+        return { sessionId };
       }
 
       if (!activeId) return;
 
-      // Queue check: if engine is processing, enqueue instead of sending directly
       const activeSessionEngine = refs.sessionsRef.current.find(s => s.id === activeId)?.engine ?? "claude";
-      if (refs.isProcessingRef.current && refs.liveSessionIdsRef.current.has(activeId)) {
+      const rememberMatch = text.match(/^\s*\/remember(?:\s+([\s\S]+?))?\s*$/i);
+      if (rememberMatch) {
+        const content = rememberMatch[1]?.trim() ?? "";
+        const result = await window.claude.memory.retainManual(activeId, content);
+        const message = result.ok
+          ? "Saved to long-term memory."
+          : (result.error ?? "Unable to save to long-term memory.");
+        const setMessages = activeSessionEngine === "acp"
+          ? acp.setMessages
+          : activeSessionEngine === "codex"
+            ? codex.setMessages
+            : claude.setMessages;
+        setMessages((prev) => [...prev, createSystemMessage(message, !result.ok)]);
+        return { sessionId: activeId, error: result.ok ? undefined : result.error };
+      }
+
+      // Queue check: if engine is processing, enqueue instead of sending directly
+      if (isSessionRecovering(activeId) || (refs.isProcessingRef.current && refs.liveSessionIdsRef.current.has(activeId))) {
         trackMessageSent(activeSessionEngine === "acp" ? activeId : undefined);
         enqueueMessage(text, images, displayText);
         return;
@@ -291,7 +383,17 @@ export function useSessionLifecycle({
         // ACP sessions: send through ACP hook if live
         if (refs.liveSessionIdsRef.current.has(activeId)) {
           trackMessageSent(activeId);
-          await acp.send(text, images, displayText);
+          const promptResult = await acp.send(text, images, displayText, true);
+          if (!promptResult.ok) {
+            refs.liveSessionIdsRef.current.delete(activeId);
+            if (refs.activeSessionIdRef.current !== activeId || isSessionFrozen(activeId)) return;
+            const errorText = `ACP prompt error: ${promptResult.error || "Unable to send message."}`;
+            if (isRetryableUpstreamError(promptResult.error ?? "")) {
+              await reviveAcpSession(text, images, displayText, true);
+            } else {
+              acp.setMessages((prev) => [...prev, createSystemMessage(errorText, true)]);
+            }
+          }
           return;
         }
         // ACP session dead (app restarted) — attempt revival via session/load
@@ -315,11 +417,16 @@ export function useSessionLifecycle({
             ]);
             return;
           }
-          await codex.send(text, images, displayText, codexCollabMode);
+          const sendResult = await codex.send(text, images, displayText, codexCollabMode);
+          if (!sendResult.ok && isRetryableUpstreamError(sendResult.error ?? "")) {
+            refs.liveSessionIdsRef.current.delete(activeId);
+            if (refs.activeSessionIdRef.current !== activeId || isSessionFrozen(activeId)) return;
+            await reviveCodexSession(text, images, displayText, true);
+          }
           return;
         }
         // Codex session dead — attempt revival via thread/resume
-        await reviveCodexSession(text, images);
+        await reviveCodexSession(text, images, displayText);
         return;
       }
 
@@ -328,6 +435,7 @@ export function useSessionLifecycle({
         const sent = await claude.send(text, images, displayText);
         if (sent) return;
         refs.liveSessionIdsRef.current.delete(activeId);
+        if (refs.activeSessionIdRef.current !== activeId || isSessionFrozen(activeId)) return;
       }
 
       if (refs.activeSessionIdRef.current !== DRAFT_ID) {

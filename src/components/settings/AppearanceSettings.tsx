@@ -1,10 +1,35 @@
-import { memo } from "react";
-import { SunMoon, Layout, Blend, Wrench } from "lucide-react";
+import { memo, useRef } from "react";
+import { SunMoon, Layout, Blend, Wrench, Palette, X } from "lucide-react";
+import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/components/settings/shared";
 import { useSettingsStore, deriveMacBackgroundEffect } from "@/stores/settings-store";
-import { isMac } from "@/lib/utils";
+import {
+  BUILTIN_PRESETS,
+  DEFAULT_THEME_ID,
+  PRESET_PREVIEW_COLORS,
+  validateThemePreset,
+  type ThemePreset,
+} from "@/themes/theme-preset";
+import { isMac, isWindows } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/i18n";
+
+const PRESET_NAME_KEYS: Record<string, TranslationKey> = {
+  "warm-paper": "themePresetWarmPaper",
+  midnight: "themePresetMidnight",
+  tundra: "themePresetTundra",
+};
+
+function presetPreview(preset: ThemePreset): { background: string; primary: string; accent: string } {
+  return PRESET_PREVIEW_COLORS[preset.id] ?? {
+    background: preset.light.background ?? "oklch(1 0 0)",
+    primary: preset.light.primary ?? "oklch(0.5 0.1 265)",
+    accent: preset.light.accent ?? "oklch(0.95 0.01 265)",
+  };
+}
 
 // ── Props ──
 
@@ -20,9 +45,26 @@ export const AppearanceSettings = memo(function AppearanceSettings({
   glassSupported,
   macLiquidGlassSupported,
 }: AppearanceSettingsProps) {
+  const { t } = useI18n();
   // ── Read all appearance settings from the Zustand store ──
   const theme = useSettingsStore((s) => s.theme);
   const setTheme = useSettingsStore((s) => s.setTheme);
+  const themeAutoDayStart = useSettingsStore((s) => s.themeAutoDayStart);
+  const themeAutoNightStart = useSettingsStore((s) => s.themeAutoNightStart);
+  const setThemeAutoDayStart = useSettingsStore((s) => s.setThemeAutoDayStart);
+  const setThemeAutoNightStart = useSettingsStore((s) => s.setThemeAutoNightStart);
+  const density = useSettingsStore((s) => s.density);
+  const setDensity = useSettingsStore((s) => s.setDensity);
+  const motionLevel = useSettingsStore((s) => s.motionLevel);
+  const setMotionLevel = useSettingsStore((s) => s.setMotionLevel);
+  const colorblindSafe = useSettingsStore((s) => s.colorblindSafe);
+  const setColorblindSafe = useSettingsStore((s) => s.setColorblindSafe);
+  const activeThemeId = useSettingsStore((s) => s.activeThemeId);
+  const customThemes = useSettingsStore((s) => s.customThemes);
+  const setActiveThemeId = useSettingsStore((s) => s.setActiveThemeId);
+  const addCustomTheme = useSettingsStore((s) => s.addCustomTheme);
+  const removeCustomTheme = useSettingsStore((s) => s.removeCustomTheme);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const islandLayout = useSettingsStore((s) => s.islandLayout);
   const setIslandLayout = useSettingsStore((s) => s.setIslandLayout);
   const islandShine = useSettingsStore((s) => s.islandShine);
@@ -66,35 +108,236 @@ export const AppearanceSettings = memo(function AppearanceSettings({
     ? "vibrancy"
     : macBackgroundEffect;
 
+  const hourOptions = Array.from({ length: 24 }, (_, hour) => ({
+    value: String(hour),
+    label: `${String(hour).padStart(2, "0")}:00`,
+  }));
+
+  // Keep the day/night boundaries distinct: changing one onto the other nudges
+  // the other forward by one hour so the day window never degenerates.
+  const onDayStartChange = (value: string) => {
+    const hour = Number(value);
+    if (hour === themeAutoNightStart) {
+      setThemeAutoNightStart((hour + 1) % 24);
+    }
+    setThemeAutoDayStart(hour);
+  };
+  const onNightStartChange = (value: string) => {
+    const hour = Number(value);
+    if (hour === themeAutoDayStart) {
+      setThemeAutoDayStart((hour + 1) % 24);
+    }
+    setThemeAutoNightStart(hour);
+  };
+
+  const onImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      const result = validateThemePreset(parsed);
+      if (!result.ok) {
+        toast.error(`${t("themeImportFailed")}: ${result.error}`);
+        return;
+      }
+      if (result.missingCore.length > 0) {
+        console.warn(`[theme] imported theme is missing core tokens: ${result.missingCore.join(", ")}`);
+      }
+      const preset: ThemePreset = { ...result.preset, id: `custom-${Date.now()}` };
+      addCustomTheme(preset);
+      setActiveThemeId(preset.id);
+      toast.success(t("themeImportSuccess"));
+    } catch {
+      toast.error(t("themeImportFailed"));
+    }
+  };
+
+  const onExportTheme = () => {
+    const active =
+      customThemes.find((preset) => preset.id === activeThemeId)
+      ?? BUILTIN_PRESETS.find((preset) => preset.id === activeThemeId);
+    if (!active) return;
+    const payload = { "harnss-theme": 1, name: active.name, light: active.light, dark: active.dark };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${active.name.replace(/[^\w-]+/g, "-")}.harnss-theme.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <SettingsHeader title="Appearance" description="Customize the look and feel of the interface" />
+      <SettingsHeader title={t("appearance")} description={t("settingsAppearanceDescription")} />
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-6 py-2">
           {/* ── Theme section ── */}
-          <SettingsSection icon={SunMoon} label="Theme" first>
+          <SettingsSection icon={SunMoon} label={t("settingsTheme")} first>
             <SettingRow
-              label="Color theme"
-              description="Choose between light and dark appearance, or follow your system setting."
+              label={t("settingsColorTheme")}
+              description={t("settingsColorThemeDescription")}
             >
               <SettingsSelect
                 value={theme}
                 onValueChange={onThemeChange}
                 options={[
-                  { value: "dark", label: "Dark" },
-                  { value: "light", label: "Light" },
-                  { value: "system", label: "System" },
+                  { value: "dark", label: t("dark") },
+                  { value: "light", label: t("light") },
+                  { value: "system", label: t("system") },
+                  { value: "auto", label: t("themeAuto") },
                 ]}
               />
             </SettingRow>
+
+            {theme === "auto" && (
+              <>
+                <SettingRow
+                  label={t("settingsThemeAutoDayStart")}
+                  description={t("settingsThemeAutoDayStartDescription")}
+                >
+                  <SettingsSelect
+                    value={String(themeAutoDayStart)}
+                    onValueChange={onDayStartChange}
+                    options={hourOptions}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label={t("settingsThemeAutoNightStart")}
+                  description={t("settingsThemeAutoNightStartDescription")}
+                >
+                  <SettingsSelect
+                    value={String(themeAutoNightStart)}
+                    onValueChange={onNightStartChange}
+                    options={hourOptions}
+                  />
+                </SettingRow>
+              </>
+            )}
+
+            <SettingRow
+              label={t("settingsDensity")}
+              description={t("settingsDensityDescription")}
+            >
+              <SettingsSelect
+                value={density}
+                onValueChange={setDensity}
+                options={[
+                  { value: "compact", label: t("densityCompact") },
+                  { value: "comfortable", label: t("densityComfortable") },
+                  { value: "loose", label: t("densityLoose") },
+                ]}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label={t("settingsMotionLevel")}
+              description={t("settingsMotionLevelDescription")}
+            >
+              <SettingsSelect
+                value={motionLevel}
+                onValueChange={setMotionLevel}
+                options={[
+                  { value: "auto", label: t("motionLevelAuto") },
+                  { value: "full", label: t("motionLevelFull") },
+                  { value: "reduced", label: t("motionLevelReduced") },
+                ]}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label={t("settingsColorblindSafe")}
+              description={t("settingsColorblindSafeDescription")}
+            >
+              <Switch
+                checked={colorblindSafe}
+                onCheckedChange={setColorblindSafe}
+              />
+            </SettingRow>
+
+            <div className="py-3">
+              <div className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                <Palette className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("settingsThemePresets")}
+              </div>
+              <p className="mb-3 text-xs text-muted-foreground">{t("settingsThemePresetsDescription")}</p>
+              <div className="grid grid-cols-2 gap-2.5">
+                {[
+                  { id: DEFAULT_THEME_ID, name: t("themePresetDefault"), light: {}, dark: {} } as ThemePreset,
+                  ...BUILTIN_PRESETS.map((p) => ({ ...p, name: t(PRESET_NAME_KEYS[p.id]) })),
+                  ...customThemes,
+                ].map((preset) => {
+                  const preview = presetPreview(preset);
+                  const isActive = activeThemeId === preset.id;
+                  const isCustom = preset.id.startsWith("custom-");
+                  return (
+                    <div key={preset.id} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setActiveThemeId(preset.id)}
+                        className={`w-full rounded-lg border p-2 text-start transition-colors ${
+                          isActive
+                            ? "border-primary bg-primary/[0.04]"
+                            : "border-transparent bg-foreground/[0.03] hover:bg-foreground/[0.05]"
+                        }`}
+                      >
+                        <div
+                          className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-black/5"
+                          style={{ background: preview.background }}
+                        >
+                          <span className="h-3 w-3 rounded-full" style={{ background: preview.primary }} />
+                          <span className="h-3 w-3 rounded-full border border-black/10" style={{ background: preview.accent }} />
+                        </div>
+                        <p className={`mt-1.5 text-center text-xs font-medium ${
+                          isActive ? "text-primary" : "text-muted-foreground"
+                        }`}>
+                          {preset.name}
+                        </p>
+                      </button>
+                      {isCustom && (
+                        <button
+                          type="button"
+                          title={t("themeDeleteCustom")}
+                          onClick={() => removeCustomTheme(preset.id)}
+                          className="absolute -end-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground/10 text-foreground/60 hover:bg-destructive hover:text-destructive-foreground"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                  {t("themeImport")}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={onExportTheme}
+                  disabled={activeThemeId === DEFAULT_THEME_ID}
+                >
+                  {t("themeExport")}
+                </Button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onImportFile}
+              />
+            </div>
           </SettingsSection>
 
           {/* ── Tools section ── */}
-          <SettingsSection icon={Wrench} label="Tools">
+          <SettingsSection icon={Wrench} label={t("settingsTools")}>
             <SettingRow
-              label="Auto-group tools"
-              description="Collapse consecutive tool calls into a single group. Disable to keep every tool call and in-between thinking row visible on its own."
+              label={t("settingsAutoGroupTools")}
+              description={t("settingsAutoGroupToolsDescription")}
             >
               <Switch
                 checked={autoGroupTools}
@@ -103,8 +346,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Avoid grouping edits"
-              description="Treat Edit and Write tool calls as standalone rows, even when auto-grouping is enabled. Reads before and after an edit will form separate groups."
+              label={t("settingsAvoidGroupingEdits")}
+              description={t("settingsAvoidGroupingEditsDescription")}
             >
               <Switch
                 checked={avoidGroupingEdits}
@@ -114,8 +357,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Auto-expand tool results"
-              description="Temporarily expand completed tool calls, then collapse them again after a short delay. Disable to keep tool rows stable unless you open them yourself."
+              label={t("settingsAutoExpandTools")}
+              description={t("settingsAutoExpandToolsDescription")}
             >
               <Switch
                 checked={autoExpandTools}
@@ -124,8 +367,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Expand Edit and Write tools by default"
-              description="Start Edit and Write tool calls open when they appear. Disable to keep them collapsed until you open them."
+              label={t("settingsExpandEditTools")}
+              description={t("settingsExpandEditToolsDescription")}
             >
               <Switch
                 checked={expandEditToolCallsByDefault}
@@ -134,8 +377,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Show tool icons"
-              description="Display icons next to tool call labels. Disable for a text-only view."
+              label={t("settingsShowToolIcons")}
+              description={t("settingsShowToolIconsDescription")}
             >
               <Switch
                 checked={showToolIcons}
@@ -144,8 +387,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Colored tool icons"
-              description="Tint tool call icons with per-tool colors. Disable for monochrome icons."
+              label={t("settingsColoredToolIcons")}
+              description={t("settingsColoredToolIconsDescription")}
             >
               <Switch
                 checked={coloredToolIcons}
@@ -156,11 +399,11 @@ export const AppearanceSettings = memo(function AppearanceSettings({
           </SettingsSection>
 
           {/* ── Layout section ── */}
-          <SettingsSection icon={Layout} label="Layout">
+          <SettingsSection icon={Layout} label={t("settingsLayout")}>
             <div className="py-3">
-              <p className="text-sm font-medium text-foreground">Window layout</p>
+              <p className="text-sm font-medium text-foreground">{t("settingsWindowLayout")}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Choose how panels are arranged in the window.
+                {t("settingsWindowLayoutDescription")}
               </p>
               <div className="mt-3 flex gap-3">
                 {/* ── Island preview ── */}
@@ -198,7 +441,7 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                   <p className={`mt-2 text-center text-xs font-medium ${
                     islandLayout ? "text-primary" : "text-muted-foreground"
                   }`}>
-                    Islands
+                    {t("settingsIslands")}
                   </p>
                 </button>
 
@@ -244,15 +487,15 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                   <p className={`mt-2 text-center text-xs font-medium ${
                     !islandLayout ? "text-primary" : "text-muted-foreground"
                   }`}>
-                    Flat
+                    {t("settingsFlat")}
                   </p>
                 </button>
               </div>
             </div>
 
             <SettingRow
-              label="Colored sidebar icons"
-              description="Tint tool picker and panel header icons with per-tool colors. Disable for neutral monochrome icons."
+              label={t("settingsColoredSidebarIcons")}
+              description={t("settingsColoredSidebarIconsDescription")}
             >
               <Switch
                 checked={coloredSidebarIcons}
@@ -261,8 +504,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Island border shine"
-              description="Show a subtle diagonal reflection on island panel borders. Only visible in island layout mode."
+              label={t("settingsIslandShine")}
+              description={t("settingsIslandShineDescription")}
             >
               <Switch
                 checked={islandShine}
@@ -273,26 +516,28 @@ export const AppearanceSettings = memo(function AppearanceSettings({
           </SettingsSection>
 
           {/* ── Transparency section ── */}
-          <SettingsSection icon={Blend} label="Transparency">
+          <SettingsSection icon={Blend} label={t("settingsTransparency")}>
             <SettingRow
-              label={isMac ? "Window background effect" : "Window transparency"}
+              label={t("settingsWindowBackgroundEffect")}
               description={
-                isMac
+                !glassSupported
+                  ? t("settingsWindowTransparencyUnavailable")
+                  : isMac
                   ? (
                     macLiquidGlassSupported
-                      ? "Choose the native macOS background material. Blur Off keeps the window opaque, while switching from Liquid Glass to Vibrancy needs a restart."
-                      : "Choose the native macOS background material. Liquid Glass is unavailable on this Mac, so Vibrancy and Off are available."
+                      ? t("settingsWindowBackgroundEffectDescription")
+                      : t("settingsWindowBackgroundEffectUnavailable")
                   )
                   : (
-                    glassSupported
-                      ? "Allow the desktop to show through the window background. Uses Mica on Windows when enabled."
-                      : "Window transparency is not available on this platform."
+                    isWindows
+                    ? t("settingsWindowTransparencyDescription")
+                    : t("settingsLinuxBackgroundEffectDescription")
                   )
               }
             >
               {isMac ? (
                 <SettingsSelect
-                  value={effectiveMacBackgroundEffect}
+                  value={glassSupported ? effectiveMacBackgroundEffect : "off"}
                   onValueChange={onMacBackgroundEffectChange}
                   options={[
                     ...(macLiquidGlassSupported
@@ -302,10 +547,11 @@ export const AppearanceSettings = memo(function AppearanceSettings({
                     { value: "off", label: "Blur Off" },
                   ]}
                   className="min-w-[9.5rem]"
+                  disabled={!glassSupported}
                 />
               ) : (
                 <Switch
-                  checked={transparency}
+                  checked={glassSupported && transparency}
                   onCheckedChange={onTransparencyChange}
                   disabled={!glassSupported}
                 />
@@ -313,8 +559,8 @@ export const AppearanceSettings = memo(function AppearanceSettings({
             </SettingRow>
 
             <SettingRow
-              label="Transparent tool picker"
-              description="Remove the background from the right-side tool picker strip so icons float directly over the window."
+              label={t("settingsTransparentToolPicker")}
+              description={t("settingsTransparentToolPickerDescription")}
             >
               <Switch
                 checked={transparentToolPicker}

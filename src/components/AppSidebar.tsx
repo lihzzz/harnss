@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef, useCallback, memo, type DragEvent } from "react";
-import { PanelLeft, Plus, Paintbrush } from "lucide-react";
+import { useState, useEffect, useMemo, useRef, useCallback, useSyncExternalStore, memo, type DragEvent } from "react";
+import { Inbox, PanelLeft, Plus, Paintbrush } from "lucide-react";
 import { isMac } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,13 +12,17 @@ import {
 import type { ChatFolder, ChatSession, Project, Space, SpaceColor } from "@/types";
 import { APP_SIDEBAR_WIDTH } from "@/lib/layout/constants";
 import { SidebarSearch } from "./SidebarSearch";
+import type { HistoryLocation } from "@shared/types/productivity";
 import { SpaceBar, SpaceIcon } from "./SpaceBar";
 import { SpaceCustomizer } from "./SpaceCustomizer";
-import { ArchivedSection } from "./sidebar/ArchivedSection";
 import { ProjectSection } from "./sidebar/ProjectSection";
 import { SidebarActionsProvider } from "./sidebar/SidebarActionsContext";
+import { SessionSelection } from "./sidebar/SessionSelection";
 import { useAgentContext } from "./AgentContext";
 import { clearSidebarDragPayload, isSidebarDragKind } from "@/lib/sidebar/dnd";
+import { useI18n } from "@/lib/i18n";
+import { deriveAttentionItems } from "@/lib/workflow/attention";
+import { workflowStore } from "@/lib/workflow/workflow-store";
 
 type ProjectDropPlacement = "before" | "after";
 
@@ -86,8 +90,6 @@ interface AppSidebarState {
   projects: Project[];
   sessions: ChatSession[];
   activeSessionId: string | null;
-  jiraBoardProjectId: string | null;
-  jiraBoardEnabled: boolean;
   foldersByProject: Record<string, ChatFolder[]>;
   organizeByChatBranch: boolean;
   draftSpaceId: string | null;
@@ -95,18 +97,18 @@ interface AppSidebarState {
 
 interface AppSidebarProjectActions {
   onNewChat: (projectId: string) => void;
-  onToggleProjectJiraBoard: (projectId: string) => void;
   onCreateProject: () => void;
   onDeleteProject: (id: string) => void;
   onRenameProject: (id: string, name: string) => void;
   onUpdateProjectIcon: (id: string, icon: string | null, iconType: "emoji" | "lucide" | null) => void;
   onImportCCSession: (projectId: string, ccSessionId: string) => void;
   onToggleSidebar: () => void;
-  onNavigateToMessage: (sessionId: string, messageId: string) => void;
+  onNavigateHistory: (location: HistoryLocation) => Promise<void>;
   onMoveProjectToSpace: (projectId: string, spaceId: string) => void;
   onReorderProject: (projectId: string, targetProjectId: string) => void;
   onCreateFolder: (projectId: string) => void;
   onSetOrganizeByChatBranch: (on: boolean) => void;
+  onOpenWorkflow: () => void;
 }
 
 interface AppSidebarSpaceState {
@@ -159,26 +161,24 @@ export const AppSidebar = memo(function AppSidebar({
     projects,
     sessions,
     activeSessionId,
-    jiraBoardProjectId,
-    jiraBoardEnabled,
     foldersByProject,
     organizeByChatBranch,
     draftSpaceId,
   } = state;
   const {
     onNewChat,
-    onToggleProjectJiraBoard,
     onCreateProject,
     onDeleteProject,
     onRenameProject,
     onUpdateProjectIcon,
     onImportCCSession,
     onToggleSidebar,
-    onNavigateToMessage,
+    onNavigateHistory,
     onMoveProjectToSpace,
     onReorderProject,
     onCreateFolder,
     onSetOrganizeByChatBranch,
+    onOpenWorkflow,
   } = projectActions;
   const { spaces, activeSpaceId } = spaceState;
   const {
@@ -203,7 +203,23 @@ export const AppSidebar = memo(function AppSidebar({
     onOpenInSplitView,
     canOpenSessionInSplitView,
   } = sessionActions;
+  const workflowState = useSyncExternalStore(workflowStore.subscribe, workflowStore.getState, workflowStore.getState);
+  const attentionCount = useMemo(() => {
+    const ids = new Set(deriveAttentionItems(sessions).filter((item) => item.status === "open").map((item) => item.id));
+    workflowState.comments.forEach((comment) => {
+      if (comment.status !== "draft" && comment.status !== "pending" && comment.status !== "needs_review") return;
+      if (sessions.some((session) => session.conversationId === comment.conversationId || session.id === comment.conversationId)) ids.add(`review:${comment.id}`);
+    });
+    workflowState.handoffs.forEach((handoff) => {
+      if (handoff.status === "failed" && sessions.some((session) => session.id === handoff.sourceSessionId || session.conversationId === handoff.sourceConversationId)) ids.add(`handoff:${handoff.id}`);
+    });
+    workflowState.attention.forEach((item) => {
+      if (item.status === "open") ids.add(item.id);
+    });
+    return ids.size;
+  }, [sessions, workflowState]);
   const { agents } = useAgentContext();
+  const { t } = useI18n();
   const isCreating = draftSpaceId !== null;
   // The draft is a real space — find it in the spaces array
   const draftSpace = isCreating ? spaces.find((s) => s.id === draftSpaceId) ?? null : null;
@@ -249,7 +265,6 @@ export const AppSidebar = memo(function AppSidebar({
     [projects, activeSpaceId],
   );
 
-  const projectIds = useMemo(() => filteredProjects.map((p) => p.id), [filteredProjects]);
 
   // Pre-group sessions by projectId (O(n) once) instead of filtering per project (O(n*m))
   const sessionsByProject = useMemo(() => {
@@ -262,11 +277,6 @@ export const AppSidebar = memo(function AppSidebar({
     }
     return map;
   }, [sessions]);
-
-  const archivedSessions = useMemo(() => {
-    const projectIds = new Set(filteredProjects.map((project) => project.id));
-    return sessions.filter((session) => session.archived && projectIds.has(session.projectId));
-  }, [filteredProjects, sessions]);
 
   // Other spaces for "Move to space" menu
   const otherSpaces = useMemo(() => spaces.filter((s) => s.id !== activeSpaceId), [spaces, activeSpaceId]);
@@ -519,7 +529,7 @@ export const AppSidebar = memo(function AppSidebar({
             className="no-drag flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-sidebar-foreground/70 transition-all hover:bg-black/5 hover:text-sidebar-foreground dark:hover:bg-white/10"
           >
             <Plus className="h-3.5 w-3.5 shrink-0" />
-            <span>Add project</span>
+            <span>{t("addProject")}</span>
           </button>
         )}
       </div>
@@ -533,10 +543,10 @@ export const AppSidebar = memo(function AppSidebar({
             </div>
 
             <h2 className="mt-4 text-base font-semibold text-sidebar-foreground">
-              Create a Space
+              {t("createSpace")}
             </h2>
             <p className="mt-1 text-center text-xs text-sidebar-foreground/50 leading-relaxed">
-              Separate your projects for work, life, and more.
+              {t("separateProjects")}
             </p>
 
             {/* Name input */}
@@ -552,7 +562,7 @@ export const AppSidebar = memo(function AppSidebar({
                     if (e.key === "Enter" && draftSpace.name.trim()) onConfirmCreateSpace();
                     if (e.key === "Escape") onCancelCreateSpace();
                   }}
-                  placeholder="Space name..."
+                  placeholder={t("spaceName")}
                   className="h-9 ps-8 text-sm bg-sidebar-accent/40 border-sidebar-border"
                   autoFocus
                 />
@@ -564,7 +574,7 @@ export const AppSidebar = memo(function AppSidebar({
               <PopoverTrigger asChild>
                 <button className="mt-3 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-start text-sm font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/60">
                   <Paintbrush className="h-4 w-4 text-sidebar-foreground/40" />
-                  Choose a Theme
+                  {t("chooseTheme")}
                 </button>
               </PopoverTrigger>
               <PopoverContent
@@ -593,29 +603,41 @@ export const AppSidebar = memo(function AppSidebar({
               onClick={onConfirmCreateSpace}
               disabled={!draftSpace.name.trim()}
             >
-              Create Space
+              {t("createSpaceButton")}
             </Button>
             <button
               onClick={onCancelCreateSpace}
               className="w-full py-1.5 text-center text-sm text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
             >
-              Cancel
+              {t("cancel")}
             </button>
           </div>
         </div>
       ) : (
         /* ── Normal sidebar content ── */
         <SidebarActionsProvider value={sidebarActions}>
+        <SessionSelection key={activeSpaceId} sessions={sessions} scopeLabel={spaces.find((space) => space.id === activeSpaceId)?.name ?? activeSpaceId}>
         <div
           className={`flex min-h-0 flex-1 flex-col ${draftSlideClass}`}
           onDragOver={handleProjectListDragOver}
           onDrop={handleProjectListDrop}
         >
           <SidebarSearch
-            projectIds={projectIds}
-            onNavigateToMessage={onNavigateToMessage}
-            onSelectSession={onSelectSession}
+            projects={projects}
+            spaces={spaces}
+            activeSpaceId={activeSpaceId}
+            activeProjectId={sessions.find((session) => session.id === activeSessionId)?.projectId ?? null}
+            onNavigate={onNavigateHistory}
           />
+          <button
+            type="button"
+            onClick={onOpenWorkflow}
+            className="mx-3 mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+          >
+            <Inbox className="h-3.5 w-3.5" />
+            {t("workflowCenter")}
+            {attentionCount > 0 ? <span className="ms-auto min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] font-semibold leading-4 text-destructive-foreground">{attentionCount > 99 ? "99+" : attentionCount}</span> : null}
+          </button>
 
           <div
             className="min-h-0 flex-1"
@@ -635,11 +657,8 @@ export const AppSidebar = memo(function AppSidebar({
                       sessions={projectSessions}
                       folders={projectFolders}
                       activeSessionId={activeSessionId}
-                      jiraBoardEnabled={jiraBoardEnabled}
-                      isJiraBoardOpen={jiraBoardProjectId === project.id}
                       organizeByChatBranch={organizeByChatBranch}
                       onNewChat={() => onNewChat(project.id)}
-                      onToggleJiraBoard={() => onToggleProjectJiraBoard(project.id)}
                       onDeleteProject={() => onDeleteProject(project.id)}
                       onRenameProject={(name) => onRenameProject(project.id, name)}
                       onUpdateIcon={(icon, iconType) =>
@@ -671,21 +690,16 @@ export const AppSidebar = memo(function AppSidebar({
                 {filteredProjects.length === 0 && (
                   <p className="px-2 py-8 text-center text-xs text-sidebar-foreground/50">
                     {projects.length === 0
-                      ? "Add a project to get started"
-                      : "No projects in this space"}
+                      ? t("addProjectToStart")
+                      : t("noProjectsInSpace")}
                   </p>
                 )}
-                <ArchivedSection
-                  sessions={archivedSessions}
-                  activeSessionId={activeSessionId}
-                  islandLayout={islandLayout}
-                  agents={agents}
-                />
               </div>
             </ScrollArea>
           </div>
 
         </div>
+        </SessionSelection>
         </SidebarActionsProvider>
       )}
 

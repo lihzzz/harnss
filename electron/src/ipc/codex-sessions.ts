@@ -12,15 +12,25 @@ import crypto from "crypto";
 import { log } from "../lib/logger";
 import { safeSend } from "../lib/safe-send";
 import { CodexRpcClient } from "../lib/codex-rpc";
-import { getCodexBinaryPath, getCodexBinaryStatus, getCodexVersion } from "../lib/codex-binary";
+import { getCodexBinaryPath, getCodexBinaryStatus, getCodexHome, getCodexVersion } from "../lib/codex-binary";
 import { getAppSetting } from "../lib/app-settings";
 import { reportError } from "../lib/error-utils";
 import { captureEvent } from "../lib/posthog";
+import {
+  COMPUTER_USE_MCP_SERVER_NAME,
+  getComputerUseMcpServer,
+  getComputerUseRuntimeStatus,
+  getCodexMcpServerOverrides,
+} from "../lib/computer-use-runtime";
+import { getHindsightCodexMcpOverrides, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeCodexNotification, completeMemoryTurn } from "../lib/memory/service";
+import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
+import { getSessionRepository } from "../lib/session-service";
+import type { SessionRuntimeLease } from "../lib/session-repository";
+import type { SessionResumeSource } from "@shared/types/productivity";
 
 import type {
   CodexServerNotification,
   CodexModel,
-  CodexModelListResponse,
   CodexAccountResponse,
   CodexThreadStartResponse,
   CodexThreadResumeResponse,
@@ -28,7 +38,13 @@ import type {
   CodexInitializeResponse,
   CodexItemStartedNotification,
   CodexItemCompletedNotification,
+  CodexThreadGoal,
+  CodexThreadGoalGetResponse,
+  CodexThreadGoalSetResponse,
+  CodexThreadGoalClearResponse,
+  CodexComputerUseStatus,
 } from "@shared/types/codex";
+import { isMethodNotFoundError, parseThreadGoal } from "@shared/lib/codex-goal";
 import type { SkillsListResponse } from "@shared/types/codex-protocol/v2/SkillsListResponse";
 import type { AppsListResponse } from "@shared/types/codex-protocol/v2/AppsListResponse";
 
@@ -47,15 +63,57 @@ interface CodexSession {
   approvalPolicy?: string;
   /** Sandbox policy for the session — passed to lazy thread/start */
   sandbox?: string;
+  goalSupport: "unknown" | "supported" | "unsupported";
+  goal: CodexThreadGoal | null;
+  goalMutation: Promise<void>;
+  threadStart: Promise<string> | null;
+  runtimeLease?: SessionRuntimeLease;
 }
 
-import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, pickModelId } from "@shared/lib/codex-helpers";
+export type CodexGoalResult =
+  | { supported: true; goal: CodexThreadGoal | null; error?: string }
+  | { supported: false; goal: null; reason: "method-not-found"; error?: string };
+
+import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, listModelsWithConfigured, pickModelId } from "@shared/lib/codex-helpers";
 
 const codexSessions = new Map<string, CodexSession>();
+
+function assertCodexSessionActive(session: CodexSession): void {
+  if (codexSessions.get(session.internalId) !== session) throw new Error("Codex session stopped");
+  session.runtimeLease?.assertActive();
+}
+
+export async function stopForDeletion(sessionId: string): Promise<void> {
+  stopUsageSession(sessionId);
+  const session = codexSessions.get(sessionId);
+  if (!session) return;
+  await session.rpc.destroyAndWait();
+  codexSessions.delete(sessionId);
+  unregisterMemorySession(sessionId);
+}
 
 /** Expose the currently selected model for utility prompts (title/commit generation). */
 export function getCodexSessionModel(internalId: string): string | undefined {
   return codexSessions.get(internalId)?.model;
+}
+
+/** Check the target project's account configuration before dispatching clipboard text. */
+export async function hasConfiguredCodexAccount(cwd: string): Promise<boolean> {
+  const proc = spawnCodexAppServer(await getCodexBinaryPath(), cwd);
+  const rpc = new CodexRpcClient(proc);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const readAccount = async () => {
+      await rpc.request<CodexInitializeResponse>("initialize", { clientInfo: getAppServerClientInfo(), capabilities: { experimentalApi: true } });
+      rpc.notify("initialized", {});
+      const response = await rpc.request<CodexAccountResponse>("account/read", { refreshToken: false });
+      return !response.requiresOpenaiAuth || response.account !== null;
+    };
+    return await Promise.race([
+      readAccount(),
+      new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Account check timed out; retry after the agent starts")), 4_000); }),
+    ]);
+  } finally { if (timeout) clearTimeout(timeout); rpc.destroy(); }
 }
 
 function getAppServerClientInfo(): { name: string; title: string; version: string } {
@@ -65,6 +123,113 @@ function getAppServerClientInfo(): { name: string; title: string; version: strin
     title: clientName,
     version: app.getVersion(),
   };
+}
+
+function getCodexAppServerArgs(sessionId?: string): string[] {
+  const args = ["app-server"];
+  const computerUse = getComputerUseMcpServer();
+  if (computerUse) {
+    args.push("--enable", "computer_use");
+    // Codex app-server supports -c overrides, so Harnss can inject the
+    // runtime without mutating the user's ~/.codex/config.toml.
+    args.push(...getCodexMcpServerOverrides(computerUse));
+  }
+  if (sessionId) args.push(...getHindsightCodexMcpOverrides(sessionId));
+  return args;
+}
+
+function getCodexAppServerEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    CODEX_HOME: getCodexHome(),
+    RUST_LOG: process.env.RUST_LOG ?? "warn",
+  };
+}
+
+function spawnCodexAppServer(codexPath: string, cwd: string, sessionId?: string) {
+  return spawn(codexPath, getCodexAppServerArgs(sessionId), {
+    stdio: ["pipe", "pipe", "pipe"],
+    cwd,
+    env: getCodexAppServerEnv(),
+  });
+}
+
+interface CodexConfigReadResponse {
+  config?: {
+    features?: Record<string, unknown> | null;
+  };
+}
+
+interface CodexMcpServerStatus {
+  name?: string;
+  serverInfo?: unknown;
+  tools?: Record<string, unknown> | null;
+  toolsError?: unknown;
+}
+
+interface CodexMcpServerStatusResponse {
+  data?: CodexMcpServerStatus[];
+}
+
+async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
+  const runtime = await getComputerUseRuntimeStatus();
+  const enabled = runtime.enabled;
+  const base: CodexComputerUseStatus = {
+    enabled,
+    featureEnabled: false,
+    mcpConnected: false,
+    mcpTools: [],
+    ready: false,
+  };
+
+  if (!enabled || !runtime.installed) {
+    return { ...base, error: runtime.error };
+  }
+
+  try {
+    const codexPath = await getCodexBinaryPath();
+    const [codexVersion] = await Promise.all([getCodexVersion()]);
+    const proc = spawnCodexAppServer(codexPath, process.cwd());
+    if (!proc.pid) throw new Error("Failed to spawn codex app-server process");
+
+    const rpc = new CodexRpcClient(proc);
+    try {
+      const initResult = await rpc.request<CodexInitializeResponse>("initialize", {
+        clientInfo: getAppServerClientInfo(),
+        capabilities: { experimentalApi: true },
+      });
+      rpc.notify("initialized", {});
+
+      const [configResult, mcpResult] = await Promise.all([
+        rpc.request<CodexConfigReadResponse>("config/read"),
+        rpc.request<CodexMcpServerStatusResponse>("mcpServerStatus/list", {}, 120_000),
+      ]);
+      const cua = (mcpResult.data ?? []).find((server) => server.name === COMPUTER_USE_MCP_SERVER_NAME);
+      const cuaTools = cua?.tools && typeof cua.tools === "object"
+        ? Object.keys(cua.tools)
+        : [];
+      const featureEnabled = configResult.config?.features?.computer_use === true;
+      const mcpConnected = !!cua?.serverInfo && cua?.toolsError == null;
+
+      return {
+        ...base,
+        featureEnabled,
+        mcpConnected,
+        mcpTools: cuaTools,
+        ready: enabled && featureEnabled && runtime.ready && mcpConnected && cuaTools.length > 0,
+        codexPath,
+        codexVersion,
+        codexHome: initResult.codexHome,
+      };
+    } finally {
+      rpc.destroy();
+    }
+  } catch (error) {
+    return {
+      ...base,
+      error: reportError("CODEX_COMPUTER_USE_STATUS_ERR", error, { engine: "codex" }),
+    };
+  }
 }
 
 // pickModelId imported from @shared/lib/codex-helpers
@@ -128,6 +293,15 @@ function summarizeCodexNotification(notification: CodexServerNotification): stri
       const { tokenUsage } = notification.params;
       return `thread/tokenUsage/updated total=${tokenUsage.total.totalTokens} last_in=${tokenUsage.last.inputTokens} last_out=${tokenUsage.last.outputTokens}`;
     }
+    case "thread/goal/updated":
+      {
+        const goal = parseThreadGoal((notification.params as { goal?: unknown })?.goal);
+        return goal
+          ? `thread/goal/updated status=${goal.status} updated=${goal.updatedAt}`
+          : "thread/goal/updated malformed";
+      }
+    case "thread/goal/cleared":
+      return `thread/goal/cleared thread=${shortId((notification.params as { threadId?: unknown })?.threadId, 12)}`;
     case "error": {
       const { error } = notification.params;
       return `error message="${error.message.slice(0, 180)}"`;
@@ -135,6 +309,96 @@ function summarizeCodexNotification(notification: CodexServerNotification): stri
     default:
       return notification.method;
   }
+}
+
+/** Start a thread only when a session was created without one (draft/lazy path). */
+async function ensureCodexThread(session: CodexSession): Promise<string> {
+  if (session.threadId) return session.threadId;
+  if (session.threadStart) return session.threadStart;
+
+  const start = (async () => {
+    const threadParams: Record<string, unknown> = {
+      cwd: session.cwd,
+      experimentalRawEvents: false,
+      persistExtendedHistory: false,
+    };
+    if (session.model) threadParams.model = session.model;
+    if (session.approvalPolicy) threadParams.approvalPolicy = session.approvalPolicy;
+    if (session.sandbox) threadParams.sandbox = session.sandbox;
+    const threadResult = await session.rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
+    session.threadId = threadResult.thread.id;
+    log("codex", ` Thread lazily started: session=${shortId(session.internalId, 12)} thread=${shortId(session.threadId, 12)}`);
+    return session.threadId;
+  })();
+  session.threadStart = start;
+  try {
+    return await start;
+  } finally {
+    if (session.threadStart === start) session.threadStart = null;
+  }
+}
+
+async function refreshGoal(
+  session: CodexSession,
+  getMainWindow?: () => BrowserWindow | null,
+): Promise<CodexGoalResult> {
+  const threadId = await ensureCodexThread(session);
+  try {
+    const result = await session.rpc.request<CodexThreadGoalGetResponse>("thread/goal/get", { threadId });
+    const goal = result?.goal == null ? null : parseThreadGoal(result.goal);
+    if (result?.goal != null && !goal) {
+      session.goalSupport = "supported";
+      return { supported: true, goal: session.goal, error: "Codex returned a malformed Goal snapshot" };
+    }
+    session.goalSupport = "supported";
+    session.goal = goal;
+    if (goal && getMainWindow) {
+      safeSend(getMainWindow, "codex:event", {
+        _sessionId: session.internalId,
+        method: "thread/goal/updated",
+        params: { threadId, turnId: null, goal },
+      });
+    }
+    return { supported: true, goal };
+  } catch (error) {
+    if (isMethodNotFoundError(error)) {
+      session.goalSupport = "unsupported";
+      session.goal = null;
+      return { supported: false, goal: null, reason: "method-not-found" };
+    }
+    return {
+      supported: true,
+      goal: session.goal,
+      error: reportError("CODEX_GOAL_GET_ERR", error, { engine: "codex", sessionId: session.internalId }),
+    };
+  }
+}
+
+function withGoalMutation<T>(session: CodexSession, operation: () => Promise<T>): Promise<T> {
+  const previous = session.goalMutation;
+  let release!: () => void;
+  session.goalMutation = new Promise<void>((resolve) => { release = resolve; });
+  return previous.catch(() => undefined).then(operation).finally(release);
+}
+
+function validateGoalInput(input: {
+  objective?: unknown;
+  tokenBudget?: unknown;
+  status?: unknown;
+}): string | null {
+  if (input.objective !== undefined && input.objective !== null &&
+      (typeof input.objective !== "string" || input.objective.trim().length === 0)) {
+    return "Goal objective must not be empty";
+  }
+  if (input.tokenBudget !== undefined && input.tokenBudget !== null &&
+      (typeof input.tokenBudget !== "number" || !Number.isInteger(input.tokenBudget) || input.tokenBudget <= 0)) {
+    return "Goal token budget must be a positive integer or null";
+  }
+  if (input.status !== undefined && input.status !== null &&
+      input.status !== "active" && input.status !== "paused") {
+    return "Goal status must be active or paused";
+  }
+  return null;
 }
 
 /** Wire up all RPC event handlers for a Codex session (shared by start and resume). */
@@ -167,12 +431,40 @@ function setupCodexHandlers(
       });
     }
 
+    if (notification.method === "thread/goal/updated") {
+      const params = notification.params;
+      const goal = parseThreadGoal(params.goal);
+      if (!goal || goal.threadId !== session.threadId) {
+        log("codex", ` Ignoring malformed or cross-thread thread/goal/updated for session=${internalId}`);
+        return;
+      }
+      if (!session.goal || goal.updatedAt >= session.goal.updatedAt) {
+        session.goal = goal;
+        session.goalSupport = "supported";
+      }
+    } else if (notification.method === "thread/goal/cleared") {
+      if (notification.params.threadId === session.threadId) {
+        session.goal = null;
+        session.goalSupport = "supported";
+      } else {
+        log("codex", ` Ignoring cross-thread thread/goal/cleared for session=${internalId}`);
+        return;
+      }
+    }
+
     // Track active turn from turn events
     if (notification.method === "turn/started") {
+      beginUsageTurn(internalId, notification.params.turn.id);
       session.activeTurnId = notification.params.turn.id;
     } else if (notification.method === "turn/completed") {
+      endUsageTurn(internalId, notification.params.turn.id);
       session.activeTurnId = null;
+      void completeMemoryTurn(internalId);
+    } else if (notification.method === "error" && !notification.params.willRetry) {
+      endUsageTurn(internalId, notification.params.turnId);
     }
+
+    observeCodexNotification(internalId, notification.method, notification.params as Record<string, unknown>);
 
     safeSend(getMainWindow, "codex:event", {
       _sessionId: internalId,
@@ -201,8 +493,10 @@ function setupCodexHandlers(
   };
 
   rpc.onExit = (code, signal) => {
+    stopUsageSession(internalId);
     log("codex", ` Process exited: code=${code} signal=${signal} session=${internalId}`);
     codexSessions.delete(internalId);
+    unregisterMemorySession(internalId);
     safeSend(getMainWindow, "codex:exit", {
       _sessionId: internalId,
       code,
@@ -229,24 +523,23 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         model?: string;
         approvalPolicy?: string;
         sandbox?: string;
+        memoryContext?: { projectId: string };
         personality?: string;
         collaborationMode?: { mode: string; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
       },
     ) => {
       const internalId = crypto.randomUUID();
+      let runtimeLease: SessionRuntimeLease | undefined;
 
       try {
+        if (options.memoryContext?.projectId) runtimeLease = await getSessionRepository().bindProjectRuntime(options.memoryContext.projectId, internalId, () => stopForDeletion(internalId));
         const codexPath = await getCodexBinaryPath();
+        runtimeLease?.assertActive();
         log("codex",` Starting app-server: ${codexPath} (session=${internalId})`);
 
-        const proc = spawn(codexPath, ["app-server"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          cwd: options.cwd,
-          env: {
-            ...process.env,
-            RUST_LOG: process.env.RUST_LOG ?? "warn",
-          },
-        });
+        if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "codex");
+        const proc = spawnCodexAppServer(codexPath, options.cwd, internalId);
+        if (runtimeLease) proc.once("exit", runtimeLease.release);
 
         if (!proc.pid) {
           throw new Error("Failed to spawn codex app-server process");
@@ -264,6 +557,11 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           model: undefined,
           approvalPolicy: options.approvalPolicy,
           sandbox: options.sandbox,
+          goalSupport: "unknown",
+          goal: null,
+          goalMutation: Promise.resolve(),
+          threadStart: null,
+          runtimeLease,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -275,11 +573,13 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
             experimentalApi: true,
           },
         });
+        assertCodexSessionActive(session);
         rpc.notify("initialized", {});
         log("codex",` Initialized: ${JSON.stringify(initResult).slice(0, 200)}`);
 
         // ── Check auth status ──
         const authResult = await rpc.request<CodexAccountResponse>("account/read", { refreshToken: false });
+        assertCodexSessionActive(session);
 
         const needsAuth = authResult.requiresOpenaiAuth && !authResult.account;
         if (needsAuth) {
@@ -300,17 +600,16 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         let models: CodexModel[] = [];
         let selectedModel: string | undefined;
         try {
-          const modelResult = await rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-          models = modelResult.data ?? [];
-          selectedModel = pickModelId(options.model, models);
-          if (options.model && selectedModel !== options.model) {
-            log("codex", ` Requested model ${options.model} not found; using ${selectedModel ?? "server default"}`);
-          }
-          if (selectedModel) {
-            session.model = selectedModel;
-          }
+          models = await listModelsWithConfigured(rpc);
         } catch (err) {
           reportError("CODEX_MODEL_LIST_ERR", err, { engine: "codex", sessionId: internalId });
+        }
+        assertCodexSessionActive(session);
+        // Honor explicitly requested models as-is: custom providers accept
+        // model IDs that never appear in the account catalog.
+        selectedModel = options.model?.trim() || pickModelId(undefined, models);
+        if (selectedModel) {
+          session.model = selectedModel;
         }
 
         // ── Start a thread ──
@@ -327,6 +626,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         // collaborationMode is set per-turn via turn/start, not on thread/start
 
         const threadResult = await rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
+        assertCodexSessionActive(session);
         session.threadId = threadResult.thread.id;
         log("codex",` Thread started: ${session.threadId}`);
 
@@ -343,12 +643,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       } catch (err) {
         void captureEvent("session_error", { engine: "codex", phase: "start" });
         const errMsg = reportError("CODEX_START_ERR", err, { engine: "codex", sessionId: internalId });
-        // Clean up on failure
-        const session = codexSessions.get(internalId);
-        if (session) {
-          session.rpc.destroy();
-          codexSessions.delete(internalId);
-        }
+        try { await stopForDeletion(internalId); }
+        catch (stopError) { reportError("CODEX_START_STOP_ERR", stopError, { engine: "codex", sessionId: internalId }); }
+        if (!codexSessions.has(internalId)) { runtimeLease?.release(); unregisterMemorySession(internalId); }
         return { error: errMsg };
       }
     },
@@ -374,20 +671,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       }
       if (!session.threadId) {
         try {
-          const threadParams: Record<string, unknown> = {
-            cwd: session.cwd,
-            experimentalRawEvents: false,
-            persistExtendedHistory: false,
-          };
-          if (session.model) threadParams.model = session.model;
-          if (session.approvalPolicy) threadParams.approvalPolicy = session.approvalPolicy;
-          if (session.sandbox) threadParams.sandbox = session.sandbox;
-          const threadResult = await session.rpc.request<CodexThreadStartResponse>("thread/start", threadParams);
-          session.threadId = threadResult.thread.id;
-          log(
-            "codex",
-            ` Thread lazily started: session=${shortId(data.sessionId, 12)} thread=${shortId(session.threadId, 12)}`,
-          );
+          await ensureCodexThread(session);
         } catch (err) {
           const msg = reportError("CODEX_THREAD_START_ERR", err, { engine: "codex", sessionId: data.sessionId });
           return { error: msg };
@@ -400,7 +684,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       );
 
       try {
-        const input: unknown[] = [{ type: "text", text: data.text }];
+        const memory = await beforeMemorySend(data.sessionId, data.text);
+        assertCodexSessionActive(session);
+        const input: unknown[] = [{ type: "text", text: memory.text }];
         if (data.images) {
           input.push(...data.images);
         }
@@ -433,10 +719,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   // ─── codex:stop ───
   ipcMain.handle("codex:stop", async (_, sessionId: string) => {
-    const session = codexSessions.get(sessionId);
-    if (!session) return;
-    session.rpc.destroy();
-    codexSessions.delete(sessionId);
+    await stopForDeletion(sessionId);
     log("codex",` Session stopped: ${sessionId}`);
   });
 
@@ -558,6 +841,80 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     }
   });
 
+  // ─── codex:goal-get ───
+  ipcMain.handle("codex:goal-get", async (_, data: { sessionId: string }): Promise<CodexGoalResult> => {
+    const session = codexSessions.get(data.sessionId);
+    if (!session) return { supported: true, goal: null, error: "Session not found" };
+    try {
+      return await withGoalMutation(session, () => refreshGoal(session, getMainWindow));
+    } catch (error) {
+      if (isMethodNotFoundError(error)) {
+        session.goalSupport = "unsupported";
+        return { supported: false, goal: null, reason: "method-not-found" };
+      }
+      return {
+        supported: true,
+        goal: session.goal,
+        error: reportError("CODEX_GOAL_GET_ERR", error, { engine: "codex", sessionId: data.sessionId }),
+      };
+    }
+  });
+
+  // ─── codex:goal-set ───
+  ipcMain.handle("codex:goal-set", async (_, data: {
+    sessionId: string;
+    objective?: string | null;
+    tokenBudget?: number | null;
+    status?: "active" | "paused";
+  }): Promise<CodexGoalResult> => {
+    const session = codexSessions.get(data.sessionId);
+    if (!session) return { supported: true, goal: null, error: "Session not found" };
+    const validationError = validateGoalInput(data);
+    if (validationError) return { supported: true, goal: session.goal, error: validationError };
+    try {
+      return await withGoalMutation(session, async () => {
+        const threadId = await ensureCodexThread(session);
+        const params: Record<string, unknown> = { threadId };
+        if (data.objective !== undefined) params.objective = data.objective === null ? null : data.objective.trim();
+        if (data.tokenBudget !== undefined) params.tokenBudget = data.tokenBudget;
+        if (data.status !== undefined) params.status = data.status;
+        const result = await session.rpc.request<CodexThreadGoalSetResponse>("thread/goal/set", params);
+        const goal = parseThreadGoal(result?.goal);
+        if (!goal) return { supported: true, goal: session.goal, error: "Codex returned a malformed Goal snapshot" };
+        session.goalSupport = "supported";
+        session.goal = goal;
+        return { supported: true, goal };
+      });
+    } catch (error) {
+      if (isMethodNotFoundError(error)) {
+        session.goalSupport = "unsupported";
+        return { supported: false, goal: null, reason: "method-not-found" };
+      }
+      return { supported: true, goal: session.goal, error: reportError("CODEX_GOAL_SET_ERR", error, { engine: "codex", sessionId: data.sessionId }) };
+    }
+  });
+
+  // ─── codex:goal-clear ───
+  ipcMain.handle("codex:goal-clear", async (_, data: { sessionId: string }): Promise<CodexGoalResult> => {
+    const session = codexSessions.get(data.sessionId);
+    if (!session) return { supported: true, goal: null, error: "Session not found" };
+    try {
+      return await withGoalMutation(session, async () => {
+        const threadId = await ensureCodexThread(session);
+        await session.rpc.request<CodexThreadGoalClearResponse>("thread/goal/clear", { threadId });
+        session.goalSupport = "supported";
+        session.goal = null;
+        return { supported: true, goal: null };
+      });
+    } catch (error) {
+      if (isMethodNotFoundError(error)) {
+        session.goalSupport = "unsupported";
+        return { supported: false, goal: null, reason: "method-not-found" };
+      }
+      return { supported: true, goal: session.goal, error: reportError("CODEX_GOAL_CLEAR_ERR", error, { engine: "codex", sessionId: data.sessionId }) };
+    }
+  });
+
   // ─── codex:list-skills ───
   ipcMain.handle("codex:list-skills", async (_, sessionId: string) => {
     const session = codexSessions.get(sessionId);
@@ -592,8 +949,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     for (const session of codexSessions.values()) {
       if (session.rpc.isAlive) {
         try {
-          const result = await session.rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-          return { models: result.data ?? [] };
+          return { models: await listModelsWithConfigured(session.rpc) };
         } catch {
           continue;
         }
@@ -603,14 +959,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     // No live session: spawn a short-lived app-server process and fetch model/list.
     try {
       const codexPath = await getCodexBinaryPath();
-      const proc = spawn(codexPath, ["app-server"], {
-        stdio: ["pipe", "pipe", "pipe"],
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          RUST_LOG: process.env.RUST_LOG ?? "warn",
-        },
-      });
+      const proc = spawnCodexAppServer(codexPath, process.cwd());
       if (!proc.pid) {
         throw new Error("Failed to spawn codex app-server process");
       }
@@ -622,8 +971,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           capabilities: { experimentalApi: true },
         });
         rpc.notify("initialized", {});
-        const result = await rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-        return { models: result.data ?? [] };
+        return { models: await listModelsWithConfigured(rpc) };
       } finally {
         rpc.destroy();
       }
@@ -684,26 +1032,24 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         model?: string;
         approvalPolicy?: string;
         sandbox?: string;
+        memoryContext?: { projectId: string };
+        source: SessionResumeSource;
       },
     ) => {
       const internalId = crypto.randomUUID();
+      let runtimeLease: SessionRuntimeLease | undefined;
 
       try {
+        runtimeLease = await getSessionRepository().bindRuntime(data.source, "codex", internalId, () => stopForDeletion(internalId));
         const codexPath = await getCodexBinaryPath();
+        runtimeLease.assertActive();
         log("codex",` Resuming thread ${data.threadId} in new process (session=${internalId})`);
 
-        const proc = spawn(codexPath, ["app-server"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          cwd: data.cwd,
-          env: {
-            ...process.env,
-            RUST_LOG: process.env.RUST_LOG ?? "warn",
-          },
-        });
-
-        if (!proc.pid) throw new Error("Failed to spawn codex app-server");
-
+        if (data.memoryContext?.projectId) registerMemorySession(internalId, data.memoryContext.projectId, "codex");
+        const proc = spawnCodexAppServer(codexPath, data.cwd, internalId);
+        proc.once("exit", runtimeLease.release);
         const rpc = new CodexRpcClient(proc);
+        if (!proc.pid) throw new Error("Failed to spawn codex app-server");
         const session: CodexSession = {
           rpc,
           internalId,
@@ -714,6 +1060,11 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           model: data.model,
           approvalPolicy: data.approvalPolicy,
           sandbox: data.sandbox,
+          goalSupport: "unknown",
+          goal: null,
+          goalMutation: Promise.resolve(),
+          threadStart: null,
+          runtimeLease,
         };
         codexSessions.set(internalId, session);
         setupCodexHandlers(rpc, session, internalId, getMainWindow);
@@ -723,6 +1074,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
           clientInfo: getAppServerClientInfo(),
           capabilities: { experimentalApi: true },
         });
+        assertCodexSessionActive(session);
         rpc.notify("initialized", {});
 
         // Resume thread — persistExtendedHistory is required by ThreadResumeParams
@@ -734,18 +1086,22 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         if (data.sandbox) threadParams.sandbox = data.sandbox;
 
         const threadResult = await rpc.request<CodexThreadResumeResponse>("thread/resume", threadParams);
+        assertCodexSessionActive(session);
         session.threadId = threadResult.thread.id;
         log("codex",` Thread resumed: ${session.threadId}`);
+        const goal = await refreshGoal(session, getMainWindow);
+        assertCodexSessionActive(session);
 
         void captureEvent("session_revived", { engine: "codex", success: true });
-        return { sessionId: internalId, threadId: session.threadId };
+        return { sessionId: internalId, threadId: session.threadId, goal: goal.goal, goalSupported: goal.supported };
       } catch (err) {
         void captureEvent("session_revived", { engine: "codex", success: false });
         const errMsg = reportError("CODEX_RESUME_ERR", err, { engine: "codex", sessionId: internalId });
-        const session = codexSessions.get(internalId);
-        if (session) {
-          session.rpc.destroy();
-          codexSessions.delete(internalId);
+        try { await stopForDeletion(internalId); }
+        catch (stopError) { reportError("CODEX_RESUME_STOP_ERR", stopError, { engine: "codex", sessionId: internalId }); }
+        if (!codexSessions.has(internalId)) {
+          runtimeLease?.release();
+          unregisterMemorySession(internalId);
         }
         return { error: errMsg };
       }
@@ -777,12 +1133,17 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("codex:binary-status", async () => {
     return getCodexBinaryStatus();
   });
+
+  // ─── codex:computer-use-status ───
+  ipcMain.handle("codex:computer-use-status", async () => getComputerUseStatus());
 }
 
 /** Stop all Codex sessions (called on app quit). */
 export function stopAll(): void {
   for (const [id, session] of codexSessions) {
+    stopUsageSession(id);
     session.rpc.destroy();
     codexSessions.delete(id);
+    unregisterMemorySession(id);
   }
 }

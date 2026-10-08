@@ -4,6 +4,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@xterm/xterm/css/xterm.css";
+@import "katex/dist/katex.min.css";
+@import "./themes/presets.css";
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
@@ -172,6 +174,155 @@ html.glass-enabled #root {
   --sidebar-ring: oklch(0.64 0 0);
 }
 
+/* Linux: one bounded Gaussian blur layer over an in-app backdrop. CSS cannot
+   sample the desktop behind a native window on arbitrary Linux compositors. */
+html.gaussian-blur-enabled body {
+  isolation: isolate;
+  background: var(--background) !important;
+}
+
+.gaussian-blur-enabled body::before,
+.gaussian-blur-enabled body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gaussian-blur-enabled body::before {
+  z-index: -2;
+  background:
+    radial-gradient(ellipse at 12% 15%, oklch(0.65 max(var(--space-chroma), 0.035) var(--space-hue) / 0.36), transparent 65%),
+    linear-gradient(135deg, var(--background) 30%, var(--sidebar-accent) 65%, var(--background));
+}
+
+.gaussian-blur-enabled body::after {
+  z-index: -1;
+  backdrop-filter: blur(18px);
+}
+
+/* Policy fallback must override space tint (inline tokens) and custom presets
+   without changing either saved preference. All surface tokens stay opaque. */
+html.transparency-reduced {
+  --solid-background: #fff;
+  --solid-surface: #f2f2f2;
+  --solid-foreground: #111;
+  --solid-muted: #454545;
+  --solid-border: #767676;
+  --background: var(--solid-background) !important;
+  --foreground: var(--solid-foreground) !important;
+  --card: var(--solid-background) !important;
+  --card-foreground: var(--solid-foreground) !important;
+  --popover: var(--solid-background) !important;
+  --popover-foreground: var(--solid-foreground) !important;
+  --primary: var(--solid-foreground) !important;
+  --primary-foreground: var(--solid-background) !important;
+  --secondary: var(--solid-surface) !important;
+  --secondary-foreground: var(--solid-foreground) !important;
+  --accent: var(--solid-surface) !important;
+  --accent-foreground: var(--solid-foreground) !important;
+  --muted: var(--solid-surface) !important;
+  --muted-foreground: var(--solid-muted) !important;
+  --border: var(--solid-border) !important;
+  --input: var(--solid-border) !important;
+  --ring: var(--solid-foreground) !important;
+  --sidebar: var(--solid-surface) !important;
+  --sidebar-foreground: var(--solid-foreground) !important;
+  --sidebar-primary: var(--solid-foreground) !important;
+  --sidebar-primary-foreground: var(--solid-background) !important;
+  --sidebar-accent: var(--solid-background) !important;
+  --sidebar-accent-foreground: var(--solid-foreground) !important;
+  --sidebar-border: var(--solid-border) !important;
+  --sidebar-ring: var(--solid-foreground) !important;
+  --island-fill: var(--solid-background) !important;
+  --island-overlay-bg: transparent !important;
+}
+
+html.transparency-reduced.dark {
+  --solid-background: #141414;
+  --solid-surface: #202020;
+  --solid-foreground: #fff;
+  --solid-muted: #ccc;
+  --solid-border: #888;
+}
+
+.transparency-reduced *,
+.transparency-reduced *::before,
+.transparency-reduced *::after {
+  backdrop-filter: none !important;
+}
+
+/* ── Density modes ──
+   Tailwind v4 derives all spacing utilities from --spacing at runtime
+   (calc(var(--spacing) * N)), so scaling it compresses/expands padding and
+   gaps globally. Pixel-based layout (panel widths) is unaffected.
+   Font sizes need targeted overrides below — --spacing does not scale text. */
+.density-compact {
+  --spacing: 0.2125rem; /* 0.85× */
+}
+
+.density-loose {
+  --spacing: 0.2875rem; /* 1.15× */
+}
+
+/* Targeted font-size overrides (chat prose + sidebar session rows) */
+.density-compact .prose {
+  font-size: 13px;
+}
+
+.density-loose .prose {
+  font-size: 15px;
+}
+
+.density-compact .session-item-button {
+  font-size: 12px;
+}
+
+.density-loose .session-item-button {
+  font-size: 14px;
+}
+
+/* ── Diff colors (semantic tokens) ──
+   Defaults replicate the previously hardcoded emerald/red classes.
+   Consumed via Tailwind arbitrary values, e.g. text-(--diff-add-fg).
+   .cb-safe overrides them with a blue/orange palette safe for
+   deuteranopia/protanopia, plus an Okabe-Ito chart palette. */
+:root {
+  --diff-add-fg: color-mix(in oklab, oklch(0.432 0.095 166.913) 90%, transparent);
+  --diff-add-bg: color-mix(in oklab, oklch(0.696 0.17 162.48) 10%, transparent);
+  --diff-remove-fg: color-mix(in oklab, oklch(0.444 0.177 26.899) 90%, transparent);
+  --diff-remove-bg: color-mix(in oklab, oklch(0.637 0.237 25.331) 10%, transparent);
+  --diff-note-fg: color-mix(in oklab, oklch(0.488 0.243 264.376) 80%, transparent);
+}
+
+.dark {
+  --diff-add-fg: color-mix(in oklab, oklch(0.765 0.177 163.223) 75%, transparent);
+  --diff-add-bg: color-mix(in oklab, oklch(0.696 0.17 162.48) 6%, transparent);
+  --diff-remove-fg: color-mix(in oklab, oklch(0.704 0.191 22.216) 75%, transparent);
+  --diff-remove-bg: color-mix(in oklab, oklch(0.637 0.237 25.331) 6%, transparent);
+  --diff-note-fg: color-mix(in oklab, oklch(0.707 0.165 254.624) 60%, transparent);
+}
+
+.cb-safe {
+  --diff-add-fg: oklch(0.488 0.243 264.376);
+  --diff-add-bg: color-mix(in oklab, oklch(0.623 0.214 259.815) 10%, transparent);
+  --diff-remove-fg: oklch(0.553 0.195 38.402);
+  --diff-remove-bg: color-mix(in oklab, oklch(0.705 0.213 47.604) 12%, transparent);
+  --diff-note-fg: color-mix(in oklab, oklch(0.491 0.27 292.581) 80%, transparent);
+  --chart-1: oklch(0.55 0.12 250);
+  --chart-2: oklch(0.75 0.14 75);
+  --chart-3: oklch(0.62 0.12 170);
+  --chart-4: oklch(0.6 0.19 40);
+  --chart-5: oklch(0.75 0.09 235);
+}
+
+.dark.cb-safe {
+  --diff-add-fg: color-mix(in oklab, oklch(0.809 0.105 251.813) 90%, transparent);
+  --diff-add-bg: color-mix(in oklab, oklch(0.623 0.214 259.815) 8%, transparent);
+  --diff-remove-fg: color-mix(in oklab, oklch(0.837 0.128 66.29) 95%, transparent);
+  --diff-remove-bg: color-mix(in oklab, oklch(0.705 0.213 47.604) 8%, transparent);
+  --diff-note-fg: color-mix(in oklab, oklch(0.702 0.183 293.541) 70%, transparent);
+}
 /* macOS light glass needs light sidebar text because the native material reads
    visually darker. Windows Mica stays light enough that default dark text is
    more legible, so leave the base light tokens alone there. */

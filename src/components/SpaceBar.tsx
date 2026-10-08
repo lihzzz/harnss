@@ -19,6 +19,7 @@ import {
 import { resolveLucideIcon } from "@/lib/icon-utils";
 import { SpaceCustomizer } from "./SpaceCustomizer";
 import type { Space } from "@/types";
+import { useI18n } from "@/lib/i18n";
 
 interface SpaceBarProps {
   spaces: Space[];
@@ -66,6 +67,7 @@ export const SpaceBar = memo(function SpaceBar({
   onOpenSettings,
   draftSpace,
 }: SpaceBarProps) {
+  const { t } = useI18n();
   const isCreatingSpace = draftSpace != null;
   const sorted = [...spaces].sort((a, b) => a.order - b.order);
   const [contextSpace, setContextSpace] = useState<Space | null>(null);
@@ -270,7 +272,7 @@ export const SpaceBar = memo(function SpaceBar({
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" className="text-xs">
-          New space
+          {t("newSpace")}
         </TooltipContent>
       </Tooltip>
 
@@ -327,7 +329,7 @@ export const SpaceBar = memo(function SpaceBar({
         >
           <DropdownMenuItem onClick={() => { if (contextSpace) openEditPopover(contextSpace); closeContext(); }}>
             <Pencil className="me-2 h-3.5 w-3.5" />
-            Edit
+            {t("edit")}
           </DropdownMenuItem>
           {contextSpace?.id !== "default" && (
             <DropdownMenuItem
@@ -335,7 +337,7 @@ export const SpaceBar = memo(function SpaceBar({
               onClick={() => { if (contextSpace) setDeleteSpace(contextSpace); closeContext(); }}
             >
               <Trash2 className="me-2 h-3.5 w-3.5" />
-              Delete
+              {t("delete")}
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
@@ -346,15 +348,13 @@ export const SpaceBar = memo(function SpaceBar({
         open={deleteSpace !== null}
         onOpenChange={(open) => !open && setDeleteSpace(null)}
         onConfirm={() => { if (deleteSpace) onDeleteSpace(deleteSpace.id); }}
-        title="Delete Space"
+        title={t("deleteSpace")}
         description={
           <>
-            Are you sure you want to delete{" "}
-            <span className="font-medium text-foreground">{deleteSpace?.name}</span>?
-            Projects in this space will be moved to General.
+            {t("deleteSpaceDescription").replace("{{name}}", deleteSpace?.name ?? "")}
           </>
         }
-        confirmLabel="Delete"
+        confirmLabel={t("delete")}
       />
     </div>
   );

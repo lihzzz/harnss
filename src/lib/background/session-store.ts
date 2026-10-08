@@ -5,6 +5,7 @@ import type {
   PermissionRequest,
   SlashCommand,
   ContextUsage,
+  CodexThreadGoal,
 } from "@/types";
 import type { ACPSessionEvent, ACPPermissionEvent, CodexSessionEvent } from "@/types";
 import { handleClaudeEvent } from "./claude-handler";
@@ -24,6 +25,10 @@ export interface BackgroundSessionState {
   rawAcpPermission: ACPPermissionEvent | null;
   /** Slash commands available for this session (ACP agents update dynamically) */
   slashCommands: SlashCommand[];
+  codexGoal?: CodexThreadGoal | null;
+  codexGoalSupported?: boolean | null;
+  /** Upstream reconnect in progress (Codex willRetry) — restored on switch-back. */
+  reconnectMessage?: string | null;
 }
 
 export interface InternalState extends BackgroundSessionState {
@@ -48,6 +53,7 @@ export class BackgroundSessionStore {
   private sessions = new Map<string, InternalState>();
   onProcessingChange?: (sessionId: string, isProcessing: boolean) => void;
   onPermissionRequest?: PermissionRequestCallback;
+  onGoalChange?: (sessionId: string, goal: CodexThreadGoal | null) => void;
 
   private getOrCreate(sessionId: string): InternalState {
     let state = this.sessions.get(sessionId);
@@ -63,6 +69,9 @@ export class BackgroundSessionStore {
         pendingPermission: null,
         rawAcpPermission: null,
         slashCommands: [],
+        codexGoal: null,
+        codexGoalSupported: null,
+        reconnectMessage: null,
         parentToolMap: new Map(),
         currentStreamingMsgId: null,
         codexPlanText: "",
@@ -94,10 +103,10 @@ export class BackgroundSessionStore {
   }
 
   /** Handle ACP turn completion — finalize streaming, close tools, reset processing. */
-  handleACPTurnComplete(sessionId: string): void {
+  handleACPTurnComplete(sessionId: string, stopReason?: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
-    acpTurnComplete(state);
+    acpTurnComplete(state, stopReason);
     this.onProcessingChange?.(sessionId, false);
   }
 
@@ -113,6 +122,9 @@ export class BackgroundSessionStore {
     }
     if (result?.permissionRequest) {
       this.onPermissionRequest?.(sessionId, result.permissionRequest);
+    }
+    if (result?.goalChanged) {
+      this.onGoalChange?.(sessionId, result.goal ?? null);
     }
   }
 
@@ -143,6 +155,9 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
+      codexGoal: state.codexGoal,
+      codexGoalSupported: state.codexGoalSupported,
+      reconnectMessage: state.reconnectMessage ?? null,
     };
   }
 
@@ -162,6 +177,9 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission,
       rawAcpPermission: state.rawAcpPermission,
       slashCommands: state.slashCommands ?? [],
+      codexGoal: state.codexGoal,
+      codexGoalSupported: state.codexGoalSupported,
+      reconnectMessage: state.reconnectMessage ?? null,
     };
   }
 
@@ -239,6 +257,9 @@ export class BackgroundSessionStore {
       pendingPermission: state.pendingPermission ? { ...state.pendingPermission } : null,
       rawAcpPermission: state.rawAcpPermission ?? null,
       slashCommands: state.slashCommands ?? [],
+      codexGoal: state.codexGoal ?? null,
+      codexGoalSupported: state.codexGoalSupported ?? null,
+      reconnectMessage: state.reconnectMessage ?? null,
       parentToolMap,
       currentStreamingMsgId: streamingMsg?.id ?? null,
       codexPlanText,

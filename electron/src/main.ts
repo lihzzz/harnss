@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, webContents } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, webContents } from "electron";
 import path from "path";
 import http from "http";
 import contextMenu from "electron-context-menu";
@@ -22,7 +22,8 @@ if (process.platform !== "win32") {
 import { log } from "./lib/logger";
 import { reportError } from "./lib/error-utils";
 import { migrateFromOpenAcpUi } from "./lib/migration";
-import { glassEnabled, applyGlass, setGlassTint } from "./lib/glass";
+import { glassEnabled, setGlassTint } from "./lib/glass";
+import { createBackgroundEffects } from "./lib/background-effects";
 import { getAppSettings } from "./lib/app-settings";
 import { initPostHog, shutdownPostHog, reinitPostHog, captureEvent } from "./lib/posthog";
 import { getAcpAnalyticsPropertiesForSession } from "./ipc/acp-sessions";
@@ -32,6 +33,13 @@ import { terminals } from "./ipc/terminal";
 import * as spacesIpc from "./ipc/spaces";
 import * as projectsIpc from "./ipc/projects";
 import * as sessionsIpc from "./ipc/sessions";
+import * as sessionOperationsIpc from "./ipc/session-operations";
+import * as historyIpc from "./ipc/history";
+import { configureSessionStopper } from "./lib/session-service";
+import { GlobalShortcuts } from "./lib/global-shortcuts";
+import { QuickCapture } from "./lib/quick-capture";
+import * as quickCaptureIpc from "./ipc/quick-capture";
+import { safeSend } from "./lib/safe-send";
 import * as foldersIpc from "./ipc/folders";
 import * as ccImportIpc from "./ipc/cc-import";
 import * as filesIpc from "./ipc/files";
@@ -42,16 +50,21 @@ import * as gitIpc from "./ipc/git";
 import * as agentRegistryIpc from "./ipc/agent-registry";
 import * as acpSessionsIpc from "./ipc/acp-sessions";
 import * as codexSessionsIpc from "./ipc/codex-sessions";
+import { registerCodexFingerprintIpc } from "./ipc/codex-fingerprint";
 import * as mcpIpc from "./ipc/mcp";
 import * as settingsIpc from "./ipc/settings";
-import * as jiraIpc from "./ipc/jira";
+import * as memoryIpc from "./ipc/memory";
+import * as skillsIpc from "./ipc/skills";
+import * as usageIpc from "./ipc/usage";
+import { shutdownUsage } from "./lib/usage";
 import { onSettingsChanged } from "./ipc/settings";
+import { getComputerUseRuntimeStatus, requestComputerUsePermissions } from "./lib/computer-use-runtime";
 
 // --- Performance: Chromium/V8 flags (must be set before app.whenReady()) ---
+if (!app.requestSingleInstanceLock()) app.exit(0);
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // force GPU raster for all content
 app.commandLine.appendSwitch("enable-zero-copy"); // avoid CPU→GPU memory copies for tiles
-app.commandLine.appendSwitch("ignore-gpu-blocklist"); // use GPU even on blocklisted hardware
-app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization"); // off-main-thread canvas
+app.commandLine.appendSwitch("enable-features", [app.commandLine.getSwitchValue("enable-features"), "CanvasOopRasterization", ...(process.platform === "linux" ? ["GlobalShortcutsPortal"] : [])].filter(Boolean).join(","));
 
 // --- Liquid Glass command-line switches ---
 if (glassEnabled) {
@@ -60,13 +73,19 @@ if (glassEnabled) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let quitting = false;
+let tray: Tray | null = null;
+const quickCapture = new QuickCapture((request) => safeSend(getMainWindow, "quick-capture:requested", request));
+const globalInputShortcuts = new GlobalShortcuts(globalShortcut, (action) => {
+  showMainWindow();
+  quickCapture.capture(action, () => clipboard.readText(), getAppSettings().quickCaptureTarget);
+}, process.platform);
+const backgroundEffects = createBackgroundEffects(() => mainWindow);
 
 import type { ThemeOption, MacBackgroundEffect as SharedMacBackgroundEffect } from "@shared/types/settings";
 
-/** In main process, "off" is never applied — it resolves to vibrancy or liquid-glass before use. */
+/** Transparency is tracked separately from the preferred macOS material. */
 type MacBackgroundEffect = Exclude<SharedMacBackgroundEffect, "off">;
-
-let pendingMacBackgroundEffect: MacBackgroundEffect = "liquid-glass";
 
 function normalizeThemeSource(value: unknown): ThemeOption {
   return value === "light" || value === "dark" || value === "system"
@@ -85,39 +104,41 @@ function getMacBackgroundEffectSupport(): { liquidGlass: boolean; vibrancy: bool
   };
 }
 
-function resolveMacBackgroundEffect(effect: MacBackgroundEffect): MacBackgroundEffect {
-  const support = getMacBackgroundEffectSupport();
-  if (effect === "liquid-glass" && !support.liquidGlass) {
-    return "vibrancy";
-  }
-  return effect;
-}
-
-function applyMacBackgroundEffect(effect: MacBackgroundEffect): void {
-  if (process.platform !== "darwin" || !mainWindow || mainWindow.isDestroyed()) return;
-
-  const resolved = resolveMacBackgroundEffect(effect);
-  pendingMacBackgroundEffect = resolved;
-
-  if (resolved === "vibrancy") {
-    mainWindow.setVibrancy("under-window", { animationDuration: 120 });
-    return;
-  }
-
-  mainWindow.setVibrancy(null);
-  if (!glassEnabled || mainWindow.webContents.isLoadingMainFrame()) return;
-
-  const glassId = applyGlass(mainWindow.getNativeWindowHandle());
-  if (glassId === -1) {
-    log("GLASS", "addView returned -1 — native addon failed, glass will not be visible");
-  } else {
-    log("GLASS", `Liquid glass applied, viewId=${glassId}`);
-  }
-}
-
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  const window = mainWindow;
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+function updateRecoveryEntry(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { label: "Show Harnss", click: showMainWindow },
+    { label: "Quit Harnss", click: () => app.quit() },
+  ];
+  if (process.platform === "darwin") { app.dock?.setMenu(Menu.buildFromTemplate(template)); return; }
+  if (!getAppSettings().globalShortcuts.enabled) { tray?.destroy(); tray = null; return; }
+  if (tray) return;
+  try {
+    const iconPath = app.isPackaged ? path.join(process.resourcesPath, "harnss-tray.png") : path.join(__dirname, "../../build/icon.png");
+    const icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) throw new Error("Tray icon is unavailable");
+    tray = new Tray(icon.resize({ width: 20, height: 20 }));
+    tray.setToolTip("Harnss");
+    tray.setContextMenu(Menu.buildFromTemplate(template));
+    tray.on("double-click", showMainWindow);
+  } catch (error) { reportError("SHORTCUTS:TRAY_ERR", error); tray = null; }
+}
+
+app.on("second-instance", showMainWindow);
+app.on("activate", () => { if (app.isReady()) showMainWindow(); });
+app.on("before-quit", () => { quitting = true; });
 
 function isMainRendererPermissionRequest(webContents: Electron.WebContents | null): boolean {
   return !!webContents && webContents.id === mainWindow?.webContents.id;
@@ -167,11 +188,6 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
 }
 
 function createWindow(): void {
-  const initialMacBackgroundEffect: MacBackgroundEffect = resolveMacBackgroundEffect(pendingMacBackgroundEffect);
-  if (process.platform === "darwin") {
-    pendingMacBackgroundEffect = initialMacBackgroundEffect;
-  }
-
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     show: false,
     width: 1200,
@@ -194,34 +210,37 @@ function createWindow(): void {
 
   if (process.platform === "darwin") {
     windowOptions.titleBarStyle = "hidden";
-    windowOptions.transparent = true;
-    windowOptions.backgroundColor = "#00000000";
+    const fallback = backgroundEffects.getState().fallbackReason;
+    windowOptions.transparent = fallback !== "low-memory" && fallback !== "low-cpu";
+    windowOptions.backgroundColor = windowOptions.transparent ? "#00000000" : "#141414";
     windowOptions.trafficLightPosition = { x: 19, y: 19 };
   } else if (process.platform === "win32") {
-    // Windows: native Electron backgroundMaterial handles DWM mica/acrylic.
-    // WebContents is automatically transparent (no transparent: true needed),
-    // and the native title bar stays intact.
+    // Enable Mica Alt only after the hardware policy and saved preference are known.
     windowOptions.autoHideMenuBar = true;
-    windowOptions.backgroundMaterial = "mica";
+    windowOptions.backgroundColor = "#141414";
   } else {
-    // macOS without glass / Linux
+    // Linux uses an in-app Gaussian backdrop, so no transparent native window is needed.
     windowOptions.titleBarStyle = "hiddenInset";
     windowOptions.trafficLightPosition = { x: 19, y: 19 };
     windowOptions.backgroundColor = "#141414";
   }
 
   mainWindow = new BrowserWindow(windowOptions);
-  if (process.platform === "darwin") applyMacBackgroundEffect(initialMacBackgroundEffect);
+  mainWindow.on("close", (event) => {
+    const shortcuts = getAppSettings().globalShortcuts;
+    if (!quitting && shortcuts.enabled && shortcuts.keepAliveOnClose && (process.platform === "darwin" || tray)) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+  mainWindow.on("session-end", () => { quitting = true; });
+  mainWindow.on("query-session-end", () => { quitting = true; });
+  mainWindow.on("closed", () => { mainWindow = null; });
+  backgroundEffects.refresh();
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
   });
-
-  if (process.platform === "darwin") {
-    mainWindow.on("focus", () => {
-      applyMacBackgroundEffect(pendingMacBackgroundEffect);
-    });
-  }
 
   contextMenu({
     window: mainWindow,
@@ -246,30 +265,33 @@ function createWindow(): void {
     void shell.openExternal(url);
   });
 
-  if (process.platform === "darwin") {
-    mainWindow.webContents.once("did-finish-load", () => {
-      applyMacBackgroundEffect(pendingMacBackgroundEffect);
-    });
-  }
+  mainWindow.webContents.on("did-finish-load", () => backgroundEffects.refresh());
 }
 
 // Renderer uses this to decide whether the transparency toggle is available.
 ipcMain.handle("app:getGlassSupported", () => {
-  return process.platform === "darwin" || process.platform === "win32";
+  return backgroundEffects.getState().availableEffect !== null;
+});
+
+ipcMain.handle("app:get-background-effect", () => backgroundEffects.getState());
+ipcMain.handle("app:set-transparency", (event, enabled: unknown) => {
+  if (event.sender !== mainWindow?.webContents || typeof enabled !== "boolean") return backgroundEffects.getState();
+  return backgroundEffects.setTransparency(enabled);
 });
 
 ipcMain.handle("app:get-mac-background-effect-support", () => {
   return getMacBackgroundEffectSupport();
 });
 
+ipcMain.handle("computer-use:status", () => getComputerUseRuntimeStatus());
+ipcMain.handle("computer-use:request-permissions", () => requestComputerUsePermissions());
+
 ipcMain.on("app:set-theme-source", (_event, themeSource: unknown) => {
   nativeTheme.themeSource = normalizeThemeSource(themeSource);
 });
 
 ipcMain.on("app:set-mac-background-effect", (_event, effect: unknown) => {
-  const normalized = normalizeMacBackgroundEffect(effect);
-  pendingMacBackgroundEffect = normalized;
-  applyMacBackgroundEffect(normalized);
+  backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(effect));
 });
 
 ipcMain.handle("app:relaunch", () => {
@@ -342,7 +364,7 @@ ipcMain.on("app:set-min-width", (_event, minWidth: number) => {
 // The C++ addon auto-cleans previous views in a single dispatch_sync block.
 const GLASS_TINT_RE = /^#[0-9a-fA-F]{8}$/;
 ipcMain.on("glass:set-tint-color", (_event, tintColor: string | null) => {
-  if (!glassEnabled) return;
+  if (backgroundEffects.getState().effect !== "liquid-glass") return;
   if (tintColor !== null && (typeof tintColor !== "string" || !GLASS_TINT_RE.test(tintColor))) {
     log("GLASS", `Ignoring invalid tintColor: ${String(tintColor)}`);
     return;
@@ -365,6 +387,15 @@ ipcMain.on("glass:set-theme", (_event, theme: string) => {
 spacesIpc.register();
 projectsIpc.register(getMainWindow);
 sessionsIpc.register();
+sessionOperationsIpc.register(getMainWindow);
+historyIpc.register(getMainWindow);
+configureSessionStopper(async (runtimeIds, meta) => {
+  for (const id of runtimeIds) {
+    if (meta.engine === "codex") await codexSessionsIpc.stopForDeletion(id);
+    else if (meta.engine === "acp") await acpSessionsIpc.stopForDeletion(id);
+    else await claudeSessionsIpc.stopForDeletion(id);
+  }
+});
 foldersIpc.register();
 ccImportIpc.register();
 filesIpc.register(getMainWindow);
@@ -375,13 +406,22 @@ gitIpc.register();
 agentRegistryIpc.register();
 acpSessionsIpc.register(getMainWindow);
 codexSessionsIpc.register(getMainWindow);
+registerCodexFingerprintIpc();
 mcpIpc.register();
 settingsIpc.register(getMainWindow);
-jiraIpc.register();
+settingsIpc.configureShortcutSettings((settings, persist) => globalInputShortcuts.apply(settings, persist));
+quickCaptureIpc.register(getMainWindow, quickCapture, globalInputShortcuts);
+memoryIpc.register(getMainWindow);
+skillsIpc.register();
+usageIpc.register(getMainWindow);
 
 // Listen for analytics settings changes and reinitialize PostHog
 let lastAnalyticsEnabled: boolean | undefined;
 onSettingsChanged((settings) => {
+  if (app.isReady()) updateRecoveryEntry();
+  if (process.platform === "darwin") {
+    backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(settings.macBackgroundEffect));
+  }
   if (lastAnalyticsEnabled !== undefined && settings.analyticsEnabled !== lastAnalyticsEnabled) {
     lastAnalyticsEnabled = settings.analyticsEnabled;
     reinitPostHog().catch((err) => {
@@ -493,12 +533,19 @@ app.whenReady().then(() => {
   // Migrate data from old "OpenACP UI" app directory before anything reads it
   migrateFromOpenAcpUi();
   if (process.platform === "darwin") {
-    pendingMacBackgroundEffect = resolveMacBackgroundEffect(
-      normalizeMacBackgroundEffect(getAppSettings().macBackgroundEffect),
-    );
+    backgroundEffects.setMacEffect(normalizeMacBackgroundEffect(getAppSettings().macBackgroundEffect));
   }
 
   createWindow();
+
+  // Restore an explicitly enabled memory daemon in the background. If its
+  // dependency is unavailable, the memory service remains fail-safe and the
+  // settings panel exposes the installation/retry action.
+  if (getAppSettings().memory.enabled) {
+    void import("./lib/memory/daemon").then(({ startMemoryDaemon }) => startMemoryDaemon()).catch((error) => {
+      reportError("MEMORY_DAEMON_STARTUP", error);
+    });
+  }
 
   // Initialize PostHog analytics (if enabled in settings) — fire-and-forget to avoid blocking startup
   initPostHog().catch((err) => {
@@ -538,34 +585,42 @@ app.whenReady().then(() => {
     });
     log("DEVTOOLS", `Register ${shortcut}: ${ok ? "OK" : "FAILED"}`);
   }
+  globalInputShortcuts.initialize(getAppSettings().globalShortcuts);
+  updateRecoveryEntry();
 });
 
 app.on("will-quit", (event) => {
+  quitting = true;
+  quickCapture.dispose();
+  globalInputShortcuts.dispose();
+  tray?.destroy();
+  tray = null;
+  claudeSessionsIpc.stopAll();
+  acpSessionsIpc.stopAll();
+  codexSessionsIpc.stopAll();
+  for (const term of terminals.values()) term.pty.kill();
+  terminals.clear();
   globalShortcut.unregisterAll();
 
   // For normal quits, delay process exit until PostHog has flushed pending events.
   event.preventDefault();
 
-  shutdownPostHog()
-    .catch((err) => {
+  const shutdownMemory = import("./lib/memory/daemon")
+    .then(({ stopMemoryDaemon }) => stopMemoryDaemon())
+    .catch((err) => reportError("MEMORY_DAEMON", err, { context: "shutdown" }));
+  Promise.all([
+    shutdownPostHog().catch((err) => {
       // Log and continue exit even if analytics shutdown fails
       reportError("POSTHOG", err, { context: "shutdown" });
-    })
-    .finally(() => {
-      app.exit(0);
-    });
+    }),
+    shutdownMemory,
+    shutdownUsage().catch((err) => log("USAGE_SHUTDOWN_ERR", err)),
+    historyIpc.shutdownHistory().catch((err) => reportError("HISTORY:SHUTDOWN", err)),
+  ]).finally(() => {
+    app.exit(0);
+  });
 });
 
 app.on("window-all-closed", () => {
-  claudeSessionsIpc.stopAll();
-  acpSessionsIpc.stopAll();
-  codexSessionsIpc.stopAll();
-
-  for (const [terminalId, term] of terminals) {
-    log("CLEANUP", `Killing terminal ${terminalId.slice(0, 8)}`);
-    term.pty.kill();
-  }
-  terminals.clear();
-
   app.quit();
 });

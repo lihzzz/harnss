@@ -28,18 +28,24 @@ function getSpacesFilePath(): string {
   return path.join(getDataDir(), "spaces.json");
 }
 
-function readSpaces(): Space[] | null {
+export function readSpaces(strict = false): Space[] | null {
   const filePath = getSpacesFilePath();
   if (!fs.existsSync(filePath)) return null;
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return null;
   }
 }
 
+const spaceListeners = new Set<() => void>();
+export function onSpacesChanged(listener: () => void): () => void { spaceListeners.add(listener); return () => { spaceListeners.delete(listener); }; }
 function writeSpaces(spaces: Space[]): void {
   fs.writeFileSync(getSpacesFilePath(), JSON.stringify(spaces, null, 2), "utf-8");
+  for (const listener of spaceListeners) {
+    try { listener(); } catch (error) { reportError("SPACES:CHANGE_LISTENER", error); }
+  }
 }
 
 export function register(): void {

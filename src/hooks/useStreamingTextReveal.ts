@@ -51,13 +51,9 @@ function hasUnbalancedBackticks(markdown: string): boolean {
 
 /** Tags whose internal DOM structure is volatile during streaming and
  *  should never be subject to text-node splitting / span injection. */
-/** Tags whose internal DOM structure is volatile during streaming and
- *  should never be subject to text-node splitting / span injection.
- *  UL, OL, and BLOCKQUOTE are intentionally excluded — their structure is
- *  stable enough during streaming for safe text-node splitting, and keeping
- *  them enables fade-in animation inside list items and blockquotes. */
 const STRUCTURAL_TAGS = new Set([
   "CODE", "PRE",
+  "UL", "OL", "LI", "BLOCKQUOTE",
   "TABLE", "THEAD", "TBODY", "TR", "TD", "TH",
   "DL", "DT", "DD",
 ]);

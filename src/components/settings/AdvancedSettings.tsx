@@ -3,7 +3,9 @@ import { Server } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SettingRow, SettingsHeader, SettingsSection } from "@/components/settings/shared";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { AppSettings } from "@/types";
+import { useI18n } from "@/lib/i18n";
 
 interface AdvancedSettingsProps {
   appSettings: AppSettings | null;
@@ -19,15 +21,16 @@ export const AdvancedSettings = memo(function AdvancedSettings({
   onUpdateAppSettings,
   onReplayWelcome,
 }: AdvancedSettingsProps) {
+  const { t } = useI18n();
+  const backgroundProcessLimit = useSettingsStore((s) => s.backgroundProcessLimit);
+  const setBackgroundProcessLimit = useSettingsStore((s) => s.setBackgroundProcessLimit);
   const [codexClientName, setCodexClientName] = useState("Harnss");
   const [showDevFillInChatTitleBar, setShowDevFillInChatTitleBar] = useState(false);
-  const [showJiraBoard, setShowJiraBoard] = useState(false);
 
   useEffect(() => {
     if (appSettings) {
       setCodexClientName(appSettings.codexClientName || "Harnss");
       setShowDevFillInChatTitleBar(!!appSettings.showDevFillInChatTitleBar);
-      setShowJiraBoard(!!appSettings.showJiraBoard);
     }
   }, [appSettings]);
 
@@ -49,21 +52,13 @@ export const AdvancedSettings = memo(function AdvancedSettings({
     [onUpdateAppSettings],
   );
 
-  const handleJiraBoardToggle = useCallback(
-    async (checked: boolean) => {
-      setShowJiraBoard(checked);
-      await onUpdateAppSettings({ showJiraBoard: checked });
-    },
-    [onUpdateAppSettings],
-  );
-
   const isDev = import.meta.env.DEV;
 
   return (
     <div className="flex h-full flex-col">
       <SettingsHeader
-        title="Advanced"
-        description="Low-level settings for protocol behavior and server communication"
+        title={t("advanced")}
+        description={t("settingsAdvancedDescription")}
       />
 
       <ScrollArea className="min-h-0 flex-1">
@@ -100,12 +95,16 @@ export const AdvancedSettings = memo(function AdvancedSettings({
             )}
 
             <SettingRow
-              label="Enable Jira board"
-              description="Show the Jira board UI in project sidebars and chats. This is a developer preview."
+              label="Background process limit"
+              description="Idle background sessions keep their engine process alive (100-130MB each). Beyond this limit, the least recently active idle sessions are stopped and revived on demand. Set to 0 to disable reaping."
             >
-              <Switch
-                checked={showJiraBoard}
-                onCheckedChange={handleJiraBoardToggle}
+              <input
+                type="number"
+                min={0}
+                max={32}
+                value={backgroundProcessLimit}
+                onChange={(e) => setBackgroundProcessLimit(Number(e.target.value))}
+                className="h-8 w-20 rounded-md border border-foreground/10 bg-background px-2.5 text-sm text-foreground outline-none transition-colors hover:border-foreground/20 focus:border-foreground/30 focus:ring-1 focus:ring-foreground/20"
               />
             </SettingRow>
 

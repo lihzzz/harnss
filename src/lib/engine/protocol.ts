@@ -1,6 +1,7 @@
 import type {
   ContentBlock,
   ToolUseResult,
+  ToolResultImage,
   ClaudeEvent,
   ImageAttachment,
   AssistantMessageEvent,
@@ -13,18 +14,55 @@ import type {
  */
 export function normalizeToolResult(
   toolUseResult: ToolUseResult | string | undefined,
-  rawContent: string | Array<{ type: string; text: string }>,
+  rawContent: unknown,
 ): ToolUseResult {
   // Return structured result if it has actual fields (skip empty {} from SDK)
-  if (toolUseResult && typeof toolUseResult !== "string" && Object.keys(toolUseResult).length > 0) return toolUseResult;
+  if (toolUseResult && typeof toolUseResult !== "string" && Object.keys(toolUseResult).length > 0) {
+    const images = extractToolResultImages(rawContent);
+    return images.length > 0 && !toolUseResult.images ? { ...toolUseResult, images } : toolUseResult;
+  }
   const contentStr = typeof rawContent === "string"
     ? rawContent
     : Array.isArray(rawContent)
-      ? rawContent.map((c) => c.text).join("\n")
+      ? rawContent.map((c) => {
+          if (typeof c !== "object" || c === null) return "";
+          const text = (c as Record<string, unknown>).text;
+          return typeof text === "string" ? text : "";
+        }).filter(Boolean).join("\n")
       : (typeof rawContent === "object" && rawContent !== null)
         ? JSON.stringify(rawContent)
         : String(rawContent ?? "");
-  return { type: "text", stdout: contentStr };
+  const images = extractToolResultImages(rawContent);
+  return { type: "text", stdout: contentStr, ...(images.length > 0 ? { images } : {}) };
+}
+
+/** Convert MCP image content blocks into the image shape used by tool renderers. */
+export function extractToolResultImages(rawContent: unknown): ToolResultImage[] {
+  if (!Array.isArray(rawContent)) return [];
+  const images: ToolResultImage[] = [];
+  for (const item of rawContent) {
+    if (typeof item !== "object" || item === null) continue;
+    const block = item as Record<string, unknown>;
+    if (block.type === "image" && typeof block.data === "string") {
+      const mimeType = typeof block.mimeType === "string"
+        ? block.mimeType
+        : typeof block.mime_type === "string" ? block.mime_type : "image/png";
+      images.push({
+        src: block.data.startsWith("data:") ? block.data : `data:${mimeType};base64,${block.data}`,
+        mimeType,
+        alt: "Computer screenshot",
+      });
+    } else if (block.type === "image_url") {
+      const imageUrl = block.image_url;
+      const src = typeof imageUrl === "string"
+        ? imageUrl
+        : typeof imageUrl === "object" && imageUrl !== null && typeof (imageUrl as Record<string, unknown>).url === "string"
+          ? (imageUrl as Record<string, unknown>).url as string
+          : undefined;
+      if (src) images.push({ src, alt: "Computer screenshot" });
+    }
+  }
+  return images;
 }
 
 /** Join all text blocks from an assistant message. */

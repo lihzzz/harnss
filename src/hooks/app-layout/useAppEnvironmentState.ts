@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useGlassOrchestrator } from "@/hooks/useGlassOrchestrator";
 import { useNotifications } from "@/hooks/useNotifications";
-import type { ChatSession, MacBackgroundEffect, NotificationSettings, PermissionRequest, SessionInfo, ThemeOption } from "@/types";
+import type { ChatSession, MacBackgroundEffect, NotificationSettings, PermissionRequest, SessionInfo, ThemeOption, CodexThreadGoal } from "@/types";
 import type { SettingsSection } from "@/components/SettingsView";
 
 interface UseAppEnvironmentStateInput {
@@ -14,6 +14,7 @@ interface UseAppEnvironmentStateInput {
   activeSession: ChatSession | null;
   sessionInfo: SessionInfo | null;
   isProcessing: boolean;
+  codexGoal?: CodexThreadGoal | null;
   onOpenSession?: (sessionId: string) => void;
 }
 
@@ -23,9 +24,8 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
   const [devFillEnabled, setDevFillEnabled] = useState(false);
-  const [jiraBoardEnabled, setJiraBoardEnabled] = useState(false);
 
-  const { glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect } = useGlassOrchestrator({
+  const { glassSupported, glassActive, macLiquidGlassSupported, liveMacBackgroundEffect } = useGlassOrchestrator({
     macBackgroundEffect: input.macBackgroundEffect,
     setMacBackgroundEffect: input.setMacBackgroundEffect,
     transparency: input.transparency,
@@ -38,7 +38,6 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
         setNotificationSettings(settings.notifications as NotificationSettings);
       }
       setDevFillEnabled(import.meta.env.DEV && !!settings?.showDevFillInChatTitleBar);
-      setJiraBoardEnabled(!!settings?.showJiraBoard);
     });
   }, [showSettings]);
 
@@ -49,6 +48,7 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
     activeSession: input.activeSession,
     sessionInfo: input.sessionInfo,
     isProcessing: input.isProcessing,
+    codexGoal: input.codexGoal,
     onOpenSession: input.onOpenSession,
   });
 
@@ -68,9 +68,9 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
     chatSearchOpen,
     setChatSearchOpen,
     glassSupported,
+    glassActive,
     macLiquidGlassSupported,
     liveMacBackgroundEffect,
     devFillEnabled,
-    jiraBoardEnabled,
   };
 }

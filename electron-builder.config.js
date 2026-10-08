@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const { createHash } = require("crypto");
 
 // --- afterPack: strip bloat from the asar archive ---
 // electron-builder v26 has a bug where the `files` config (negation-only,
@@ -26,8 +27,28 @@ async function afterPackHook(context) {
   const asarPath = path.join(resourcesDir, "app.asar");
   if (!fs.existsSync(asarPath)) return;
 
-  // @electron/asar is a transitive dep of electron-builder, always available
+  // Direct dev dependency: pnpm does not expose transitive packages at this root.
   const asar = require("@electron/asar");
+  asar.uncache(asarPath);
+  // Fail before repacking if source files changed while the builder streamed them.
+  // Otherwise extraction would preserve damaged bytes and compute fresh hashes for them.
+  for (const file of ["package.json", "electron/dist/main.js", "electron/dist/history-worker.js", "dist/index.html"]) {
+    const expected = asar.statFile(asarPath, file).integrity?.hash;
+    const actual = createHash("sha256").update(asar.extractFile(asarPath, file)).digest("hex");
+    if (!expected || actual !== expected) throw new Error(`ASAR integrity mismatch: ${file}. Keep build inputs unchanged while packaging.`);
+  }
+  const unpackedDirectories = new Set();
+  const unpackedFiles = new Set(["*.node", "*.dylib", "*.so", "*.dll"]);
+  for (const entry of asar.listPackage(asarPath)) {
+    const relative = entry.replace(/^[/\\]/, "");
+    if (!asar.statFile(asarPath, relative).unpacked) continue;
+    const parts = relative.split(/[/\\]/);
+    const modules = parts.lastIndexOf("node_modules");
+    if (modules >= 0 && parts[modules + 1]) {
+      const end = modules + (parts[modules + 1].startsWith("@") ? 3 : 2);
+      unpackedDirectories.add(parts.slice(0, end).join(path.sep));
+    } else unpackedFiles.add(path.basename(relative));
+  }
   const tmpDir = path.join(resourcesDir, "_asar_tmp");
 
   console.log("  \u2022 afterPack: extracting asar to strip bloat...");
@@ -53,7 +74,12 @@ async function afterPackHook(context) {
 
   console.log("  \u2022 afterPack: repacking asar...");
   fs.rmSync(asarPath, { force: true });
-  await asar.createPackage(tmpDir, asarPath);
+  // Preserve native runtime locations (including ONNX) when rebuilding the archive.
+  await asar.createPackageWithOptions(tmpDir, asarPath, {
+    unpack: `{${[...unpackedFiles].join(",")}}`,
+    ...(unpackedDirectories.size ? { unpackDir: `{${[...unpackedDirectories].join(",")}}` } : {}),
+  });
+  asar.uncache(asarPath);
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
   // Log final size for visibility
@@ -86,13 +112,19 @@ module.exports = {
 
   // --- ASAR packing ---
   asar: true,
+  extraResources: [{ from: "build/icon.png", to: "harnss-tray.png" }],
   asarUnpack: [
+    "node_modules/onnxruntime-node/**",
     "node_modules/node-pty/**",
     "node_modules/electron-liquid-glass/**",
     "node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
     "node_modules/@anthropic-ai/claude-agent-sdk/*.wasm",
     "node_modules/@anthropic-ai/claude-agent-sdk/vendor/**",
     "node_modules/@anthropic-ai/claude-agent-sdk/manifest*.json",
+    "node_modules/@trycua/cua-driver/**",
+    "node_modules/@trycua/cua-driver-*/**",
+    "node_modules/@ubjs/**",
+    "electron/dist/computer-use-mcp.js",
   ],
 
   npmRebuild: true,

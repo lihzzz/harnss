@@ -7,7 +7,7 @@
  * `buildPaneController` callback that lived in AppLayout.
  */
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { toast } from "sonner";
 import type { ACPConfigOption, ChatSession, ClaudeEffort, EngineId, ImageAttachment, InstalledAgent, ModelInfo } from "@/types";
 import type { SessionPaneState } from "@/hooks/session/useSessionPane";
@@ -15,6 +15,9 @@ import type { CodexModelSummary } from "@/hooks/session/types";
 import { buildCodexCollabMode, DEFAULT_PERMISSION_MODE } from "@/hooks/session/types";
 import { canonicalizeModelValue, findEquivalentModel } from "@/lib/model-utils";
 import type { PaneController } from "@/types";
+import { getRetryRequest, isRetryableUpstreamError } from "@/lib/session/retry";
+import { useAutoRetry } from "./useAutoRetry";
+import { isSessionFrozen } from "@/lib/session/batch-runtime";
 
 // ── Model catalog builders (moved from AppLayout) ──
 
@@ -75,12 +78,22 @@ export interface PaneControllerContext {
     setSessionPermissionMode: (sessionId: string, mode: string) => void;
     setCodexEffort: (effort: string) => void;
     codexEffort: string;
+    codexGoal: import("@/types").CodexThreadGoal | null;
+    codexGoalSupported: boolean | null;
+    codexGoalLoading: boolean;
+    codexGoalError: string | null;
+    getCodexGoal: () => Promise<void>;
+    setCodexGoal: (input: { objective: string; tokenBudget: number | null }) => Promise<boolean>;
+    pauseCodexGoal: () => Promise<boolean>;
+    resumeCodexGoal: () => Promise<boolean>;
+    clearCodexGoal: () => Promise<boolean>;
     codexRawModels: CodexModelSummary[];
     codexModelsLoadingMessage: string | null;
     cachedClaudeModels: ModelInfo[];
     acpConfigOptions: ACPConfigOption[];
     acpConfigOptionsLoading: boolean;
     setACPConfig: (key: string, value: string) => void;
+    retryLastMessage: (errorMessageId: string) => Promise<void>;
   };
   // Split-view helpers (optional — absent in single-chat mode)
   splitView?: {
@@ -97,7 +110,9 @@ export function usePaneController(
   isActiveSessionPane: boolean,
   ctx: PaneControllerContext,
 ): PaneController {
-  return useMemo(() => {
+  const retryInFlightRef = useRef<Set<string>>(new Set());
+
+  const controller = useMemo(() => {
     const paneEngine: EngineId = session?.engine
       ?? (isActiveSessionPane ? (ctx.selectedAgent?.engine ?? "claude") : "claude");
     const selectedPaneAgent = isActiveSessionPane
@@ -190,6 +205,12 @@ export function usePaneController(
       paneState.codex.setCodexEffort(effort);
     };
 
+    const handlePaneGoalGet = () => isActiveSessionPane ? ctx.manager.getCodexGoal() : paneState.codex.getGoal();
+    const handlePaneGoalSet = (input: { objective: string; tokenBudget: number | null }) => isActiveSessionPane ? ctx.manager.setCodexGoal(input) : paneState.codex.setGoal(input);
+    const handlePaneGoalPause = () => isActiveSessionPane ? ctx.manager.pauseCodexGoal() : paneState.codex.pauseGoal();
+    const handlePaneGoalResume = () => isActiveSessionPane ? ctx.manager.resumeCodexGoal() : paneState.codex.resumeGoal();
+    const handlePaneGoalClear = () => isActiveSessionPane ? ctx.manager.clearCodexGoal() : paneState.codex.clearGoal();
+
     const handlePaneAgentChange = async (agent: InstalledAgent | null) => {
       if (isActiveSessionPane) {
         ctx.handleAgentChange(agent);
@@ -224,6 +245,7 @@ export function usePaneController(
     };
 
     const handlePaneSend = async (text: string, images?: ImageAttachment[], displayText?: string) => {
+      if (isSessionFrozen(sessionId)) return;
       ctx.splitView?.setFocusedSession(sessionId);
 
       if (isActiveSessionPane) {
@@ -239,15 +261,23 @@ export function usePaneController(
       }
 
       if (paneEngine === "acp") {
-        await paneState.acp.send(text, images, displayText);
+        const promptResult = await paneState.acp.send(text, images, displayText);
+        if (!promptResult.ok) {
+          if (isRetryableUpstreamError(promptResult.error ?? "")) {
+            if (promptResult.userMessageId) {
+              paneState.engine.setMessages((prev) => prev.filter((message) => message.id !== promptResult.userMessageId));
+            }
+            await ctx.queueSplitPaneSendAfterSwitch?.(sessionId, text, images, displayText);
+          }
+        }
         return;
       }
 
       if (paneEngine === "codex") {
         try {
           const collaborationMode = buildCodexCollabMode(panePlanMode, paneModel);
-          const sent = await paneState.codex.send(text, images, displayText, collaborationMode);
-          if (!sent) {
+          const sendResult = await paneState.codex.send(text, images, displayText, collaborationMode);
+          if (!sendResult.ok && isRetryableUpstreamError(sendResult.error ?? "")) {
             await ctx.queueSplitPaneSendAfterSwitch?.(sessionId, text, images, displayText);
           }
         } catch (err) {
@@ -273,6 +303,33 @@ export function usePaneController(
       await paneState.engine.interrupt();
     };
 
+    const handlePaneRetry = async (errorMessageId: string) => {
+      if (isSessionFrozen(sessionId)) return;
+      if (paneState.isProcessing) return;
+      if (retryInFlightRef.current.has(errorMessageId)) return;
+      if (isActiveSessionPane) {
+        retryInFlightRef.current.add(errorMessageId);
+        try {
+          await ctx.manager.retryLastMessage(errorMessageId);
+        } finally {
+          retryInFlightRef.current.delete(errorMessageId);
+        }
+        return;
+      }
+
+      const request = getRetryRequest(paneState.messages, errorMessageId);
+      if (!request) return;
+      retryInFlightRef.current.add(errorMessageId);
+      paneState.engine.setMessages((prev) => prev.map((message) =>
+        message.id === errorMessageId ? { ...message, retryable: false } : message,
+      ));
+      try {
+        await handlePaneSend(request.content, request.images, request.displayContent);
+      } finally {
+        retryInFlightRef.current.delete(errorMessageId);
+      }
+    };
+
     return {
       paneEngine,
       selectedPaneAgent,
@@ -287,6 +344,15 @@ export function usePaneController(
       paneAcpConfigOptionsLoading,
       paneCodexModelsLoadingMessage,
       paneCodexEffort: isActiveSessionPane ? ctx.manager.codexEffort : paneState.codex.codexEffort,
+      paneCodexGoal: isActiveSessionPane ? ctx.manager.codexGoal : paneState.codex.codexGoal,
+      paneCodexGoalSupported: isActiveSessionPane ? ctx.manager.codexGoalSupported : paneState.codex.codexGoalSupported,
+      paneCodexGoalLoading: isActiveSessionPane ? ctx.manager.codexGoalLoading : paneState.codex.goalLoading,
+      paneCodexGoalError: isActiveSessionPane ? ctx.manager.codexGoalError : paneState.codex.goalError,
+      handlePaneGoalGet,
+      handlePaneGoalSet,
+      handlePaneGoalPause,
+      handlePaneGoalResume,
+      handlePaneGoalClear,
       handlePaneModelChange,
       handlePaneClaudeModelEffortChange,
       handlePanePlanModeChange,
@@ -295,6 +361,7 @@ export function usePaneController(
       handlePaneAgentChange,
       handlePaneClear,
       handlePaneSend,
+      handlePaneRetry,
       handlePaneStop,
       handlePaneAcpConfigChange: isActiveSessionPane ? ctx.manager.setACPConfig : paneState.acp.setConfig,
     };
@@ -305,4 +372,19 @@ export function usePaneController(
     session,
     sessionId,
   ]);
+
+  // Auto-resend the last user turn (with backoff) when it ends in a retryable
+  // upstream error. Duplicate scheduling across controllers watching the same
+  // session is guarded downstream by retryInFlightRef in the retry path.
+  const { autoRetry, cancelAutoRetry } = useAutoRetry({
+    sessionId: sessionId || null,
+    messages: paneState.messages,
+    isProcessing: paneState.isProcessing,
+    onRetry: controller.handlePaneRetry,
+  });
+
+  return useMemo(
+    () => ({ ...controller, autoRetry, cancelAutoRetry }),
+    [controller, autoRetry, cancelAutoRetry],
+  );
 }

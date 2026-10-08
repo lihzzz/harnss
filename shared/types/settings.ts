@@ -8,10 +8,23 @@
 
 export type PreferredEditor = "auto" | "cursor" | "code" | "zed";
 export type VoiceDictationMode = "native" | "whisper";
+/** UI language. Chinese is the first-run default. */
+export type Language = "zh-CN" | "en-US";
 export type ThemeOption = "light" | "dark" | "system";
+/**
+ * Renderer-only theme preference. "auto" resolves to light/dark by local time
+ * and must never be sent to the main process (nativeTheme accepts only ThemeOption).
+ */
+export type ThemePreference = ThemeOption | "auto";
+/** UI information density. "comfortable" is the default layout. */
+export type DensityOption = "compact" | "comfortable" | "loose";
+/** UI motion level. "auto" follows the OS prefers-reduced-motion setting. */
+export type MotionLevelOption = "auto" | "full" | "reduced";
 export type MacBackgroundEffect = "liquid-glass" | "vibrancy" | "off";
 export type CodexBinarySource = "auto" | "managed" | "custom";
 export type ClaudeBinarySource = "auto" | "managed" | "custom";
+import type { MemorySettings } from "./memory";
+import type { GlobalShortcutSettings, QuickCaptureTarget } from "./productivity";
 
 // ── Notification settings ──
 
@@ -33,6 +46,9 @@ export interface NotificationSettings {
 
 /** Main-process app settings (persisted to JSON file in data dir). */
 export interface AppSettings {
+  globalShortcuts: GlobalShortcutSettings;
+  quickCaptureTarget: QuickCaptureTarget | null;
+  history: { semanticEnabled: boolean; embeddingModelKey: string | null };
   /** Number of recent chats to show per project in the sidebar (default: 10) */
   defaultChatLimit: number;
   /** Preferred code editor for "Open in Editor" actions (default: "auto") */
@@ -45,6 +61,12 @@ export interface AppSettings {
   codexClientName: string;
   /** Which Codex binary source to use */
   codexBinarySource: CodexBinarySource;
+  /** Enable Codex's experimental desktop Computer Use feature for new sessions */
+  codexComputerUseEnabled: boolean;
+  /** Enable the engine-independent Cua Driver MCP runtime for new sessions */
+  computerUseEnabled: boolean;
+  /** Optional absolute path to the Cua Driver executable; empty uses PATH */
+  computerUseBinaryPath: string;
   /** Absolute path used when codexBinarySource is custom */
   codexCustomBinaryPath: string;
   /** Which Claude binary source to use */
@@ -55,8 +77,6 @@ export interface AppSettings {
   opencodeCustomBinaryPath: string;
   /** Show developer-only "Dev Fill" button in chat title bar (local dev builds only) */
   showDevFillInChatTitleBar: boolean;
-  /** Show the Jira board UI in the sidebar and main panel (developer preview) */
-  showJiraBoard: boolean;
   /** Preferred native macOS background material when window transparency is enabled */
   macBackgroundEffect: MacBackgroundEffect;
   /** Enable anonymous analytics to help improve the app (default: true) */
@@ -65,4 +85,6 @@ export interface AppSettings {
   analyticsUserId?: string;
   /** Last date (YYYY-MM-DD) when daily_active_user was sent */
   analyticsLastDailyActiveDate?: string;
+  /** Local Hindsight long-term memory configuration. API keys live in an encrypted main-process store. */
+  memory: MemorySettings;
 }

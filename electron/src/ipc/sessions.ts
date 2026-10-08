@@ -1,272 +1,94 @@
-import { ipcMain } from "electron";
-import path from "path";
-import fs from "fs";
-import { getDataDir, getProjectSessionsDir, getSessionFilePath } from "../lib/data-dir";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import path from "node:path";
+import fs from "node:fs/promises";
 import { reportError } from "../lib/error-utils";
-import {
-  getLastUserMessageTimestamp,
-  extractSessionMeta,
-  type SessionMeta,
-} from "@shared/lib/session-persistence";
+import { getSessionRepository, deleteConversation } from "../lib/session-service";
+import { isRecord, ProductivityError } from "../lib/productivity-errors";
+import type { SessionData, SessionMetaPatch } from "../lib/session-repository";
+import { extractSessionMeta } from "@shared/lib/session-persistence";
+import { buildSessionMarkdown, markdownMessages, sanitizeExportFileName } from "@shared/lib/session-markdown";
 
 interface SearchResult {
-  messageResults: Array<{
-    sessionId: string;
-    projectId: string;
-    sessionTitle: string;
-    messageId: string;
-    snippet: string;
-    timestamp: number;
-  }>;
-  sessionResults: Array<{
-    sessionId: string;
-    projectId: string;
-    title: string;
-    createdAt: number;
-  }>;
+  messageResults: Array<{ sessionId: string; projectId: string; sessionTitle: string; messageId: string; snippet: string; timestamp: number }>;
+  sessionResults: Array<{ sessionId: string; projectId: string; title: string; createdAt: number }>;
 }
 
-function getMetaFilePath(projectId: string, sessionId: string): string {
-  return getSessionFilePath(projectId, sessionId).replace(/\.json$/, ".meta.json");
+function persistenceError(label: string, error: unknown): { error: string; code?: string } {
+  if (error instanceof ProductivityError) {
+    if (error.code === "append-before-save") return { error: "append-before-save" };
+    return { error: error.message, code: error.code };
+  }
+  return { error: reportError(label, error) };
 }
 
 export function register(): void {
-  ipcMain.handle("sessions:save", async (_event, data: { projectId: string; id: string; createdAt?: number; messages?: Array<{ role?: string; timestamp?: number }> }) => {
-    try {
-      const filePath = getSessionFilePath(data.projectId, data.id);
-      const providedLastMessageAt = (data as Record<string, unknown>).lastMessageAt;
-      const normalizedProvidedLastMessageAt =
-        typeof providedLastMessageAt === "number" ? providedLastMessageAt : undefined;
-      // Always prefer the latest user message timestamp when messages are present.
-      const lastMessageAt =
-        getLastUserMessageTimestamp(data.messages) ??
-        normalizedProvidedLastMessageAt ??
-        data.createdAt ??
-        0;
-      const enriched = { ...data, lastMessageAt };
-
-      // Write main session file (no pretty-printing for smaller file size)
-      const writeMain = fs.promises.writeFile(filePath, JSON.stringify(enriched), "utf-8");
-
-      // Write metadata sidecar (fire-and-forget alongside main write)
-      const meta = extractSessionMeta(enriched as unknown as Record<string, unknown>, lastMessageAt);
-      const metaPath = getMetaFilePath(data.projectId, data.id);
-      const writeMeta = fs.promises.writeFile(metaPath, JSON.stringify(meta), "utf-8").catch((err) => {
-        reportError("SESSIONS:META_WRITE_ERR", err, { sessionId: data.id });
-      });
-
-      await Promise.all([writeMain, writeMeta]);
-      return { ok: true };
-    } catch (err) {
-      const message = reportError("SESSIONS:SAVE_ERR", err, { sessionId: data.id });
-      return { error: message };
-    }
+  ipcMain.handle("sessions:save", async (_event, data: SessionData, previousId?: string) => {
+    try { await getSessionRepository().save(data, previousId); return { ok: true }; }
+    catch (error) { return persistenceError("SESSIONS:SAVE_ERR", error); }
   });
-
-  ipcMain.handle("sessions:load", async (_event, projectId: string, sessionId: string) => {
-    try {
-      const filePath = getSessionFilePath(projectId, sessionId);
-      try {
-        await fs.promises.access(filePath);
-      } catch {
-        return null;
-      }
-      return JSON.parse(await fs.promises.readFile(filePath, "utf-8"));
-    } catch (err) {
-      reportError("SESSIONS:LOAD_ERR", err, { projectId, sessionId });
-      return null;
-    }
+  ipcMain.handle("sessions:append", async (_event, data: SessionData, previousId?: string) => {
+    try { await getSessionRepository().append(data, previousId); return { ok: true }; }
+    catch (error) { return persistenceError("SESSIONS:APPEND_ERR", error); }
   });
-
+  ipcMain.handle("sessions:load", async (_event, projectId: string, id: string) => {
+    try { return await getSessionRepository().load(projectId, id); }
+    catch (error) { reportError("SESSIONS:LOAD_ERR", error); return null; }
+  });
   ipcMain.handle("sessions:list", async (_event, projectId: string) => {
-    try {
-      const dir = getProjectSessionsDir(projectId);
-      const allFiles = await fs.promises.readdir(dir);
-
-      // Prefer .meta.json sidecar files for fast listing
-      const metaFiles = allFiles.filter((f) => f.endsWith(".meta.json"));
-      const metaBasenames = new Set(metaFiles.map((f) => f.replace(/\.meta\.json$/, "")));
-
-      // Find .json files that lack a .meta.json sidecar (migration path)
-      const fullParseFiles = allFiles.filter(
-        (f) => f.endsWith(".json") && !f.endsWith(".meta.json") && !metaBasenames.has(f.replace(/\.json$/, ""))
-      );
-
-      const items = await Promise.all([
-        // Fast path: read small sidecar files
-        ...metaFiles.map(async (file): Promise<SessionMeta | null> => {
-          try {
-            const raw = await fs.promises.readFile(path.join(dir, file), "utf-8");
-            const data = JSON.parse(raw) as SessionMeta;
-            return data;
-          } catch {
-            return null;
-          }
-        }),
-        // Fallback: full-file parse for sessions without sidecar
-        ...fullParseFiles.map(async (file): Promise<SessionMeta | null> => {
-          try {
-            const raw = await fs.promises.readFile(path.join(dir, file), "utf-8");
-            const data = JSON.parse(raw) as Record<string, unknown>;
-            const lastMessageAt: number =
-              getLastUserMessageTimestamp(data.messages as Array<{ role?: string; timestamp?: number }>) ??
-              (typeof data.lastMessageAt === "number" ? data.lastMessageAt : undefined) ??
-              (data.createdAt as number) ??
-              0;
-
-            return extractSessionMeta(data, lastMessageAt);
-          } catch {
-            return null;
-          }
-        }),
-      ]);
-
-      const list: SessionMeta[] = items.filter((item): item is SessionMeta => item !== null);
-      // Sort by most recent user activity, not creation time.
-      list.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
-      return list;
-    } catch (err) {
-      reportError("SESSIONS:LIST_ERR", err, { projectId });
-      return [];
-    }
+    try { return await getSessionRepository().list(projectId); }
+    catch (error) { reportError("SESSIONS:LIST_ERR", error); return []; }
+  });
+  ipcMain.handle("sessions:update-meta", async (_event, { projectId, sessionId, patch }: { projectId: string; sessionId: string; patch: SessionMetaPatch }) => {
+    try { await getSessionRepository().updateMeta(projectId, sessionId, patch); return { ok: true }; }
+    catch (error) { return persistenceError("SESSIONS:UPDATE_META_ERR", error); }
+  });
+  ipcMain.handle("sessions:delete", async (_event, projectId: string, id: string) => {
+    try { await deleteConversation(projectId, id); return { ok: true }; }
+    catch (error) { return persistenceError("SESSIONS:DELETE_ERR", error); }
   });
 
-  ipcMain.handle("sessions:update-meta", async (
-    _event,
-    { projectId, sessionId, patch }: {
-      projectId: string;
-      sessionId: string;
-      patch: { pinned?: boolean; folderId?: string | null; branch?: string; archived?: boolean };
-    },
-  ) => {
-    try {
-      // Patch the .meta.json sidecar
-      const metaPath = getMetaFilePath(projectId, sessionId);
-      try {
-        const metaRaw = await fs.promises.readFile(metaPath, "utf-8");
-        const meta = JSON.parse(metaRaw);
-        if ("pinned" in patch) meta.pinned = patch.pinned || undefined;
-        if ("folderId" in patch) meta.folderId = patch.folderId || undefined;
-        if ("branch" in patch) meta.branch = patch.branch || undefined;
-        if ("archived" in patch) meta.archived = patch.archived || undefined;
-        await fs.promises.writeFile(metaPath, JSON.stringify(meta), "utf-8");
-      } catch {
-        // meta sidecar missing — will be recreated on next full save
-      }
-
-      // Patch the main .json file (read → merge → write)
-      const filePath = getSessionFilePath(projectId, sessionId);
-      try {
-        const raw = await fs.promises.readFile(filePath, "utf-8");
-        const data = JSON.parse(raw);
-        if ("pinned" in patch) data.pinned = patch.pinned || undefined;
-        if ("folderId" in patch) data.folderId = patch.folderId || undefined;
-        if ("branch" in patch) data.branch = patch.branch || undefined;
-        if ("archived" in patch) data.archived = patch.archived || undefined;
-        await fs.promises.writeFile(filePath, JSON.stringify(data), "utf-8");
-      } catch {
-        // main file missing — nothing to patch
-      }
-
-      return { ok: true };
-    } catch (err) {
-      const message = reportError("SESSIONS:UPDATE_META_ERR", err, { projectId, sessionId });
-      return { error: message };
-    }
-  });
-
-  ipcMain.handle("sessions:delete", async (_event, projectId: string, sessionId: string) => {
-    try {
-      const filePath = getSessionFilePath(projectId, sessionId);
-      const metaPath = getMetaFilePath(projectId, sessionId);
-
-      // Delete both main file and sidecar, ignoring ENOENT
-      await Promise.all([
-        fs.promises.unlink(filePath).catch((err: NodeJS.ErrnoException) => {
-          if (err.code !== "ENOENT") throw err;
-        }),
-        fs.promises.unlink(metaPath).catch((err: NodeJS.ErrnoException) => {
-          if (err.code !== "ENOENT") throw err;
-        }),
-      ]);
-      return { ok: true };
-    } catch (err) {
-      const message = reportError("SESSIONS:DELETE_ERR", err, { projectId, sessionId });
-      return { error: message };
-    }
-  });
-
+  // Compatibility response for callers predating the paginated history interface.
   ipcMain.handle("sessions:search", async (_event, { projectIds, query }: { projectIds: string[]; query: string }): Promise<SearchResult> => {
+    const result: SearchResult = { messageResults: [], sessionResults: [] };
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return result;
     try {
-      const lowerQuery = query.toLowerCase();
-      const messageResults: SearchResult["messageResults"] = [];
-      const sessionResults: SearchResult["sessionResults"] = [];
-
+      const repository = getSessionRepository();
       for (const projectId of projectIds) {
-        const dir = path.join(getDataDir(), "sessions", projectId);
-        try {
-          await fs.promises.access(dir);
-        } catch {
-          continue;
-        }
-
-        const allFiles = await fs.promises.readdir(dir);
-        const files = allFiles.filter((f) => f.endsWith(".json") && !f.endsWith(".meta.json"));
-        for (const file of files) {
-          const filePath = path.join(dir, file);
-          try {
-            const stat = await fs.promises.stat(filePath);
-            if (stat.size > 5 * 1024 * 1024) continue;
-
-            const raw = await fs.promises.readFile(filePath, "utf-8");
-            const data = JSON.parse(raw);
-            const sessionTitle = data.title || "Untitled";
-            const sessionId = data.id;
-
-            if (sessionTitle.toLowerCase().includes(lowerQuery)) {
-              sessionResults.push({
-                sessionId,
-                projectId,
-                title: sessionTitle,
-                createdAt: data.createdAt || 0,
-              });
-            }
-
-            if (messageResults.length >= 10) continue;
-            const messages = data.messages || [];
-            for (const msg of messages) {
-              if (messageResults.length >= 10) break;
-              if (msg.role !== "user" && msg.role !== "assistant") continue;
-              if (!msg.content || typeof msg.content !== "string") continue;
-
-              const idx = msg.content.toLowerCase().indexOf(lowerQuery);
-              if (idx === -1) continue;
-
-              const start = Math.max(0, idx - 30);
-              const end = Math.min(msg.content.length, idx + query.length + 50);
-              let snippet = msg.content.slice(start, end);
-              if (start > 0) snippet = "..." + snippet;
-              if (end < msg.content.length) snippet = snippet + "...";
-
-              messageResults.push({
-                sessionId,
-                projectId,
-                sessionTitle,
-                messageId: msg.id,
-                snippet,
-                timestamp: msg.timestamp || data.createdAt || 0,
-              });
-            }
-          } catch {
-            // Skip corrupted files
+        for (const session of await repository.list(projectId)) {
+          if (session.title.toLocaleLowerCase().includes(normalized)) result.sessionResults.push({ sessionId: session.id, projectId, title: session.title, createdAt: session.createdAt });
+          const data = await repository.load(projectId, session.id);
+          if (!data || !Array.isArray(data.messages)) continue;
+          for (const candidate of data.messages) {
+            const message: unknown = candidate;
+            if (!isRecord(message) || (message.role !== "user" && message.role !== "assistant") || message.isQueued || typeof message.id !== "string") continue;
+            const content = message.role === "user" && typeof message.displayContent === "string" ? message.displayContent : message.content;
+            if (typeof content !== "string") continue;
+            const index = content.toLocaleLowerCase().indexOf(normalized);
+            if (index < 0) continue;
+            const start = Math.max(0, index - 30);
+            const end = Math.min(content.length, index + normalized.length + 50);
+            result.messageResults.push({ sessionId: session.id, projectId, sessionTitle: session.title, messageId: message.id,
+              snippet: `${start ? "…" : ""}${content.slice(start, end)}${end < content.length ? "…" : ""}`,
+              timestamp: typeof message.timestamp === "number" ? message.timestamp : session.createdAt });
           }
         }
       }
+      return result;
+    } catch (error) { reportError("SESSIONS:SEARCH_ERR", error); return result; }
+  });
 
-      return { messageResults, sessionResults };
-    } catch (err) {
-      reportError("SESSIONS:SEARCH_ERR", err, { query });
-      return { messageResults: [], sessionResults: [] };
-    }
+  ipcMain.handle("sessions:export-markdown", async (event, { projectId, sessionId }: { projectId: string; sessionId: string }) => {
+    try {
+      const data = await getSessionRepository().load(projectId, sessionId);
+      if (!data) return { error: "Session file not found" };
+      const markdown = buildSessionMarkdown(extractSessionMeta(data, Number(data.lastMessageAt) || 0), markdownMessages(data.messages));
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const options = { title: "Export Session as Markdown", defaultPath: path.join(app.getPath("documents"), `${sanitizeExportFileName(String(data.title ?? "session"))}.md`), filters: [{ name: "Markdown", extensions: ["md"] }] };
+      const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+      if (result.canceled || !result.filePath) return { canceled: true };
+      await fs.writeFile(result.filePath, markdown, "utf8");
+      return { ok: true, filePath: result.filePath };
+    } catch (error) { return persistenceError("SESSIONS:EXPORT_MD_ERR", error); }
   });
 }

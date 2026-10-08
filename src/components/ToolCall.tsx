@@ -19,6 +19,7 @@ import {
   CHAT_ROW_WIDTH_CLASS,
 } from "@/components/lib/chat-layout";
 import { getToolDiffStats } from "@/lib/diff/diff-stats";
+import { SelectableToolResult } from "./ToolResultSelection";
 
 // ── Main entry ──
 
@@ -58,12 +59,12 @@ export const ToolCall = memo(function ToolCall({
     );
 
   // compact: skip outer padding wrapper (used inside ToolGroupBlock to avoid double padding)
-  if (compact) return content;
+  if (compact) return <SelectableToolResult message={message}>{content}</SelectableToolResult>;
 
   return (
     <div className={`flex justify-start ${CHAT_ROW_CLASS}`}>
       <div className={`${CHAT_ROW_WIDTH_CLASS} ${isWideTool ? "w-full" : ""}`}>
-        {content}
+        <SelectableToolResult message={message}>{content}</SelectableToolResult>
       </div>
     </div>
   );
@@ -103,7 +104,11 @@ const RegularTool = memo(function RegularTool({
   const isPlanTool = message.toolName === "ExitPlanMode";
   const isInteractive = isPlanTool || message.toolName === "AskUserQuestion";
   const isEditToolCall = message.toolName === "Edit" || message.toolName === "Write";
-  const defaultExpanded = isPlanTool || (isEditToolCall && expandEditToolCallsByDefault);
+  // Restored history mounts with the result already present — keep it collapsed so
+  // loading a large session doesn't render every Edit/Write diff. Live tools mount
+  // result-less and still expand per the user's setting.
+  const hasResult = !!message.toolResult;
+  const defaultExpanded = isPlanTool || (isEditToolCall && expandEditToolCallsByDefault && !hasResult);
   const skipAutoExpandOnResult = isEditToolCall || isInteractive;
   const isWideTool = message.toolName === "Edit" || message.toolName === "Write" || message.toolName === "NotebookEdit";
   const [storedExpanded, setExpanded, hasStoredExpanded] = useChatPersistedState(
@@ -111,7 +116,6 @@ const RegularTool = memo(function RegularTool({
     defaultExpanded,
   );
   const expanded = isPlanTool || storedExpanded;
-  const hasResult = !!message.toolResult;
   const isRunning = !hasResult;
   const isError = !!message.toolError;
   const Icon = getToolIcon(message.toolName ?? "");

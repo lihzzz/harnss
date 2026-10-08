@@ -1,7 +1,30 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { ToolId } from "@/types/tools";
-import type { AcpPermissionBehavior, ClaudeEffort, EngineId, MacBackgroundEffect, ThemeOption } from "@/types";
+import type { AcpPermissionBehavior, ClaudeEffort, DensityOption, EngineId, Language, MacBackgroundEffect, MotionLevelOption, ThemePreference } from "@/types";
+import { DEFAULT_AUTO_DAY_START, DEFAULT_AUTO_NIGHT_START, normalizeHour } from "@/lib/theme-schedule";
+import { DEFAULT_THEME_ID, validateThemePreset, type ThemePreset } from "@/themes/theme-preset";
+import type { AmbientSoundMode } from "@/lib/audio/ambient-player";
+import type { HistoryMode } from "@shared/types/productivity";
+
+export interface HistoryPreferences {
+  scope: "all" | "space" | "project";
+  mode: HistoryMode;
+  sort: "recent" | "relevance";
+  engine: EngineId | "all";
+  includeArchived: boolean;
+}
+const DEFAULT_HISTORY_PREFERENCES: HistoryPreferences = { scope: "all", mode: "keyword", sort: "recent", engine: "all", includeArchived: true };
+function normalizeHistoryPreferences(value: unknown): HistoryPreferences {
+  if (!value || typeof value !== "object") return { ...DEFAULT_HISTORY_PREFERENCES };
+  return {
+    scope: "scope" in value && (value.scope === "space" || value.scope === "project") ? value.scope : "all",
+    mode: "mode" in value && (value.mode === "semantic" || value.mode === "hybrid") ? value.mode : "keyword",
+    sort: "sort" in value && value.sort === "relevance" ? "relevance" : "recent",
+    engine: "engine" in value && (value.engine === "claude" || value.engine === "codex" || value.engine === "acp") ? value.engine : "all",
+    includeArchived: !("includeArchived" in value) || value.includeArchived !== false,
+  };
+}
 
 // ── Constants ──
 
@@ -11,6 +34,12 @@ const DEFAULT_PLAN_MODE = true;
 const DEFAULT_CLAUDE_EFFORT: ClaudeEffort = "high";
 export const DEFAULT_ENGINE_MODELS: Record<EngineId, string> = {
   claude: DEFAULT_MODEL,
+  acp: "",
+  codex: "",
+};
+
+const DEFAULT_CUSTOM_ENGINE_MODELS: Record<EngineId, string> = {
+  claude: "",
   acp: "",
   codex: "",
 };
@@ -27,7 +56,7 @@ const MIN_BOTTOM_HEIGHT = 120;
 const MAX_BOTTOM_HEIGHT = 600;
 const DEFAULT_BOTTOM_HEIGHT = 250;
 
-const DEFAULT_TOOL_ORDER: ToolId[] = ["terminal", "git", "browser", "files", "project-files", "mcp"];
+const DEFAULT_TOOL_ORDER: ToolId[] = ["terminal", "git", "browser", "files", "project-files", "mcp", "fingerprint"];
 const VALID_TOOL_IDS = new Set<ToolId>([
   "terminal",
   "browser",
@@ -37,6 +66,7 @@ const VALID_TOOL_IDS = new Set<ToolId>([
   "tasks",
   "agents",
   "mcp",
+  "fingerprint",
 ]);
 
 const IS_MAC_PLATFORM = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
@@ -89,7 +119,29 @@ export interface ProjectSettings {
 
 /** Global settings state (not per-project) */
 interface GlobalSettingsState {
-  theme: ThemeOption;
+  historyPreferences: HistoryPreferences;
+  language: Language;
+  theme: ThemePreference;
+  /** Hour of day (0-23) when auto theme switches to light */
+  themeAutoDayStart: number;
+  /** Hour of day (0-23) when auto theme switches to dark */
+  themeAutoNightStart: number;
+  /** UI information density */
+  density: DensityOption;
+  /** Colorblind-safe diff/chart palette (blue/orange instead of red/green) */
+  colorblindSafe: boolean;
+  /** Active theme preset id ("default", a builtin id, or a custom theme id) */
+  activeThemeId: string;
+  /** User-imported custom theme presets */
+  customThemes: ThemePreset[];
+  /** UI motion level ("auto" follows OS prefers-reduced-motion) */
+  motionLevel: MotionLevelOption;
+  /** Procedural ambient sound loop ("off" disables) */
+  ambientSound: AmbientSoundMode;
+  /** Ambient sound volume 0-1 */
+  ambientVolume: number;
+  /** Soft tick sound while the active session streams output */
+  streamTickEnabled: boolean;
   islandLayout: boolean;
   islandShine: boolean;
   /** The native macOS background material (liquid-glass or vibrancy) — never "off" */
@@ -109,12 +161,29 @@ interface GlobalSettingsState {
   coloredSidebarIcons: boolean;
   showToolIcons: boolean;
   coloredToolIcons: boolean;
+  /** Per-engine user-defined model IDs, kept independent of preset model selections */
+  customModelsByEngine: Record<EngineId, string>;
+  /** Max live background engine processes (0 = unlimited). Excess idle ones are reaped. */
+  backgroundProcessLimit: number;
 }
 
 /** Actions (setters) — excluded from persistence via partialize */
 interface SettingsActions {
   // Global setters
-  setTheme: (t: ThemeOption) => void;
+  setHistoryPreferences: (patch: Partial<HistoryPreferences>) => void;
+  setLanguage: (language: Language) => void;
+  setTheme: (t: ThemePreference) => void;
+  setThemeAutoDayStart: (hour: number) => void;
+  setThemeAutoNightStart: (hour: number) => void;
+  setDensity: (density: DensityOption) => void;
+  setColorblindSafe: (on: boolean) => void;
+  setActiveThemeId: (id: string) => void;
+  addCustomTheme: (preset: ThemePreset) => void;
+  removeCustomTheme: (id: string) => void;
+  setMotionLevel: (level: MotionLevelOption) => void;
+  setAmbientSound: (mode: AmbientSoundMode) => void;
+  setAmbientVolume: (volume: number) => void;
+  setStreamTickEnabled: (on: boolean) => void;
   setIslandLayout: (enabled: boolean) => void;
   setIslandShine: (enabled: boolean) => void;
   setMacBackgroundEffect: (effect: MacBackgroundEffect) => void;
@@ -132,6 +201,8 @@ interface SettingsActions {
   setColoredSidebarIcons: (on: boolean) => void;
   setShowToolIcons: (on: boolean) => void;
   setColoredToolIcons: (on: boolean) => void;
+  setCustomModelForEngine: (engine: EngineId, model: string) => void;
+  setBackgroundProcessLimit: (n: number) => void;
 
   // Per-project setters (all take projectId as first arg)
   setModelForEngine: (projectId: string, engine: EngineId, model: string) => void;
@@ -266,8 +337,11 @@ function readLegacyJson<T>(key: string, fallback: T): T {
 }
 
 function readLegacyGlobalSettings(): GlobalSettingsState {
+  const languageRaw = localStorage.getItem("harnss-language");
+  const language: Language = languageRaw === "en-US" ? "en-US" : "zh-CN";
   const themeRaw = localStorage.getItem("harnss-theme");
-  const theme: ThemeOption = (themeRaw === "light" || themeRaw === "dark" || themeRaw === "system") ? themeRaw : "dark";
+  const theme: ThemePreference =
+    (themeRaw === "light" || themeRaw === "dark" || themeRaw === "system" || themeRaw === "auto") ? themeRaw : "dark";
 
   // Plan mode with legacy migration
   let planMode = DEFAULT_PLAN_MODE;
@@ -299,7 +373,19 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
       : DEFAULT_CLAUDE_EFFORT;
 
   return {
+    language,
+    historyPreferences: { ...DEFAULT_HISTORY_PREFERENCES },
     theme,
+    themeAutoDayStart: DEFAULT_AUTO_DAY_START,
+    themeAutoNightStart: DEFAULT_AUTO_NIGHT_START,
+    density: "comfortable",
+    colorblindSafe: readLegacyBool("harnss-colorblind-safe", false),
+    activeThemeId: DEFAULT_THEME_ID,
+    customThemes: [],
+    motionLevel: "auto",
+    ambientSound: "off",
+    ambientVolume: 0.3,
+    streamTickEnabled: false,
     islandLayout: readLegacyBool("harnss-island-layout", true),
     islandShine: readLegacyBool("harnss-island-shine", true),
     macNativeBackgroundEffect: "liquid-glass",
@@ -317,6 +403,8 @@ function readLegacyGlobalSettings(): GlobalSettingsState {
     coloredSidebarIcons: readLegacyBool("harnss-colored-sidebar-icons", true),
     showToolIcons: readLegacyBool("harnss-show-tool-icons", true),
     coloredToolIcons: readLegacyBool("harnss-colored-tool-icons", false),
+    customModelsByEngine: DEFAULT_CUSTOM_ENGINE_MODELS,
+    backgroundProcessLimit: 4,
   };
 }
 
@@ -394,6 +482,41 @@ function validateToolOrder(stored: ToolId[]): ToolId[] {
   return result;
 }
 
+/** Drop malformed custom themes from persisted state (storage corruption guard). */
+function sanitizePersistedThemes(value: unknown): ThemePreset[] {
+  if (!Array.isArray(value)) return [];
+  const result: ThemePreset[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const candidate = entry as Partial<ThemePreset>;
+    if (typeof candidate.id !== "string" || candidate.id.length === 0) continue;
+    const validation = validateThemePreset({
+      "harnss-theme": 1,
+      name: candidate.name,
+      light: candidate.light,
+      dark: candidate.dark,
+    });
+    if (validation.ok) {
+      result.push({ id: candidate.id, name: validation.preset.name, light: validation.preset.light, dark: validation.preset.dark });
+    }
+  }
+  return result;
+}
+
+function normalizePersistedProjects(
+  projects: Record<string, ProjectSettings>,
+): Record<string, ProjectSettings> {
+  return Object.fromEntries(
+    Object.entries(projects).map(([projectId, project]) => [
+      projectId,
+      {
+        ...project,
+        toolOrder: validateToolOrder(project.toolOrder ?? DEFAULT_TOOL_ORDER),
+      },
+    ]),
+  );
+}
+
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
@@ -413,7 +536,19 @@ export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
       // ── Global state defaults ──
+      historyPreferences: { ...DEFAULT_HISTORY_PREFERENCES },
+      language: "zh-CN",
       theme: "dark",
+      themeAutoDayStart: DEFAULT_AUTO_DAY_START,
+      themeAutoNightStart: DEFAULT_AUTO_NIGHT_START,
+      density: "comfortable",
+      colorblindSafe: false,
+      activeThemeId: DEFAULT_THEME_ID,
+      customThemes: [],
+      motionLevel: "auto",
+      ambientSound: "off" as AmbientSoundMode,
+      ambientVolume: 0.3,
+      streamTickEnabled: false,
       islandLayout: true,
       islandShine: true,
       macNativeBackgroundEffect: "liquid-glass",
@@ -431,12 +566,49 @@ export const useSettingsStore = create<SettingsStore>()(
       coloredSidebarIcons: true,
       showToolIcons: true,
       coloredToolIcons: false,
+      customModelsByEngine: DEFAULT_CUSTOM_ENGINE_MODELS,
+      backgroundProcessLimit: 4,
 
       projects: {},
 
       // ── Global setters ──
 
+      setHistoryPreferences: (patch) => set((state) => ({ historyPreferences: normalizeHistoryPreferences({ ...state.historyPreferences, ...patch }) })),
+      setLanguage: (language) => set({ language }),
+
       setTheme: (t) => set({ theme: t }),
+
+      setThemeAutoDayStart: (hour) =>
+        set((state) => ({ themeAutoDayStart: normalizeHour(hour, state.themeAutoDayStart) })),
+
+      setThemeAutoNightStart: (hour) =>
+        set((state) => ({ themeAutoNightStart: normalizeHour(hour, state.themeAutoNightStart) })),
+
+      setDensity: (density) => set({ density }),
+
+      setColorblindSafe: (on) => set({ colorblindSafe: on }),
+
+      setActiveThemeId: (id) => set({ activeThemeId: id }),
+
+      addCustomTheme: (preset) =>
+        set((state) => ({
+          customThemes: [...state.customThemes.filter((t) => t.id !== preset.id), preset],
+        })),
+
+      removeCustomTheme: (id) =>
+        set((state) => ({
+          customThemes: state.customThemes.filter((t) => t.id !== id),
+          activeThemeId: state.activeThemeId === id ? DEFAULT_THEME_ID : state.activeThemeId,
+        })),
+
+      setMotionLevel: (level) => set({ motionLevel: level }),
+
+      setAmbientSound: (mode) => set({ ambientSound: mode }),
+
+      setAmbientVolume: (volume) =>
+        set({ ambientVolume: Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.3 }),
+
+      setStreamTickEnabled: (on) => set({ streamTickEnabled: on }),
 
       setIslandLayout: (enabled) => set({ islandLayout: enabled }),
 
@@ -490,6 +662,15 @@ export const useSettingsStore = create<SettingsStore>()(
       setShowToolIcons: (on) => set({ showToolIcons: on }),
 
       setColoredToolIcons: (on) => set({ coloredToolIcons: on }),
+
+      setBackgroundProcessLimit: (n) => set({ backgroundProcessLimit: Math.max(0, Math.floor(n)) }),
+
+      setCustomModelForEngine: (engine, model) => {
+        const normalized = model.trim();
+        const current = get().customModelsByEngine;
+        if (current[engine] === normalized) return;
+        set({ customModelsByEngine: { ...current, [engine]: normalized } });
+      },
 
       // ── Per-project setters ──
 
@@ -602,7 +783,19 @@ export const useSettingsStore = create<SettingsStore>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         // Global state
+        historyPreferences: state.historyPreferences,
+        language: state.language,
         theme: state.theme,
+        themeAutoDayStart: state.themeAutoDayStart,
+        themeAutoNightStart: state.themeAutoNightStart,
+        density: state.density,
+        colorblindSafe: state.colorblindSafe,
+        activeThemeId: state.activeThemeId,
+        customThemes: state.customThemes,
+        motionLevel: state.motionLevel,
+        ambientSound: state.ambientSound,
+        ambientVolume: state.ambientVolume,
+        streamTickEnabled: state.streamTickEnabled,
         islandLayout: state.islandLayout,
         islandShine: state.islandShine,
         macNativeBackgroundEffect: state.macNativeBackgroundEffect,
@@ -620,6 +813,8 @@ export const useSettingsStore = create<SettingsStore>()(
         coloredSidebarIcons: state.coloredSidebarIcons,
         showToolIcons: state.showToolIcons,
         coloredToolIcons: state.coloredToolIcons,
+        customModelsByEngine: state.customModelsByEngine,
+        backgroundProcessLimit: state.backgroundProcessLimit,
         // Per-project
         projects: state.projects,
       }),
@@ -630,8 +825,13 @@ export const useSettingsStore = create<SettingsStore>()(
         return {
           ...current,
           ...incoming,
+          language: incoming.language === "en-US" ? "en-US" : "zh-CN",
+          historyPreferences: normalizeHistoryPreferences(incoming.historyPreferences),
+          // Re-validate persisted custom themes; drop anything malformed.
+          customThemes: sanitizePersistedThemes(incoming.customThemes),
+          activeThemeId: typeof incoming.activeThemeId === "string" ? incoming.activeThemeId : DEFAULT_THEME_ID,
           // Ensure projects is always an object, never undefined
-          projects: incoming.projects ?? current.projects,
+          projects: normalizePersistedProjects(incoming.projects ?? current.projects),
         };
       },
     },

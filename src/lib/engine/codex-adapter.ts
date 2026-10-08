@@ -5,12 +5,13 @@
  * Each item type maps to a UIMessage role + toolName for the existing ToolCall UI.
  */
 
-import type { TodoItem, ImageAttachment, ToolUseResult, CodexThreadItem } from "@/types";
+import type { TodoItem, ImageAttachment, ToolResultImage, ToolUseResult, CodexThreadItem } from "@/types";
 import type { FileUpdateChange } from "@/types/codex-protocol/v2/FileUpdateChange";
 import type { PatchChangeKind } from "@/types/codex-protocol/v2/PatchChangeKind";
 import type { TurnPlanStep } from "@/types/codex-protocol/v2/TurnPlanStep";
 import type { WebSearchAction } from "@/types/codex-protocol/v2/WebSearchAction";
 import { parseUnifiedDiff } from "@/lib/diff/unified-diff";
+import { isRecord } from "@/lib/utils";
 
 export { SimpleStreamingBuffer as CodexStreamingBuffer } from "@/lib/engine/streaming-buffer";
 
@@ -187,6 +188,9 @@ export function codexItemToToolResult(item: CodexThreadItem): ToolUseResult | un
         return { content: `Error: ${JSON.stringify(item.error)}` };
       }
       if (item.result) {
+        if (isComputerUseMcpCall(item.server, item.tool)) {
+          return computerUseResult(item.result);
+        }
         return { content: typeof item.result === "string" ? item.result : JSON.stringify(item.result) };
       }
       return undefined;
@@ -203,6 +207,77 @@ export function codexItemToToolResult(item: CodexThreadItem): ToolUseResult | un
     default:
       return undefined;
   }
+}
+
+/**
+ * Harnss Computer Use is exposed through the engine-independent Cua Driver
+ * MCP server. Keep legacy node_repl support for sessions created by older
+ * Harnss versions, while recognizing every Cua tool (not only `js`).
+ */
+export function isComputerUseMcpCall(server: string, tool: string): boolean {
+  if (/^(?:harnss_cua|cua-driver|cua_repl|computer-use)$/i.test(server)) return true;
+  return /^node_repl$/i.test(server) && tool === "js";
+}
+
+/**
+ * Preserve text and screenshot blocks from a node_repl `js` result instead of
+ * dumping raw base64 into the chat transcript as JSON text.
+ */
+function computerUseResult(result: unknown): ToolUseResult {
+  const images: ToolResultImage[] = [];
+  const textBlocks: string[] = [];
+  const record = isRecord(result) ? result : {};
+  const contentBlocks = Array.isArray(record.content) ? record.content : [];
+
+  for (const block of contentBlocks) {
+    if (typeof block === "string") {
+      textBlocks.push(block);
+      continue;
+    }
+    if (!isRecord(block)) continue;
+
+    if (block.type === "text" && typeof block.text === "string") {
+      textBlocks.push(block.text);
+      continue;
+    }
+
+    const image = toToolResultImage(block);
+    if (image) images.push(image);
+  }
+
+  const content = textBlocks.join("\n").trim();
+  const structuredContent = isRecord(record.structuredContent)
+    ? record.structuredContent
+    : undefined;
+
+  return {
+    type: "computer_use",
+    ...(content ? { content } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(structuredContent ? { structuredContent } : {}),
+  };
+}
+
+function toToolResultImage(block: Record<string, unknown>): ToolResultImage | null {
+  if (block.type === "image" && typeof block.data === "string") {
+    const mimeType = typeof block.mimeType === "string" ? block.mimeType : "image/png";
+    const src = block.data.startsWith("data:")
+      ? block.data
+      : `data:${mimeType};base64,${block.data}`;
+    return { src, mimeType, alt: "Computer screenshot" };
+  }
+
+  if (block.type === "image_url") {
+    const imageUrl = block.image_url;
+    const src = typeof imageUrl === "string"
+      ? imageUrl
+      : isRecord(imageUrl) && typeof imageUrl.url === "string"
+        ? imageUrl.url
+        : null;
+    return src ? { src, alt: "Computer screenshot" } : null;
+  }
+
+  return null;
 }
 
 function codexWebSearchToToolPayload(

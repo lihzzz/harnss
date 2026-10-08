@@ -34,7 +34,7 @@ export function insertTextAtCursor(
   el.focus();
 
   const sel = window.getSelection();
-  if (!sel || !sel.rangeCount) {
+  if (!sel || !sel.rangeCount || !el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
     // No cursor -- append to end
     el.appendChild(document.createTextNode(text));
   } else {
@@ -165,14 +165,21 @@ export const LOCAL_CLEAR_COMMAND: SlashCommand = {
   source: "local",
 };
 
+export const LOCAL_REMEMBER_COMMAND: SlashCommand = {
+  name: "remember",
+  description: "Save text to long-term memory without sending it to the agent",
+  argumentHint: "text to remember",
+  source: "local",
+};
+
 export function getAvailableSlashCommands(
   slashCommands?: SlashCommand[],
 ): SlashCommand[] {
   const commands =
     slashCommands?.filter(
-      (cmd) => cmd.name !== LOCAL_CLEAR_COMMAND.name,
+      (cmd) => cmd.name !== LOCAL_CLEAR_COMMAND.name && cmd.name !== LOCAL_REMEMBER_COMMAND.name,
     ) ?? [];
-  return [LOCAL_CLEAR_COMMAND, ...commands];
+  return [LOCAL_CLEAR_COMMAND, LOCAL_REMEMBER_COMMAND, ...commands];
 }
 
 export function isClearCommandText(text: string): boolean {

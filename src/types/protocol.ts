@@ -115,6 +115,13 @@ export interface ToolResultEvent {
   tool_use_result?: ToolUseResult;
 }
 
+/** An image returned by a computer-use or MCP tool. */
+export interface ToolResultImage {
+  src: string;
+  mimeType?: string;
+  alt?: string;
+}
+
 export interface ToolUseResult {
   type?: string;
   file?: { filePath: string; content: string; numLines: number; startLine: number; totalLines: number };
@@ -141,6 +148,8 @@ export interface ToolUseResult {
   answersByQuestionId?: Record<string, unknown>;
   /** ACP agents include a detailed version of the result (e.g., unified diff for edits/reads) */
   detailedContent?: string;
+  /** Binary/image content returned by a tool, such as a computer-use screenshot. */
+  images?: ToolResultImage[];
 }
 
 export interface ModelUsageEntry {

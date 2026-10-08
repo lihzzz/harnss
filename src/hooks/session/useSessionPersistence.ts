@@ -5,6 +5,9 @@ import { canonicalizeModelValue } from "@/lib/model-utils";
 import { getSessionNotificationActor } from "@/lib/session-notifications";
 import { toMcpStatusState } from "../../lib/mcp-utils";
 import { buildPersistedSession } from "../../lib/session/records";
+import { saveSessionSmart } from "../../lib/session/persistence";
+import { createSystemMessage } from "../../lib/message-factory";
+import { isRetryableUpstreamError } from "../../lib/session/retry";
 import { normalizeToolInput as acpNormalizeToolInput, pickAutoResponseOption } from "../../lib/engine/acp-adapter";
 import { DRAFT_ID } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks } from "./types";
@@ -68,14 +71,51 @@ export function useSessionPersistence({
         // Best-effort fallback only.
       }
     }
-    await window.claude.sessions.save(payload);
+    await saveSessionSmart(payload);
   }, []);
+
+  const persistCodexGoalMutation = useCallback(async (sessionId: string, goal: PersistedSession["codexGoal"]) => {
+    const session = sessionsRef.current.find((entry) => entry.id === sessionId);
+    if (!session || session.engine !== "codex") return;
+
+    const backgroundState = backgroundStoreRef.current.get(sessionId);
+    if (backgroundState) {
+      await persistSessionWithCodexFallback(buildPersistedSession(
+        { ...session, codexGoal: goal },
+        backgroundState.messages,
+        backgroundState.totalCost,
+        backgroundState.contextUsage,
+      ));
+      return;
+    }
+
+    if (activeSessionIdRef.current === sessionId) {
+      await persistSessionWithCodexFallback(buildPersistedSession(
+        { ...session, codexGoal: goal },
+        messagesRef.current.filter((message) => !message.isQueued),
+        totalCostRef.current,
+        contextUsageRef.current,
+      ));
+      return;
+    }
+
+    try {
+      const persisted = await window.claude.sessions.load(session.projectId, sessionId);
+      if (persisted) {
+        await saveSessionSmart({ ...persisted, codexGoal: goal });
+      }
+    } catch {
+      // Goal persistence is best effort; the next session load can refresh it from Codex.
+    }
+  }, [activeSessionIdRef, backgroundStoreRef, contextUsageRef, messagesRef, persistSessionWithCodexFallback, sessionsRef, totalCostRef]);
 
   // Wire up background store callbacks for sidebar indicators
   useEffect(() => {
     backgroundStoreRef.current.onProcessingChange = (sessionId, isProcessing) => {
       const session = sessionsRef.current.find((s) => s.id === sessionId);
       const wasProcessing = !!session?.isProcessing;
+      const backgroundGoal = backgroundStoreRef.current.get(sessionId)?.codexGoal;
+      const goalOwnsCompletion = !!backgroundGoal;
       setSessions((prev) =>
         prev.map((s) =>
           s.id === sessionId
@@ -84,7 +124,7 @@ export function useSessionPersistence({
                 isProcessing,
                 ...(isProcessing
                   ? { hasUnreadCompletion: false }
-                  : { hasUnreadCompletion: true })
+                  : { hasUnreadCompletion: !goalOwnsCompletion })
               }
             : s,
         ),
@@ -94,7 +134,7 @@ export function useSessionPersistence({
         ? !!continueQueuedBackgroundSession?.(sessionId)
         : false;
 
-      if (wasProcessing && !isProcessing && session && !continuedQueuedSession) {
+      if (wasProcessing && !isProcessing && session && !continuedQueuedSession && !goalOwnsCompletion) {
         window.dispatchEvent(new CustomEvent("harnss:background-session-complete", {
           detail: {
             sessionId,
@@ -138,11 +178,35 @@ export function useSessionPersistence({
         },
       }));
     };
-  }, [continueQueuedBackgroundSession, sessionsRef, setSessions, switchSessionRef, backgroundStoreRef]);
+
+    backgroundStoreRef.current.onGoalChange = (sessionId, goal) => {
+      const terminal = goal?.status === "complete"
+        || goal?.status === "blocked"
+        || goal?.status === "usageLimited"
+        || goal?.status === "budgetLimited";
+      setSessions((prev) => prev.map((session) => session.id === sessionId
+        ? { ...session, codexGoal: goal, ...(terminal ? { hasUnreadCompletion: true } : { hasUnreadCompletion: false }) }
+        : session));
+      void persistCodexGoalMutation(sessionId, goal);
+      window.dispatchEvent(new CustomEvent("harnss:background-goal-updated", {
+        detail: { sessionId, goal },
+      }));
+    };
+  }, [backgroundStoreRef, continueQueuedBackgroundSession, persistCodexGoalMutation, sessionsRef, setSessions, switchSessionRef]);
+
+  useEffect(() => {
+    const handleGoalMutation = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: unknown; goal?: unknown }>).detail;
+      if (typeof detail?.sessionId !== "string") return;
+      void persistCodexGoalMutation(detail.sessionId, detail.goal as PersistedSession["codexGoal"]);
+    };
+    window.addEventListener("harnss:codex-goal-mutated", handleGoalMutation);
+    return () => window.removeEventListener("harnss:codex-goal-mutated", handleGoalMutation);
+  }, [persistCodexGoalMutation]);
 
   // Handle session exits across all engines
   useEffect(() => {
-    const handleSessionExit = (sid: string) => {
+    const handleSessionExit = (sid: string, code: number | null, error?: string) => {
       liveSessionIdsRef.current.delete(sid);
 
       // If the pre-started eager session crashed, clear it
@@ -163,6 +227,16 @@ export function useSessionPersistence({
 
       // Auto-save and mark disconnected for background sessions
       if (sid !== activeSessionIdRef.current && backgroundStoreRef.current.has(sid)) {
+        if (code !== 0 && code !== null) {
+          const errorText = error || `Session process exited with code ${code}`;
+          const backgroundState = backgroundStoreRef.current.get(sid);
+          if (backgroundState?.messages.at(-1)?.content !== errorText) {
+            backgroundStoreRef.current.updateMessages(sid, (messages) => [
+              ...messages,
+              createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)),
+            ]);
+          }
+        }
         backgroundStoreRef.current.markDisconnected(sid);
         const bgState = backgroundStoreRef.current.get(sid);
         const session = sessionsRef.current.find((s) => s.id === sid);
@@ -171,19 +245,24 @@ export function useSessionPersistence({
             {
               ...session,
               model: session.model || bgState.sessionInfo?.model,
+              ...(session.engine === "codex" ? { codexGoal: bgState.codexGoal ?? null } : {}),
             },
             bgState.messages,
             bgState.totalCost,
             bgState.contextUsage,
           );
-          window.claude.sessions.save(persisted);
+          void saveSessionSmart(persisted);
         }
       }
     };
 
-    const unsubExit = window.claude.onExit((data) => handleSessionExit(data._sessionId));
-    const unsubAcpExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null }) => handleSessionExit(data._sessionId));
-    const unsubCodexExit = window.claude.codex.onExit((data) => handleSessionExit(data._sessionId));
+    const unsubExit = window.claude.onExit((data) => handleSessionExit(data._sessionId, data.code, data.error));
+    const unsubAcpExit = window.claude.acp.onExit((data: { _sessionId: string; code: number | null; error?: string }) => handleSessionExit(data._sessionId, data.code, data.error));
+    const unsubCodexExit = window.claude.codex.onExit((data) => handleSessionExit(
+      data._sessionId,
+      data.code,
+      data.signal ? `Codex process exited with ${data.signal}` : undefined,
+    ));
     return () => {
       unsubExit();
       unsubAcpExit();
@@ -271,7 +350,7 @@ export function useSessionPersistence({
     const unsubBgAcpTurn = window.claude.acp.onTurnComplete((data: ACPTurnCompleteEvent) => {
       const sid = data._sessionId;
       if (!sid || sid === activeSessionIdRef.current || visibleSplitSessionIdsRef.current.includes(sid)) return;
-      backgroundStoreRef.current.handleACPTurnComplete(sid);
+      backgroundStoreRef.current.handleACPTurnComplete(sid, data.stopReason);
     });
 
     // Route Codex events for non-active sessions to the background store
@@ -322,7 +401,10 @@ export function useSessionPersistence({
 
   // Debounced auto-save
   useEffect(() => {
-    if (!activeSessionId || activeSessionId === DRAFT_ID || messages.length === 0) return;
+    const activeSession = activeSessionId
+      ? sessionsRef.current.find((session) => session.id === activeSessionId)
+      : undefined;
+    if (!activeSessionId || activeSessionId === DRAFT_ID || (messages.length === 0 && activeSession?.engine !== "codex")) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -332,6 +414,7 @@ export function useSessionPersistence({
       const msgs = messagesRef.current.filter((m) => !m.isQueued);
       const data: PersistedSession = {
         id: activeSessionId,
+        conversationId: session.conversationId ?? activeSessionId,
         projectId: session.projectId,
         title: session.title,
         createdAt: session.createdAt,
@@ -346,6 +429,7 @@ export function useSessionPersistence({
         ...(session.agentId ? { agentId: session.agentId } : {}),
         ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
         ...(session.engine === "codex" && session.codexThreadId ? { codexThreadId: session.codexThreadId } : {}),
+        ...(session.engine === "codex" ? { codexGoal: codex.codexGoal ?? null } : {}),
       };
       void persistSessionWithCodexFallback(data);
     }, 2000);
@@ -353,7 +437,7 @@ export function useSessionPersistence({
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [messages, activeSessionId, sessionInfo?.model, persistSessionWithCodexFallback]);
+  }, [messages, activeSessionId, sessionInfo?.model, codex.codexGoal, persistSessionWithCodexFallback]);
 
   // Consolidated sync of session metadata to the session list (model, totalCost,
   // lastMessageAt, isProcessing, hasPendingPermission). A single effect avoids
@@ -414,6 +498,10 @@ export function useSessionPersistence({
           updates.isProcessing = engine.isProcessing;
         }
 
+        if (s.engine === "codex" && s.codexGoal !== codex.codexGoal) {
+          updates.codexGoal = codex.codexGoal;
+        }
+
         // hasPendingPermission sync — clear badge when permission is resolved
         if (!engine.pendingPermission && s.hasPendingPermission) {
           updates.hasPendingPermission = false;
@@ -425,24 +513,23 @@ export function useSessionPersistence({
       });
       return changed ? next : prev;
     });
-  }, [activeClaudeModels, activeSessionId, sessionInfo?.model, sessionInfo?.permissionMode, totalCost, messages.length, engine.isProcessing, engine.pendingPermission]);
+  }, [activeClaudeModels, activeSessionId, sessionInfo?.model, sessionInfo?.permissionMode, totalCost, messages.length, engine.isProcessing, engine.pendingPermission, codex.codexGoal]);
 
   // Save current session to disk (used before switching/creating)
   const saveCurrentSession = useCallback(async () => {
     const id = activeSessionIdRef.current;
-    if (!id || id === DRAFT_ID || messagesRef.current.length === 0) return;
     const session = sessionsRef.current.find((s) => s.id === id);
-    if (!session) return;
+    if (!id || id === DRAFT_ID || !session || (messagesRef.current.length === 0 && session.engine !== "codex")) return;
     // Never persist queued messages — unsent queue state is runtime-only.
     const msgs = messagesRef.current.filter((m) => !m.isQueued);
     const data: PersistedSession = buildPersistedSession(
-      session,
+      session.engine === "codex" ? { ...session, codexGoal: codex.codexGoal } : session,
       msgs,
       totalCostRef.current,
       contextUsageRef.current,
     );
     await persistSessionWithCodexFallback(data);
-  }, [persistSessionWithCodexFallback]);
+  }, [codex.codexGoal, persistSessionWithCodexFallback]);
 
   // Seed background store with current active session's state
   const seedBackgroundStore = useCallback(() => {
@@ -467,9 +554,12 @@ export function useSessionPersistence({
         pendingPermission: pendingPermissionRef.current ?? null,
         rawAcpPermission: null, // ACP ref is internal to useACP — will be restored via initialRawAcpPermission
         slashCommands,
+        codexGoal: sessionEngine === "codex" ? codex.codexGoal : null,
+        codexGoalSupported: sessionEngine === "codex" ? codex.codexGoalSupported : null,
+        reconnectMessage: sessionEngine === "codex" ? codex.reconnectMessage : null,
       });
     }
-  }, [claude.slashCommands, acp.slashCommands, codex.slashCommands]);
+  }, [claude.slashCommands, acp.slashCommands, codex.slashCommands, codex.codexGoal, codex.codexGoalSupported, codex.reconnectMessage]);
 
   // AI-generated title via background utility prompt (SDK Haiku or ACP utility session)
   const generateSessionTitle = useCallback(
@@ -512,7 +602,7 @@ export function useSessionPersistence({
           sessionId,
         );
         if (data) {
-          await window.claude.sessions.save({ ...data, title });
+          await saveSessionSmart({ ...data, title });
         }
       } catch {
         setSessions((prev) =>

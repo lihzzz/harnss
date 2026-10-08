@@ -11,6 +11,11 @@ import type { CommandExecutionOutputDeltaNotification } from "../../types/codex-
 import type { PlanDeltaNotification } from "../../types/codex-protocol/v2/PlanDeltaNotification";
 import type { TurnPlanUpdatedNotification } from "../../types/codex-protocol/v2/TurnPlanUpdatedNotification";
 import type { CodexTokenUsageNotification } from "@/types";
+import type { CodexThreadGoal } from "@/types";
+import { parseThreadGoal } from "@shared/lib/codex-goal";
+import { createSystemMessage } from "@/lib/message-factory";
+import { isRetryableUpstreamError } from "@/lib/session/retry";
+import type { TurnCompletedNotification } from "../../types/codex-protocol/v2/TurnCompletedNotification";
 
 /**
  * Process a Codex notification for a background session, mutating `state` in place.
@@ -24,11 +29,34 @@ export function handleCodexEvent(
   processingChanged?: boolean;
   isProcessing?: boolean;
   permissionRequest?: PermissionRequest;
+  goalChanged?: boolean;
+  goal?: CodexThreadGoal | null;
 } | undefined {
   state.isConnected = true;
   const { method, params } = event;
+  // Streaming activity means the upstream is back — clear the transient
+  // reconnect status. (Not cleared by passive events like rate-limit updates.)
+  if (method.startsWith("item/") || method.startsWith("turn/")) {
+    state.reconnectMessage = null;
+  }
 
   switch (method) {
+    case "thread/goal/updated": {
+      const goal = parseThreadGoal((params as { goal?: unknown }).goal);
+      if (!goal) break;
+      if (!state.codexGoal || goal.updatedAt >= state.codexGoal.updatedAt) {
+        state.codexGoal = goal;
+        state.codexGoalSupported = true;
+        return { goalChanged: true, goal };
+      }
+      break;
+    }
+
+    case "thread/goal/cleared":
+      state.codexGoal = null;
+      state.codexGoalSupported = true;
+      return { goalChanged: true, goal: null };
+
     case "turn/started":
       state.isProcessing = true;
       state.codexPlanText = "";
@@ -38,7 +66,25 @@ export function handleCodexEvent(
     case "turn/completed":
       finalizeACPStreamingMsg(state); // reuse — same pattern
       state.isProcessing = false;
+      const turn = (params as TurnCompletedNotification).turn;
+      if (turn.status === "failed") {
+        const errorText = turn.error?.message || "Turn failed";
+        state.messages.push(createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)));
+      }
       return { processingChanged: true, isProcessing: false };
+
+    case "error": {
+      const errorParams = params as { error: { message?: string }; willRetry?: boolean };
+      if (errorParams.willRetry) {
+        // Codex core is auto-retrying — keep it visible when switching back.
+        state.reconnectMessage = errorParams.error.message || "Reconnecting…";
+        return;
+      }
+      const errorText = errorParams.error.message || "Unknown error";
+      state.isProcessing = false;
+      state.messages.push(createSystemMessage(errorText, true, isRetryableUpstreamError(errorText)));
+      return { processingChanged: true, isProcessing: false };
+    }
 
     case "item/started": {
       const { item } = params as ItemStartedNotification;

@@ -27,6 +27,11 @@ import type { CodexModelSummary } from "@/hooks/session/types";
 import type { GrabbedElement } from "@/types";
 import type { SplitViewState } from "@/hooks/useSplitView";
 import { getChatPaneMinWidthPx } from "@/lib/layout/workspace-constraints";
+import {
+  getInputHistory,
+  loadPersistedInputHistory,
+  mergeInputHistory,
+} from "@/lib/chat/input-history";
 
 export interface SplitChatPaneProps {
   // Identity
@@ -187,6 +192,10 @@ function SplitChatPaneInner({
     isActiveSessionPane,
     paneControllerCtx,
   );
+  const inputHistory = useMemo(
+    () => mergeInputHistory(loadPersistedInputHistory(projectPath), getInputHistory(paneState.messages)),
+    [projectPath, paneState.messages],
+  );
 
   const openPanelTools = useMemo(() => {
     return new Set<ToolId>((
@@ -244,6 +253,15 @@ function SplitChatPaneInner({
               showDevFill={isActiveSessionPane ? showDevFill : false}
               onSeedDevExampleConversation={isActiveSessionPane ? onSeedDevExampleConversation : undefined}
               onSeedDevExampleSpaceData={isActiveSessionPane ? onSeedDevExampleSpaceData : undefined}
+              codexGoal={paneController.paneCodexGoal}
+              codexGoalSupported={paneController.paneCodexGoalSupported}
+              codexGoalLoading={paneController.paneCodexGoalLoading}
+              codexGoalError={paneController.paneCodexGoalError}
+              onGetCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalGet : undefined}
+              onSetCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalSet : undefined}
+              onPauseCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalPause : undefined}
+              onResumeCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalResume : undefined}
+              onClearCodexGoal={paneController.paneEngine === "codex" ? paneController.handlePaneGoalClear : undefined}
               onClosePane={onClosePane}
             />
           </div>
@@ -257,6 +275,10 @@ function SplitChatPaneInner({
             onRevert={onRevert}
             onFullRevert={onFullRevert}
             onTopScrollProgress={onTopScrollProgress}
+            onRetry={paneController.handlePaneRetry}
+            autoRetry={paneController.autoRetry}
+            onCancelAutoRetry={paneController.cancelAutoRetry}
+            reconnectMessage={paneState.reconnectMessage}
           />
           <div
             className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] transition-opacity duration-200 ${isIsland ? "h-24" : "h-28"}`}
@@ -306,6 +328,8 @@ function SplitChatPaneInner({
               onSelectWorktree={isActiveSessionPane ? onSelectWorktree : undefined}
               isEmptySession={paneState.messages.length === 0}
               onManageACPs={onManageACPs}
+              inputHistory={inputHistory}
+              inputHistorySessionId={sessionId}
             />
           </div>
         </div>

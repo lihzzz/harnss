@@ -1,5 +1,5 @@
-import { memo } from "react";
-import { ChevronDown, Loader2, Settings } from "lucide-react";
+import { memo, useState } from "react";
+import { ChevronDown, Loader2, PencilLine, Settings, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -22,7 +22,9 @@ import type {
 import { flattenConfigOptions } from "@/lib/engine/acp-utils";
 import { AgentIcon } from "@/components/AgentIcon";
 import { ENGINE_ICONS, getAgentIcon } from "@/lib/engine-icons";
+import { useSettingsStore } from "@/stores/settings-store";
 import { TOOLBAR_BTN } from "./constants";
+import { CustomModelDialog } from "./CustomModelDialog";
 
 // ── Effort level descriptions ──
 
@@ -31,6 +33,12 @@ const CLAUDE_EFFORT_DESCRIPTIONS: Record<string, string> = {
   medium: "Moderate thinking",
   high: "Deep reasoning",
   max: "Maximum effort",
+};
+
+const CUSTOM_MODEL_PLACEHOLDERS: Record<EngineId, string> = {
+  claude: "claude-opus-4-1",
+  acp: "model-id",
+  codex: "gpt-5-codex",
 };
 
 // ── Derived model/effort state ──
@@ -103,6 +111,86 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
   lockedAgentId,
   onManageACPs,
 }: EnginePickerDropdownProps) {
+  // ── Custom model ID (per engine, persisted in settings store) ──
+  const engine: EngineId = isACPAgent ? "acp" : isCodexAgent ? "codex" : "claude";
+  const customModelId = useSettingsStore((s) => s.customModelsByEngine[engine]);
+  const setCustomModelForEngine = useSettingsStore((s) => s.setCustomModelForEngine);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const openCustomDialog = () => {
+    // Defer until the dropdown has fully closed to avoid focus conflicts
+    window.setTimeout(() => setCustomDialogOpen(true), 0);
+  };
+
+  const handleCustomModelSave = (modelId: string) => {
+    setCustomModelForEngine(engine, modelId);
+    if (isACPAgent) {
+      const modelOption = acpConfigOptions?.find(
+        (opt) => opt.category === "model" || opt.id === "model",
+      );
+      if (modelOption && onACPConfigChange) {
+        onACPConfigChange(modelOption.id, modelId);
+      }
+    } else {
+      onModelChange(modelId);
+    }
+  };
+
+  const handleCustomModelDelete = () => {
+    const deleted = customModelId;
+    setCustomModelForEngine(engine, "");
+    // Reset the selection when the deleted model was active, so the picker
+    // and session state don't reference a model that no longer exists.
+    if (!isACPAgent && deleted && selectedModelId === deleted) {
+      onModelChange("");
+    }
+  };
+
+  // Custom model row with hover-revealed edit/delete actions. Shared between
+  // the Claude/Codex model list and the ACP model config submenu.
+  const renderCustomModelRow = (isSelected: boolean, onSelect: () => void) => (
+    <DropdownMenuItem
+      onClick={onSelect}
+      className={`group ${isSelected ? "bg-accent" : ""}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-mono text-xs">{customModelId}</div>
+        <div className="text-[10px] text-muted-foreground">Custom model</div>
+      </div>
+      <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-data-[highlighted]:opacity-100">
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Edit custom model ID"
+          title="Edit custom model ID"
+          className="rounded p-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Close the menu first so the dialog doesn't fight it for focus.
+            setMenuOpen(false);
+            openCustomDialog();
+          }}
+        >
+          <PencilLine className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Delete custom model ID"
+          title="Delete custom model ID"
+          className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleCustomModelDelete();
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </DropdownMenuItem>
+  );
+
   // Engine-specific config items (model/effort/ACP config) -- shared between
   // multi-agent submenu and single-agent direct rendering
   const configItems = (
@@ -173,6 +261,24 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
         </DropdownMenuItem>
       )}
 
+      {/* Custom model ID (Claude + Codex) */}
+      {!isACPAgent && (
+        <>
+          <DropdownMenuSeparator />
+          <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground">
+            Custom
+          </div>
+          {customModelId &&
+            renderCustomModelRow(customModelId === selectedModelId, () =>
+              onModelChange(customModelId),
+            )}
+          <DropdownMenuItem onClick={openCustomDialog}>
+            <PencilLine className="h-3.5 w-3.5 text-muted-foreground" />
+            {customModelId ? "Edit custom model ID…" : "Custom model ID…"}
+          </DropdownMenuItem>
+        </>
+      )}
+
       {/* Codex effort */}
       {isCodexAgent &&
         codexEffortOptions.length > 0 &&
@@ -212,6 +318,7 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
         acpConfigOptions.map((opt) => {
           const flat = flattenConfigOptions(opt.options);
           const current = flat.find((o) => o.value === opt.currentValue);
+          const isModelOption = opt.category === "model" || opt.id === "model";
           return (
             <DropdownMenuSub key={opt.id}>
               <DropdownMenuSubTrigger>
@@ -238,13 +345,29 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
                           {o.description}
                         </div>
                       )}
-                    </div>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          );
-        })}
+                      </div>
+                    </DropdownMenuItem>
+                  ))}
+                  {isModelOption && (
+                    <>
+                      <DropdownMenuSeparator />
+                      {customModelId &&
+                        renderCustomModelRow(
+                          customModelId === opt.currentValue,
+                          () => onACPConfigChange(opt.id, customModelId),
+                        )}
+                      <DropdownMenuItem onClick={openCustomDialog}>
+                        <PencilLine className="h-3.5 w-3.5 text-muted-foreground" />
+                        {customModelId
+                          ? "Edit custom model ID…"
+                          : "Custom model ID…"}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            );
+          })}
 
       {/* ACP config loading */}
       {isACPAgent && acpConfigOptionsLoading && !showACPConfigOptions && (
@@ -371,7 +494,8 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
     : [];
 
   return (
-    <DropdownMenu>
+    <>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
@@ -418,6 +542,15 @@ export const EnginePickerDropdown = memo(function EnginePickerDropdown({
           </>
         )}
       </DropdownMenuContent>
-    </DropdownMenu>
+      </DropdownMenu>
+      <CustomModelDialog
+        open={customDialogOpen}
+        onOpenChange={setCustomDialogOpen}
+        value={customModelId}
+        placeholder={CUSTOM_MODEL_PLACEHOLDERS[engine]}
+        onSave={handleCustomModelSave}
+        onClear={() => setCustomModelForEngine(engine, "")}
+      />
+    </>
   );
 });

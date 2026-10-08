@@ -22,6 +22,17 @@ export type { RequestId as CodexRequestId } from "./codex-protocol/RequestId";
 export type { ThreadItem as CodexThreadItem } from "./codex-protocol/v2/ThreadItem";
 export type { ThreadStartParams as CodexThreadStartParams } from "./codex-protocol/v2/ThreadStartParams";
 export type { ThreadStartResponse as CodexThreadStartResponse } from "./codex-protocol/v2/ThreadStartResponse";
+export type {
+  CodexFingerprintProbeRequest,
+  CodexFingerprintSamplePrompt,
+  CodexFingerprintSample,
+  CodexFingerprintCandidate,
+  CodexFingerprintDiagnostic,
+  CodexFingerprintCalibration,
+  CodexFingerprintAnalysis,
+  CodexFingerprintVerdict,
+  CodexFingerprintProbeResult,
+} from "./codex-fingerprint";
 export type { ThreadResumeParams as CodexThreadResumeParams } from "./codex-protocol/v2/ThreadResumeParams";
 export type { ThreadResumeResponse as CodexThreadResumeResponse } from "./codex-protocol/v2/ThreadResumeResponse";
 export type { ThreadListParams as CodexThreadListParams } from "./codex-protocol/v2/ThreadListParams";
@@ -39,6 +50,13 @@ export type { ModelListResponse as CodexModelListResponse } from "./codex-protoc
 export type { AskForApproval as CodexApprovalPolicy } from "./codex-protocol/v2/AskForApproval";
 export type { SandboxPolicy as CodexSandboxPolicy } from "./codex-protocol/v2/SandboxPolicy";
 export type { CodexErrorInfo } from "./codex-protocol/v2/CodexErrorInfo";
+export type { ThreadGoal as CodexThreadGoal } from "./codex-protocol/v2/ThreadGoal";
+export type { ThreadGoalStatus as CodexThreadGoalStatus } from "./codex-protocol/v2/ThreadGoalStatus";
+export type { ThreadGoalGetResponse as CodexThreadGoalGetResponse } from "./codex-protocol/v2/ThreadGoalGetResponse";
+export type { ThreadGoalSetResponse as CodexThreadGoalSetResponse } from "./codex-protocol/v2/ThreadGoalSetResponse";
+export type { ThreadGoalClearResponse as CodexThreadGoalClearResponse } from "./codex-protocol/v2/ThreadGoalClearResponse";
+export type { ThreadGoalUpdatedNotification as CodexThreadGoalUpdatedNotification } from "./codex-protocol/v2/ThreadGoalUpdatedNotification";
+export type { ThreadGoalClearedNotification as CodexThreadGoalClearedNotification } from "./codex-protocol/v2/ThreadGoalClearedNotification";
 
 // Notification params
 export type { ItemStartedNotification as CodexItemStartedNotification } from "./codex-protocol/v2/ItemStartedNotification";
@@ -54,6 +72,24 @@ export type { ThreadTokenUsageUpdatedNotification as CodexTokenUsageNotification
 export type { ErrorNotification as CodexErrorNotification } from "./codex-protocol/v2/ErrorNotification";
 export type { ReasoningSummaryTextDeltaNotification as CodexReasoningSummaryDeltaNotification } from "./codex-protocol/v2/ReasoningSummaryTextDeltaNotification";
 export type { ReasoningTextDeltaNotification as CodexReasoningTextDeltaNotification } from "./codex-protocol/v2/ReasoningTextDeltaNotification";
+
+/** Runtime diagnostics for the experimental Codex Computer Use bridge. */
+export interface CodexComputerUseStatus {
+  /** Whether Harnss will pass `--enable computer_use` to new app-server processes. */
+  enabled: boolean;
+  /** Whether the launched app-server reports the feature as enabled. */
+  featureEnabled: boolean;
+  /** Whether the configured Computer Use MCP server completed startup. */
+  mcpConnected: boolean;
+  /** Tool names discovered from the Computer Use MCP server. */
+  mcpTools: string[];
+  /** True only when the feature and the Computer Use MCP server are both ready. */
+  ready: boolean;
+  codexPath?: string;
+  codexVersion?: string | null;
+  codexHome?: string;
+  error?: string;
+}
 
 // Approval types (server-initiated requests)
 export type { CommandExecutionRequestApprovalParams as CodexCommandApprovalParams } from "./codex-protocol/v2/CommandExecutionRequestApprovalParams";

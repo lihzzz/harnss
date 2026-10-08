@@ -1,9 +1,13 @@
-import React, { useCallback, useMemo, useRef, useEffect, useLayoutEffect, useState } from "react";
+import React, { lazy, Suspense, useCallback, useMemo, useRef, useEffect, useLayoutEffect, useState } from "react";
 import { LayoutGroup, motion } from "motion/react";
 import { PanelLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
+import { useQuickCapture } from "@/hooks/app-layout/useQuickCapture";
+import { QuickCapturePanel } from "./QuickCapturePanel";
+import type { HistoryLocation } from "@shared/types/productivity";
+import { useUsageActivity } from "@/hooks/useUsageActivity";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { useGlassTheme } from "@/hooks/useGlassTheme";
 import { ThemeProvider } from "@/hooks/useTheme";
@@ -19,7 +23,7 @@ import {
   TOOL_PICKER_WIDTH_ISLAND,
   equalWidthFractions,
 } from "@/lib/layout/constants";
-import type { InstalledAgent } from "@/types";
+import type { EngineId, HandoffPurpose, InstalledAgent } from "@/types";
 import { AppSidebar } from "./AppSidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatSearchBar } from "./ChatSearchBar";
@@ -29,13 +33,16 @@ import { ToolPicker } from "./ToolPicker";
 import { PANEL_TOOLS_MAP } from "./ToolPicker";
 import type { ToolId } from "@/types/tools";
 import { WelcomeScreen } from "./WelcomeScreen";
-import { WelcomeWizard } from "./welcome/WelcomeWizard";
+const WelcomeWizard = lazy(() =>
+  import("./welcome/WelcomeWizard").then((m) => ({ default: m.WelcomeWizard })),
+);
 import { PanelDockPreview } from "./PanelDockPreview";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
-import { SettingsView } from "./SettingsView";
+const SettingsView = lazy(() =>
+  import("./SettingsView").then((m) => ({ default: m.SettingsView })),
+);
 import { CodexAuthDialog } from "./CodexAuthDialog";
 import { ACPAuthDialog } from "./ACPAuthDialog";
-import { JiraBoardPanel } from "./JiraBoardPanel";
 import { isMac, isWindows } from "@/lib/utils";
 import { SplitHandle } from "./split/SplitHandle";
 import { SplitDropZone } from "./split/SplitDropZone";
@@ -53,7 +60,6 @@ import { useSpaceSwitchCooldown } from "@/hooks/useSpaceSwitchCooldown";
 import { useMainToolPaneResize } from "@/hooks/useMainToolPaneResize";
 import { useMainToolAreaLayout } from "@/hooks/useMainToolAreaLayout";
 import { useMainToolAreaResize } from "@/hooks/useMainToolAreaResize";
-import { useJiraBoard } from "@/hooks/useJiraBoard";
 import { useSplitDragDrop } from "@/hooks/useSplitDragDrop";
 import { useToolDragDrop, findDraggedIsland, type ToolDragState } from "@/hooks/useToolDragDrop";
 import { useAppLayoutUIState } from "@/hooks/app-layout/useAppLayoutUIState";
@@ -80,6 +86,13 @@ import {
   isNearBottomDockZone,
 } from "@/lib/workspace/drag";
 import { AgentProvider, type AgentContextValue } from "./AgentContext";
+import { WorkflowCenter } from "./workflow/WorkflowCenter";
+import { makeWorkflowId } from "@/lib/workflow/workflow-store";
+import {
+  getInputHistory,
+  loadPersistedInputHistory,
+  mergeInputHistory,
+} from "@/lib/chat/input-history";
 
 export function AppLayout() {
   const o = useAppOrchestrator();
@@ -94,9 +107,13 @@ export function AppLayout() {
     activeProjectId, activeProjectPath, currentBranch, activeSpaceProject, activeSpaceTerminalCwd, showThinking,
     hasProjects, isSpaceSwitching, showToolPicker, hasRightPanel,
     activeTodos, bgAgents, hasTodos, hasAgents, availableContextual,
-    glassSupported, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled, jiraBoardEnabled,
+    glassSupported, glassActive, macLiquidGlassSupported, liveMacBackgroundEffect, devFillEnabled,
     draftSpaceId,
   } = state;
+  const inputHistory = useMemo(
+    () => mergeInputHistory(loadPersistedInputHistory(activeProjectPath), getInputHistory(manager.messages)),
+    [activeProjectPath, manager.messages],
+  );
   const {
     showSettings, setShowSettings, scrollToMessageId, setScrollToMessageId, chatSearchOpen, setChatSearchOpen,
   } = ui;
@@ -105,7 +122,7 @@ export function AppLayout() {
     handleModelChange, handlePermissionModeChange, handlePlanModeChange,
     handleClaudeModelEffortChange, handleAgentWorktreeChange, handleStop, handleSelectSession,
     handleSendQueuedNow, handleUnqueueMessage, handleCreateProject, handleImportCCSession,
-    handleNavigateToMessage, handleStartCreateSpace, handleConfirmCreateSpace, handleCancelCreateSpace,
+    handleStartCreateSpace, handleConfirmCreateSpace, handleCancelCreateSpace,
     handleUpdateSpace, handleDeleteSpace, handleMoveProjectToSpace, handleSeedDevExampleSpaceData,
   } = actions;
 
@@ -113,13 +130,12 @@ export function AppLayout() {
   const glassOverlayStyle = useSpaceTheme(
     spaceManager.activeSpace,
     resolvedTheme,
-    glassSupported && settings.transparency,
+    glassActive,
     liveMacBackgroundEffect,
   );
   const spaceOpacity = spaceManager.activeSpace?.color.opacity ?? 1;
   const glassTheme = useGlassTheme({
-    isGlassSupported: glassSupported,
-    transparency: settings.transparency,
+    isGlassActive: glassActive,
     resolvedTheme,
     liveMacBackgroundEffect,
     isIsland: settings.islandLayout,
@@ -144,22 +160,36 @@ export function AppLayout() {
     handleClosePreview,
   } = layoutUI;
 
-  const jiraBoard = useJiraBoard({
-    jiraBoardEnabled,
-    activeSpaceId: spaceManager.activeSpaceId,
-    activeProjectId,
-    activeSessionId: manager.activeSessionId,
-    projects: projectManager.projects,
-    handleSend,
-    handleNewChat,
-  });
-  const { jiraBoardProjectId, jiraBoardProject, setJiraBoardProjectForSpace, handleToggleProjectJiraBoard, handleCreateTaskFromJiraIssue } = jiraBoard;
+  useUsageActivity(welcomeCompleted && !showSettings);
+
   const [pendingSplitPaneSend, setPendingSplitPaneSend] = useState<{
     sessionId: string;
     text: string;
     images?: Parameters<typeof handleSend>[1];
     displayText?: string;
   } | null>(null);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
+
+  const handleWorkflowHandoff = useCallback(async ({ targetEngine, prompt }: { targetEngine: EngineId; purpose: HandoffPurpose; prompt: string }) => {
+    if (!activeProjectId || !manager.activeSession) throw new Error("Open a project session before handing off work");
+    const targetConversationId = makeWorkflowId("conversation");
+    await manager.createSession(activeProjectId, {
+      conversationId: targetConversationId,
+      engine: targetEngine,
+      model: settings.getModelForEngine(targetEngine) || undefined,
+      permissionMode: settings.permissionMode,
+      planMode: false,
+      thinkingEnabled: settings.thinking,
+    });
+    const sendResult = await manager.send(prompt);
+    if (!sendResult?.sessionId) {
+      return {
+        targetConversationId,
+        error: sendResult?.error ?? "Target session did not start.",
+      };
+    }
+    return { targetConversationId, targetSessionId: sendResult.sessionId };
+  }, [activeProjectId, manager, settings.getModelForEngine, settings.permissionMode, settings.thinking]);
 
 
   // Wrap handleSend to clear grabbed elements after sending
@@ -173,14 +203,10 @@ export function AppLayout() {
 
   const handleOpenNewChat = useCallback(
     async (projectId: string) => {
-      const project = projectManager.projects.find((item) => item.id === projectId);
-      if (project) {
-        setJiraBoardProjectForSpace(project.spaceId || "default", null);
-      }
       splitView.dismissSplitView();
       await handleNewChat(projectId);
     },
-    [handleNewChat, projectManager.projects, setJiraBoardProjectForSpace, splitView.dismissSplitView],
+    [handleNewChat, splitView.dismissSplitView],
   );
 
   const handleComposerClear = useCallback(
@@ -195,17 +221,10 @@ export function AppLayout() {
 
   const handleSidebarSelectSession = useCallback(
     (sessionId: string) => {
-      const session = manager.sessions.find((item) => item.id === sessionId);
-      const project = session
-        ? projectManager.projects.find((item) => item.id === session.projectId)
-        : null;
-      if (project) {
-        setJiraBoardProjectForSpace(project.spaceId || "default", null);
-      }
       splitView.dismissSplitView();
       handleSelectSession(sessionId);
     },
-    [handleSelectSession, manager.sessions, projectManager.projects, setJiraBoardProjectForSpace, splitView.dismissSplitView],
+    [handleSelectSession, splitView.dismissSplitView],
   );
 
 
@@ -496,7 +515,7 @@ export function AppLayout() {
       if (drag.islandId) {
         mainToolWorkspace.moveToolIslandToTopColumn(drag.islandId, drag.targetColumnId, drag.targetIndex ?? undefined);
       } else if (drag.toolId in PANEL_TOOLS_MAP) {
-        mainToolWorkspace.openToolIslandInTopColumn(drag.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">, drag.targetColumnId, drag.targetIndex ?? undefined);
+        mainToolWorkspace.openToolIslandInTopColumn(drag.toolId as PanelToolId, drag.targetColumnId, drag.targetIndex ?? undefined);
       }
     } else {
       const targetDock = drag.targetArea;
@@ -504,7 +523,7 @@ export function AppLayout() {
         if (drag.islandId) {
           mainToolWorkspace.moveToolIsland(drag.islandId, targetDock, drag.targetIndex ?? undefined);
         } else {
-          mainToolWorkspace.openToolIsland(drag.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">, targetDock, drag.targetIndex ?? undefined);
+          mainToolWorkspace.openToolIsland(drag.toolId as PanelToolId, targetDock, drag.targetIndex ?? undefined);
         }
       }
     }
@@ -522,7 +541,7 @@ export function AppLayout() {
     if (found) return found;
     // Fallback for picker-initiated drags (no islandId, no sourceSessionId)
     if (mainToolDrag && !mainToolDrag.islandId && mainToolDrag.toolId in PANEL_TOOLS_MAP) {
-      return mainToolWorkspace.getToolIsland(mainToolDrag.toolId as Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">);
+      return mainToolWorkspace.getToolIsland(mainToolDrag.toolId as PanelToolId);
     }
     return null;
   }, [mainToolDrag, mainToolWorkspace]);
@@ -710,6 +729,24 @@ export function AppLayout() {
     };
   }, []);
 
+  const [pendingHistoryLocation, setPendingHistoryLocation] = useState<HistoryLocation | null>(null);
+  const handleNavigateHistory = useCallback(async (location: HistoryLocation) => {
+    const response = await window.claude.history.resolve(location);
+    if (!response.ok) throw new Error(response.error.message);
+    splitView.dismissSplitView();
+    setShowSettings(false);
+    await manager.switchSession(response.value.runtimeSessionId, response.value);
+    setPendingHistoryLocation(response.value);
+  }, [manager.switchSession, splitView.dismissSplitView, setShowSettings]);
+  useEffect(() => {
+    if (!pendingHistoryLocation || manager.activeSessionId !== pendingHistoryLocation.runtimeSessionId) return;
+    if (pendingHistoryLocation.messageId === null) { setPendingHistoryLocation(null); return; }
+    if (manager.messages.some((message) => message.id === pendingHistoryLocation.messageId)) {
+      setScrollToMessageId(pendingHistoryLocation.messageId);
+      setPendingHistoryLocation(null);
+    }
+  }, [pendingHistoryLocation, manager.activeSessionId, manager.messages, setScrollToMessageId]);
+
   const handleScrolledToMessage = useCallback(() => {
     setScrollToMessageId(undefined);
   }, []);
@@ -862,12 +899,22 @@ export function AppLayout() {
       setSessionPermissionMode: manager.setSessionPermissionMode,
       setCodexEffort: manager.setCodexEffort,
       codexEffort: manager.codexEffort,
+      codexGoal: manager.codexGoal,
+      codexGoalSupported: manager.codexGoalSupported,
+      codexGoalLoading: manager.codexGoalLoading,
+      codexGoalError: manager.codexGoalError,
+      getCodexGoal: manager.getCodexGoal,
+      setCodexGoal: manager.setCodexGoal,
+      pauseCodexGoal: manager.pauseCodexGoal,
+      resumeCodexGoal: manager.resumeCodexGoal,
+      clearCodexGoal: manager.clearCodexGoal,
       codexRawModels: manager.codexRawModels,
       codexModelsLoadingMessage: manager.codexModelsLoadingMessage,
       cachedClaudeModels: manager.cachedClaudeModels,
       acpConfigOptions: manager.acpConfigOptions,
       acpConfigOptionsLoading: manager.acpConfigOptionsLoading,
       setACPConfig: manager.setACPConfig,
+      retryLastMessage: manager.retryLastMessage,
     },
     splitView: {
       setFocusedSession: splitView.setFocusedSession,
@@ -968,7 +1015,7 @@ export function AppLayout() {
   });
 
   const renderMainWorkspaceToolContent = useCallback((
-    toolId: Extract<ToolId, "terminal" | "browser" | "git" | "files" | "project-files" | "mcp">,
+    toolId: PanelToolId,
     controls: React.ReactNode,
   ) => (
     <ToolIslandContent
@@ -992,7 +1039,7 @@ export function AppLayout() {
   );
   const showCodexAuthDialog =
     !!manager.activeSessionId &&
-    manager.activeSession?.engine === "codex" &&
+    manager.activeEngine === "codex" &&
     manager.codexAuthRequired;
   const acpAuthAgentName = manager.acpAuthAgentId
     ? agents.find((agent) => agent.id === manager.acpAuthAgentId)?.name ?? manager.acpAuthAgentId
@@ -1000,6 +1047,14 @@ export function AppLayout() {
   const showAcpAuthDialog =
     !!manager.acpAuthSessionId &&
     manager.acpAuthRequired;
+
+  const quickCapture = useQuickCapture({
+    manager, focusedId: splitView.enabled ? (splitView.focusedSessionId ?? manager.activeSessionId) : manager.activeSessionId,
+    projectId: activeProjectId ?? null, selectedAgent, projects: projectManager.projects, agents,
+    blocked: !welcomeCompleted || showCodexAuthDialog || showAcpAuthDialog || !!manager.pendingPermission,
+    activate: () => setShowSettings(false), selectAgent: o.agentState.setSelectedAgent,
+    selectSpace: spaceManager.setActiveSpaceId, closeSplit: splitView.dismissSplitView,
+  });
 
   return (
     <ThemeProvider value={resolvedTheme}>
@@ -1029,26 +1084,24 @@ export function AppLayout() {
           projects: projectManager.projects,
           sessions: manager.sessions,
           activeSessionId: manager.activeSessionId,
-          jiraBoardProjectId,
-          jiraBoardEnabled,
           foldersByProject: o.foldersByProject,
           organizeByChatBranch: settings.organizeByChatBranch,
           draftSpaceId,
         }}
         projectActions={{
           onNewChat: handleOpenNewChat,
-          onToggleProjectJiraBoard: handleToggleProjectJiraBoard,
           onCreateProject: handleCreateProject,
           onDeleteProject: projectManager.deleteProject,
           onRenameProject: projectManager.renameProject,
           onUpdateProjectIcon: projectManager.updateProjectIcon,
           onImportCCSession: handleImportCCSession,
           onToggleSidebar: sidebar.toggle,
-          onNavigateToMessage: handleNavigateToMessage,
+          onNavigateHistory: handleNavigateHistory,
           onMoveProjectToSpace: handleMoveProjectToSpace,
           onReorderProject: projectManager.reorderProject,
           onCreateFolder: o.handleCreateFolder,
           onSetOrganizeByChatBranch: settings.setOrganizeByChatBranch,
+          onOpenWorkflow: () => setWorkflowOpen(true),
         }}
         spaceState={{
           spaces: spaceManager.spaces,
@@ -1080,8 +1133,21 @@ export function AppLayout() {
         }}
       />
 
+      {workflowOpen && (
+        <WorkflowCenter
+          sessions={manager.sessions}
+          projects={projectManager.projects}
+          activeSessionId={manager.activeSessionId}
+          activeMessages={manager.messages}
+          onSelectSession={handleSidebarSelectSession}
+          onClose={() => setWorkflowOpen(false)}
+          onHandoff={handleWorkflowHandoff}
+        />
+      )}
+
       <div ref={contentRef} className={`flex min-w-0 flex-1 flex-col ${settings.islandLayout ? "m-[var(--island-gap)]" : sidebar.isOpen ? "flat-divider-s" : ""} ${isResizing ? "select-none" : ""}`}>
         {showSettings && (
+          <Suspense fallback={null}>
           <SettingsView
             onClose={() => setShowSettings(false)}
             glassSupported={glassSupported}
@@ -1090,7 +1156,21 @@ export function AppLayout() {
             onToggleSidebar={sidebar.toggle}
             onReplayWelcome={handleReplayWelcome}
             initialSection={showSettings}
+            sessions={manager.sessions}
+            projects={projectManager.projects}
+            activeSessionId={manager.activeSessionId}
+            agents={agents}
+            onSelectSession={handleSidebarSelectSession}
+            onDeleteSession={manager.deleteSession}
+            onArchiveSession={manager.archiveSession}
+            onRenameSession={manager.renameSession}
+            onOpenInSplitView={(sessionId) => {
+              setShowSettings(false);
+              void requestAddSplitSession(sessionId);
+            }}
+            canOpenInSplitView={(sessionId) => splitView.canShowSessionSplitAction(sessionId, manager.activeSessionId)}
           />
+          </Suspense>
         )}
         {/* Keep chat area mounted (hidden) when settings is open to avoid
             destroying/recreating the entire ChatView DOM tree on toggle */}
@@ -1440,17 +1520,7 @@ export function AppLayout() {
                   "--chat-fade-strength": String(chatFadeStrength),
                 }) as React.CSSProperties}
           >
-            {jiraBoardProject ? (
-              <JiraBoardPanel
-                projectId={jiraBoardProject.id}
-                projectName={jiraBoardProject.name}
-                variant="main"
-                onClose={() => setJiraBoardProjectForSpace(spaceManager.activeSpaceId, null)}
-                sidebarOpen={sidebar.isOpen}
-                onToggleSidebar={sidebar.toggle}
-                onCreateTask={handleCreateTaskFromJiraIssue}
-              />
-            ) : manager.activeSessionId ? (
+            {manager.activeSessionId ? (
               <>
               {/* Top fade: only visible when chat is scrolled down. Island mode uses dark shadow; flat mode fades content into bg */}
               {/* Island: gradient starts at top-0 (behind header, subtle bleed). Flat: starts at top-10 (right below header) so full gradient is visible and strong. */}
@@ -1484,6 +1554,15 @@ export function AppLayout() {
                   showDevFill={devFillEnabled}
                   onSeedDevExampleConversation={manager.seedDevExampleConversation}
                   onSeedDevExampleSpaceData={handleSeedDevExampleSpaceData}
+                  codexGoal={manager.activeEngine === "codex" ? manager.codexGoal : null}
+                  codexGoalSupported={manager.activeEngine === "codex" ? manager.codexGoalSupported : false}
+                  codexGoalLoading={manager.activeEngine === "codex" ? manager.codexGoalLoading : false}
+                  codexGoalError={manager.activeEngine === "codex" ? manager.codexGoalError : null}
+                  onGetCodexGoal={manager.activeEngine === "codex" ? manager.getCodexGoal : undefined}
+                  onSetCodexGoal={manager.activeEngine === "codex" ? manager.setCodexGoal : undefined}
+                  onPauseCodexGoal={manager.activeEngine === "codex" ? manager.pauseCodexGoal : undefined}
+                  onResumeCodexGoal={manager.activeEngine === "codex" ? manager.resumeCodexGoal : undefined}
+                  onClearCodexGoal={manager.activeEngine === "codex" ? manager.clearCodexGoal : undefined}
                 />
               </div>
               {chatSearchOpen && (
@@ -1504,6 +1583,10 @@ export function AppLayout() {
                 sessionId={manager.activeSessionId}
                 onRevert={manager.isConnected && manager.revertFiles ? handleRevert : undefined}
                 onFullRevert={manager.isConnected && manager.fullRevert ? handleFullRevert : undefined}
+                onRetry={activePaneCtrl?.handlePaneRetry}
+                autoRetry={activePaneCtrl?.autoRetry}
+                onCancelAutoRetry={activePaneCtrl?.cancelAutoRetry}
+                reconnectMessage={manager.reconnectMessage}
                 onTopScrollProgress={handleTopScrollProgress}
                 onSendQueuedNow={handleSendQueuedNow}
                 onUnqueueQueuedMessage={handleUnqueueMessage}
@@ -1560,6 +1643,8 @@ export function AppLayout() {
                   onSelectWorktree={handleAgentWorktreeChange}
                   isEmptySession={manager.messages.length === 0}
                   onManageACPs={() => setShowSettings("agents")}
+                  inputHistory={inputHistory}
+                  inputHistorySessionId={manager.activeSessionId}
                 />
               </div>
               </>
@@ -1756,6 +1841,9 @@ export function AppLayout() {
         )}
         </div>{/* end showSettings wrapper */}
       </div>
+      {quickCapture.request && <QuickCapturePanel key={quickCapture.request.requestId} request={quickCapture.request}
+        projects={projectManager.projects} agents={agents} onContinue={quickCapture.resume} onDismiss={quickCapture.dismiss}
+        onCreateProject={handleCreateProject} onOpenSettings={() => setShowSettings("engines")} />}
       {showCodexAuthDialog && (
         <CodexAuthDialog
           sessionId={manager.activeSessionId!}
@@ -1780,6 +1868,7 @@ export function AppLayout() {
       />
       {/* Welcome wizard — full-screen overlay on first run */}
       {!welcomeCompleted && (
+        <Suspense fallback={null}>
         <WelcomeWizard
           glassSupported={glassSupported}
           permissionMode={settings.permissionMode}
@@ -1788,6 +1877,7 @@ export function AppLayout() {
           hasProjects={hasProjects}
           onComplete={handleWelcomeComplete}
         />
+        </Suspense>
       )}
     </div>
     </AgentProvider>

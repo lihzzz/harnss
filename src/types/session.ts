@@ -2,6 +2,7 @@ import type { ToolUseResult } from "./protocol";
 import type { EngineId } from "./engine";
 import type { ImageAttachment } from "./attachments";
 import type { ContextUsage } from "./mcp";
+import type { CodexThreadGoal } from "./codex";
 
 // ── Effort ──
 
@@ -47,6 +48,8 @@ export interface UIMessage {
   compactPreTokens?: number;
   /** When true, system message is rendered with error styling (red text, alert icon) */
   isError?: boolean;
+  /** When true, the failed turn can be submitted again from the chat. */
+  retryable?: boolean;
   /** SDK checkpoint UUID -- when present, files can be reverted to the state before this message */
   checkpointId?: string;
   /** When true, this user message is waiting in the queue -- not yet sent to the agent */
@@ -89,6 +92,8 @@ export interface ChatFolder {
 
 /** Fields shared between live and persisted session representations. */
 export interface SessionBase {
+  /** Stable logical id shared by revived/forked runtime sessions. */
+  conversationId?: string;
   id: string;
   projectId: string;
   title: string;
@@ -110,6 +115,8 @@ export interface SessionBase {
   archived?: boolean;
   /** Git branch at session creation time. */
   branch?: string;
+  /** Last server-reported Codex Goal snapshot, if any. */
+  codexGoal?: CodexThreadGoal | null;
 }
 
 export interface ChatSession extends SessionBase {
@@ -122,11 +129,13 @@ export interface ChatSession extends SessionBase {
   /** A background session finished while inactive and has not been opened yet. */
   hasUnreadCompletion?: boolean;
   titleGenerating?: boolean;
+  codexGoalSupported?: boolean | null;
 }
 
 export interface PersistedSession extends SessionBase {
   messages: UIMessage[];
   contextUsage?: ContextUsage | null;
+  codexGoal?: CodexThreadGoal | null;
 }
 
 export interface CCSessionInfo {

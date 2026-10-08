@@ -6,9 +6,10 @@
  * the single-chat view and each split-view pane.
  */
 
-import type { ACPConfigOption, ClaudeEffort, ImageAttachment, SlashCommand, EngineId, InstalledAgent, McpServerConfig, McpServerStatus, ModelInfo, GrabbedElement } from "@/types";
+import type { ACPConfigOption, ClaudeEffort, ImageAttachment, SlashCommand, EngineId, InstalledAgent, McpServerConfig, McpServerStatus, ModelInfo, GrabbedElement, CodexThreadGoal } from "@/types";
 import type { TerminalTab } from "@/lib/terminal-tabs";
 import type { ResolvedTheme } from "@/hooks/useTheme";
+import type { AutoRetryState } from "@/lib/session/auto-retry";
 
 export interface PaneController {
   paneEngine: EngineId;
@@ -24,6 +25,15 @@ export interface PaneController {
   paneAcpConfigOptionsLoading: boolean;
   paneCodexModelsLoadingMessage: string | null;
   paneCodexEffort: string;
+  paneCodexGoal: CodexThreadGoal | null;
+  paneCodexGoalSupported: boolean | null;
+  paneCodexGoalLoading: boolean;
+  paneCodexGoalError: string | null;
+  handlePaneGoalGet: () => Promise<void>;
+  handlePaneGoalSet: (input: { objective: string; tokenBudget: number | null }) => Promise<boolean>;
+  handlePaneGoalPause: () => Promise<boolean>;
+  handlePaneGoalResume: () => Promise<boolean>;
+  handlePaneGoalClear: () => Promise<boolean>;
   handlePaneModelChange: (nextModel: string) => void;
   handlePaneClaudeModelEffortChange: (nextModel: string, effort: ClaudeEffort | undefined) => void;
   handlePanePlanModeChange: (enabled: boolean) => void;
@@ -32,8 +42,12 @@ export interface PaneController {
   handlePaneAgentChange: (agent: InstalledAgent | null) => Promise<void>;
   handlePaneClear: () => Promise<void>;
   handlePaneSend: (text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
+  handlePaneRetry: (errorMessageId: string) => Promise<void>;
   handlePaneStop: () => Promise<void>;
   handlePaneAcpConfigChange: (key: string, value: string) => void;
+  /** Scheduled auto-retry of a failed turn (countdown UI), or null. */
+  autoRetry: AutoRetryState | null;
+  cancelAutoRetry: () => void;
 }
 
 /**

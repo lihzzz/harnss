@@ -66,7 +66,7 @@ export function SettingRow({
 }: {
   label: string;
   description?: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between gap-6 py-3">
@@ -76,7 +76,7 @@ export function SettingRow({
           <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
         )}
       </div>
-      <div className="shrink-0">{children}</div>
+      {children && <div className="shrink-0">{children}</div>}
     </div>
   );
 }
@@ -87,14 +87,16 @@ export function SettingsSelect<T extends string>({
   onValueChange,
   options,
   className,
+  disabled,
 }: {
   value: T;
   onValueChange: (value: T) => void;
   options: Array<{ value: T; label: string }>;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
-    <Select value={value} onValueChange={(v) => onValueChange(v as T)}>
+    <Select value={value} onValueChange={(v) => onValueChange(v as T)} disabled={disabled}>
       <SelectTrigger size="sm" className={`text-foreground/80 ${className ?? ""}`}>
         <SelectValue />
       </SelectTrigger>

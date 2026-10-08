@@ -3,7 +3,11 @@ import { toast } from "sonner";
 import type { PersistedSession, Project } from "../../types";
 import { toChatSession } from "../../lib/session/records";
 import { DRAFT_ID } from "./types";
+import { parseThreadGoal } from "@shared/lib/codex-goal";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks } from "./types";
+import { isSessionFrozen, releaseSession } from "@/lib/session/batch-runtime";
+import { invalidatePersistedCursor } from "@/lib/session/persistence";
+import { bgAgentStore } from "@/lib/background/agent-store";
 
 const MAX_SESSION_PAYLOAD_CACHE = 6;
 
@@ -16,6 +20,8 @@ interface UseSessionCacheParams {
   activeEngine: string;
   getProjectCwd: (project: Project) => string;
   prefetchCodexModels: (preferredModel?: string) => Promise<void>;
+  abandonEagerSession: (reason: string) => void;
+  abandonDraftAcpSession: (reason: string) => void;
 }
 
 export function useSessionCache({
@@ -27,6 +33,8 @@ export function useSessionCache({
   activeEngine,
   getProjectCwd,
   prefetchCodexModels,
+  abandonEagerSession,
+  abandonDraftAcpSession,
 }: UseSessionCacheParams) {
   const { codex } = engines;
   const {
@@ -49,10 +57,12 @@ export function useSessionCache({
 
   const sessionPayloadCacheRef = useRef<Map<string, PersistedSession>>(new Map());
   const inFlightPrefetchRef = useRef<Set<string>>(new Set());
+  const knownProjectsRef = useRef(new Set(projects.map((project) => project.id)));
 
   // ── LRU payload cache operations ──
 
   const cacheSessionPayload = useCallback((data: PersistedSession) => {
+    if (isSessionFrozen(data.id) || !refs.projectsRef.current.some((project) => project.id === data.projectId)) return;
     const cache = sessionPayloadCacheRef.current;
     cache.delete(data.id);
     cache.set(data.id, data);
@@ -61,7 +71,7 @@ export function useSessionCache({
       if (!oldest) break;
       cache.delete(oldest);
     }
-  }, []);
+  }, [refs.projectsRef]);
 
   const consumeCachedSessionPayload = useCallback((sessionId: string) => {
     const cache = sessionPayloadCacheRef.current;
@@ -73,6 +83,8 @@ export function useSessionCache({
 
   /** Apply a loaded (or cached) session payload into React state. */
   const applyLoadedSession = useCallback((id: string, data: PersistedSession) => {
+    if (isSessionFrozen(id) || !refs.projectsRef.current.some((project) => project.id === data.projectId)) return;
+    const codexGoal = data.engine === "codex" ? parseThreadGoal(data.codexGoal) : null;
     startTransition(() => {
       setStartOptions((prev) => ({
         ...prev,
@@ -90,6 +102,8 @@ export function useSessionCache({
         sessionInfo: null,
         totalCost: data.totalCost,
         contextUsage: data.contextUsage ?? null,
+        codexGoal,
+        codexGoalSupported: data.engine === "codex" ? null : false,
       });
       setInitialPermission(null);
       setInitialRawAcpPermission(null);
@@ -104,6 +118,7 @@ export function useSessionCache({
             ...(data.agentId ? { agentId: data.agentId } : {}),
             ...(data.agentSessionId ? { agentSessionId: data.agentSessionId } : {}),
             ...(data.codexThreadId ? { codexThreadId: data.codexThreadId } : {}),
+            ...(data.engine === "codex" ? { codexGoal } : {}),
             ...(data.effort ? { effort: data.effort } : {}),
             ...(data.permissionMode ? { permissionMode: data.permissionMode } : {}),
             planMode: !!data.planMode,
@@ -114,6 +129,7 @@ export function useSessionCache({
       );
     });
   }, [
+    refs.projectsRef,
     setActiveSessionId,
     setDraftProjectId,
     setInitialMessages,
@@ -134,13 +150,47 @@ export function useSessionCache({
 
   // Load sessions for ALL projects
   useEffect(() => {
+    const projectIds = new Set(projects.map((project) => project.id));
+    const removed = new Set([...knownProjectsRef.current].filter((id) => !projectIds.has(id)));
+    knownProjectsRef.current = projectIds;
+    if (removed.size) {
+      const removedSessions = refs.sessionsRef.current.filter((session) => removed.has(session.projectId));
+      const activeRemoved = removedSessions.some((session) => session.id === refs.activeSessionIdRef.current);
+      const draftRemoved = !!refs.draftProjectIdRef.current && removed.has(refs.draftProjectIdRef.current);
+      for (const session of removedSessions) {
+        releaseSession(session.id, "project-deleted", true);
+        refs.liveSessionIdsRef.current.delete(session.id);
+        refs.backgroundStoreRef.current.delete(session.id);
+        refs.messageQueueRef.current.delete(session.id);
+        inFlightPrefetchRef.current.delete(session.id);
+        invalidatePersistedCursor(session.id);
+        bgAgentStore.clearSession(session.id);
+        toast.dismiss(`permission-${session.id}`);
+      }
+      for (const [id, cached] of sessionPayloadCacheRef.current) if (removed.has(cached.projectId)) sessionPayloadCacheRef.current.delete(id);
+      refs.sessionsRef.current = refs.sessionsRef.current.filter((session) => !removed.has(session.projectId));
+      setSessions((previous) => previous.filter((session) => !removed.has(session.projectId)));
+      if (draftRemoved) { abandonEagerSession("project_deleted"); abandonDraftAcpSession("project_deleted"); }
+      if (activeRemoved || draftRemoved && refs.activeSessionIdRef.current === DRAFT_ID) {
+        refs.activeSessionIdRef.current = null; refs.draftProjectIdRef.current = null;
+        refs.messagesRef.current = []; refs.isProcessingRef.current = false;
+        refs.acpAgentIdRef.current = null; refs.acpAgentSessionIdRef.current = null;
+        refs.pendingAcpDraftPromptRef.current = null;
+        setActiveSessionId(null); setDraftProjectId(null);
+        setInitialMessages([]); setInitialMeta(null); setInitialPermission(null); setInitialRawAcpPermission(null);
+        setters.setInitialConfigOptions([]); setters.setInitialSlashCommands([]); setters.setQueuedCount(0);
+        engines.engine.setMessages([]); engines.engine.setIsProcessing(false);
+      }
+    }
     if (projects.length === 0) {
       setSessions([]);
       return;
     }
+    let cancelled = false;
     Promise.all(
       projects.map((p) => window.claude.sessions.list(p.id)),
     ).then((results) => {
+      if (cancelled) return;
       const all = results.flat().map((session) => toChatSession(session, false));
       setSessions((prev) => {
         const existingById = new Map(prev.map((session) => [session.id, session]));
@@ -149,6 +199,7 @@ export function useSessionCache({
           if (!existing) return session;
           return {
             ...session,
+            ...(session.agentSessionId ? {} : existing.agentSessionId ? { agentSessionId: existing.agentSessionId } : {}),
             isActive: existing.isActive,
             isProcessing: existing.isProcessing,
             hasPendingPermission: existing.hasPendingPermission,
@@ -158,6 +209,7 @@ export function useSessionCache({
         });
       });
     }).catch(() => { /* IPC failure — leave sessions empty */ });
+    return () => { cancelled = true; };
   }, [projects]);
 
   // Hydrate Claude model cache at app startup and refresh it in the background.

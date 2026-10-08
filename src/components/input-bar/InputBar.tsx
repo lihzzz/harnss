@@ -1,8 +1,11 @@
 import {
+  lazy,
+  Suspense,
   useState,
   useRef,
   useCallback,
   useMemo,
+  useEffect,
   memo,
   type KeyboardEvent,
 } from "react";
@@ -35,9 +38,19 @@ import type {
   SlashCommand,
 } from "@/types";
 import { BOTTOM_CHAT_MAX_WIDTH_CLASS } from "@/lib/layout/constants";
+import { isSessionFrozen } from "@/lib/session/batch-runtime";
+import {
+  appendPersistedInputHistory,
+  canNavigateInputHistory,
+} from "@/lib/chat/input-history";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { registerQuickCaptureComposer } from "@/lib/quick-capture-composer";
+import { toast } from "sonner";
+import { useI18n } from "@/lib/i18n";
 import { resolveModelValue } from "@/lib/model-utils";
-import { ImageAnnotationEditor } from "@/components/ImageAnnotationEditor";
+const ImageAnnotationEditor = lazy(() =>
+  import("@/components/ImageAnnotationEditor").then(({ ImageAnnotationEditor: Component }) => ({ default: Component })),
+);
 import { TOOLBAR_BTN } from "./constants";
 import {
   readFileAsBase64,
@@ -57,6 +70,9 @@ import { MentionPicker } from "./MentionPicker";
 import { useMentionAutocomplete } from "./useMentionAutocomplete";
 import { CommandPicker } from "./CommandPicker";
 import { useCommandAutocomplete } from "./CommandPicker";
+import { InputHistoryDialog } from "./InputHistoryDialog";
+
+const EMPTY_INPUT_HISTORY: string[] = [];
 
 export interface InputBarProps {
   onSend: (text: string, images?: ImageAttachment[], displayText?: string) => void;
@@ -113,6 +129,10 @@ export interface InputBarProps {
   onRemoveGrabbedElement?: (id: string) => void;
   /** Open ACP Agents settings */
   onManageACPs?: () => void;
+  /** User prompts sent in the current session, in chronological order. */
+  inputHistory?: string[];
+  /** Session identity used to reset keyboard history navigation when switching sessions. */
+  inputHistorySessionId?: string | null;
 }
 
 export const InputBar = memo(function InputBar({
@@ -153,7 +173,10 @@ export const InputBar = memo(function InputBar({
   grabbedElements,
   onRemoveGrabbedElement,
   onManageACPs,
+  inputHistory,
+  inputHistorySessionId,
 }: InputBarProps) {
+  const { t } = useI18n();
   // ── Core state ──
   const [hasContent, setHasContent] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -172,19 +195,74 @@ export const InputBar = memo(function InputBar({
   const pendingSendRef = useRef<(() => Promise<void>) | null>(null);
 
   // Voice dictation
+  const editableRef = useRef<HTMLDivElement>(null);
+  const speechTargetKey = `${inputHistorySessionId ?? ""}:${projectPath ?? ""}:${selectedAgent?.id ?? ""}`;
+  const speechTargetRef = useRef(speechTargetKey);
+  speechTargetRef.current = speechTargetKey;
   const speech = useSpeechRecognition({
-    onResult: (text) => insertTextAtCursor(editableRef.current, text),
+    targetKey: speechTargetKey,
+    captureTarget: () => {
+      const element = editableRef.current;
+      const target = speechTargetRef.current;
+      if (!element?.isConnected || !element.getClientRects().length || element.closest('[inert], [aria-hidden="true"]')) return null;
+      element.focus({ preventScroll: true });
+      if (document.activeElement !== element) return null;
+      const valid = () => element.isConnected && editableRef.current === element && speechTargetRef.current === target && !isSessionFrozen(inputHistorySessionId ?? null);
+      return { isCurrent: valid, insert: (text) => {
+        if (!valid()) return false;
+        if (document.activeElement === element) insertTextAtCursor(element, text);
+        else { element.appendChild(document.createTextNode(text)); element.dispatchEvent(new Event("input", { bubbles: true })); }
+        return true;
+      } };
+    },
   });
 
-  const editableRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasContentRef = useRef(false);
+  const inputHistoryRef = useRef(inputHistory ?? EMPTY_INPUT_HISTORY);
+  const historyIndexRef = useRef((inputHistory ?? EMPTY_INPUT_HISTORY).length);
+  const historyDraftRef = useRef<string | null>(null);
+  inputHistoryRef.current = inputHistory ?? EMPTY_INPUT_HISTORY;
+  const inputHistoryLength = inputHistory?.length ?? 0;
+
+  useEffect(() => {
+    historyIndexRef.current = inputHistoryRef.current.length;
+    historyDraftRef.current = null;
+  }, [inputHistoryLength, inputHistorySessionId]);
 
   // ── Derived engine state ──
   const isACPAgent = selectedAgent != null && selectedAgent.engine === "acp";
   const isCodexAgent = selectedAgent != null && selectedAgent.engine === "codex";
   const showACPConfigOptions = isACPAgent && (acpConfigOptions?.length ?? 0) > 0;
   const isAwaitingAcpOptions = isACPAgent && !!acpConfigOptionsLoading;
+
+  const captureStateRef = useRef({ attachments, grabbedElements, speech, isSending, isAwaitingAcpOptions, showDeepFolderConfirm });
+  captureStateRef.current = { attachments, grabbedElements, speech, isSending, isAwaitingAcpOptions, showDeepFolderConfirm };
+  useEffect(() => {
+    if (!inputHistorySessionId) return;
+    const focus = () => {
+      const el = editableRef.current;
+      const state = captureStateRef.current;
+      if (!el?.isConnected || !el.getClientRects().length || el.closest('[inert], [aria-hidden="true"]') || !document.hasFocus()
+        || state.isSending || state.isAwaitingAcpOptions || state.showDeepFolderConfirm || isSessionFrozen(inputHistorySessionId)) return false;
+      el.focus({ preventScroll: true });
+      return document.activeElement === el;
+    };
+    return registerQuickCaptureComposer(inputHistorySessionId, {
+      focus,
+      hasDraft: () => {
+        const state = captureStateRef.current;
+        return !!editableRef.current?.textContent?.trim() || !!editableRef.current?.querySelector('[data-mention-path]')
+          || state.attachments.length > 0 || !!state.grabbedElements?.length || state.isSending
+          || state.speech.isListening || state.speech.isModelLoading || state.speech.isTranscribing;
+      },
+      dictate: async () => {
+        if (!focus()) throw new Error("The input is not ready");
+        if (!captureStateRef.current.speech.isAvailable) throw new Error(captureStateRef.current.speech.nativeHint ?? "Voice input is unavailable");
+        await captureStateRef.current.speech.toggle();
+      },
+    });
+  }, [inputHistorySessionId]);
 
   const availableSlashCommands = useMemo(
     () => getAvailableSlashCommands(slashCommands),
@@ -248,6 +326,8 @@ export const InputBar = memo(function InputBar({
       hasContentRef.current = false;
       setHasContent(false);
       setAttachments([]);
+      historyIndexRef.current = inputHistoryRef.current.length;
+      historyDraftRef.current = null;
       mention.closeMentions();
       command.setShowCommands(false);
     },
@@ -369,6 +449,7 @@ export const InputBar = memo(function InputBar({
         hasContext = true;
       }
 
+      if (isSessionFrozen(inputHistorySessionId ?? null)) return;
       if (hasContext) {
         const contextBlock = contextParts.join("\n\n");
         const fullMessage = contextBlock
@@ -383,12 +464,14 @@ export const InputBar = memo(function InputBar({
         onSend(trimmed, currentImages);
       }
 
+      appendPersistedInputHistory(projectPath, trimmed);
       clearComposer(el);
     },
-    [attachments, projectPath, onSend, clearComposer, grabbedElements],
+    [attachments, projectPath, onSend, clearComposer, grabbedElements, inputHistorySessionId],
   );
 
   const handleSend = useCallback(async () => {
+    if (isSessionFrozen(inputHistorySessionId ?? null)) return;
     const el = editableRef.current;
     if (!el) return;
 
@@ -449,6 +532,7 @@ export const InputBar = memo(function InputBar({
     grabbedElements,
     performSend,
     clearComposer,
+    inputHistorySessionId,
   ]);
 
   const handleDeepFolderConfirm = useCallback(async () => {
@@ -459,6 +543,88 @@ export const InputBar = memo(function InputBar({
     setShowDeepFolderConfirm(false);
     setDeepFolderInfo(null);
   }, []);
+
+  const setComposerText = useCallback(
+    (text: string) => {
+      const el = editableRef.current;
+      if (!el) return;
+
+      el.textContent = text;
+      const range = document.createRange();
+      const selection = window.getSelection();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      el.focus();
+
+      const nextHasContent = hasMeaningfulText(text);
+      hasContentRef.current = nextHasContent;
+      setHasContent(nextHasContent);
+      mention.closeMentions();
+      command.setShowCommands(false);
+    },
+    [command.setShowCommands, mention.closeMentions],
+  );
+
+  const isCaretAtBoundary = useCallback(
+    (el: HTMLDivElement, boundary: "start" | "end") => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false;
+
+      const caret = selection.getRangeAt(0);
+      if (!el.contains(caret.startContainer) && caret.startContainer !== el) return false;
+
+      const edge = document.createRange();
+      edge.selectNodeContents(el);
+      edge.collapse(boundary === "start");
+      return caret.compareBoundaryPoints(Range.START_TO_START, edge) === 0;
+    },
+    [],
+  );
+
+  const navigateInputHistory = useCallback(
+    (direction: "up" | "down") => {
+      const el = editableRef.current;
+      const history = inputHistoryRef.current;
+      if (!el || history.length === 0) return false;
+
+      const currentIndex = Math.min(Math.max(historyIndexRef.current, 0), history.length);
+      const isEmpty = !hasMeaningfulText(el.textContent ?? "");
+      if (direction === "up") {
+        if (!canNavigateInputHistory({
+          currentText: el.textContent ?? "",
+          history,
+          currentIndex,
+          isEmpty,
+          atBoundary: isCaretAtBoundary(el, "start"),
+        })) return false;
+        if (currentIndex === 0) return true;
+        if (currentIndex === history.length) {
+          historyDraftRef.current = el.textContent ?? "";
+        }
+        const nextIndex = currentIndex === history.length ? history.length - 1 : currentIndex - 1;
+        historyIndexRef.current = nextIndex;
+        setComposerText(history[nextIndex]);
+        return true;
+      }
+
+      if (!canNavigateInputHistory({
+        currentText: el.textContent ?? "",
+        history,
+        currentIndex,
+        isEmpty,
+        atBoundary: isCaretAtBoundary(el, "end"),
+      })) return false;
+      if (currentIndex >= history.length) return true;
+      const nextIndex = currentIndex + 1;
+      historyIndexRef.current = nextIndex;
+      setComposerText(nextIndex === history.length ? (historyDraftRef.current ?? "") : history[nextIndex]);
+      if (nextIndex === history.length) historyDraftRef.current = null;
+      return true;
+    },
+    [isCaretAtBoundary, setComposerText],
+  );
 
   // ── Keyboard handling ──
 
@@ -544,6 +710,15 @@ export const InputBar = memo(function InputBar({
       }
     }
 
+    if (e.key === "ArrowUp" && navigateInputHistory("up")) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "ArrowDown" && navigateInputHistory("down")) {
+      e.preventDefault();
+      return;
+    }
+
     if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       document.execCommand("insertLineBreak");
@@ -564,6 +739,10 @@ export const InputBar = memo(function InputBar({
     (e: React.FormEvent<HTMLDivElement>) => {
       const el = editableRef.current;
       if (!el) return;
+
+      // Any direct edit starts a new draft for history navigation.
+      historyIndexRef.current = inputHistoryRef.current.length;
+      historyDraftRef.current = null;
 
       const hasMentionChip =
         el.querySelector("[data-mention-path]") !== null;
@@ -714,7 +893,7 @@ export const InputBar = memo(function InputBar({
       isSending);
 
   return (
-    <div className={`mx-auto w-full px-4 pb-4 ${BOTTOM_CHAT_MAX_WIDTH_CLASS}`}>
+    <div data-usage-chat className={`mx-auto w-full px-4 pb-4 ${BOTTOM_CHAT_MAX_WIDTH_CLASS}`}>
       <input
         ref={fileInputRef}
         type="file"
@@ -811,19 +990,21 @@ export const InputBar = memo(function InputBar({
         />
 
         {editingAttachment && (
-          <ImageAnnotationEditor
-            image={editingAttachment}
-            open={!!editingAttachment}
-            onOpenChange={(isOpen) => {
-              if (!isOpen) setEditingAttachment(null);
-            }}
-            onSave={(updated) => {
-              setAttachments((prev) =>
-                prev.map((a) => (a.id === updated.id ? updated : a)),
-              );
-              setEditingAttachment(null);
-            }}
-          />
+          <Suspense fallback={null}>
+            <ImageAnnotationEditor
+              image={editingAttachment}
+              open={!!editingAttachment}
+              onOpenChange={(isOpen) => {
+                if (!isOpen) setEditingAttachment(null);
+              }}
+              onSave={(updated) => {
+                setAttachments((prev) =>
+                  prev.map((a) => (a.id === updated.id ? updated : a)),
+                );
+                setEditingAttachment(null);
+              }}
+            />
+          </Suspense>
         )}
 
         {/* Bottom toolbar */}
@@ -847,7 +1028,8 @@ export const InputBar = memo(function InputBar({
                   <Button
                     variant="ghost"
                     size="xs"
-                    onClick={speech.toggle}
+                    onClick={() => { void speech.toggle().catch((error: unknown) => toast.error(t("Voice input unavailable"), { description: error instanceof Error ? error.message : String(error) })); }}
+                    aria-label={t(speech.isListening ? "Stop dictation" : "Voice dictation")}
                     disabled={speech.isModelLoading || speech.isTranscribing}
                     className={`rounded-lg font-normal transition-colors duration-150 ${
                       speech.isListening
@@ -872,12 +1054,12 @@ export const InputBar = memo(function InputBar({
                   {speech.error
                     ? speech.error
                     : speech.isModelLoading
-                      ? `Loading speech model... ${speech.loadProgress.toFixed(0)}%`
+                      ? `${t("Preparing voice input...")} ${speech.loadProgress.toFixed(0)}%`
                       : speech.isTranscribing
-                        ? "Transcribing..."
+                        ? t("Transcribing...")
                         : speech.isListening
-                          ? "Stop dictation"
-                          : "Voice dictation"}
+                          ? t("Stop dictation")
+                          : t("Voice dictation")}
                 </TooltipContent>
               </Tooltip>
             ) : speech.nativeHint ? (
@@ -895,6 +1077,7 @@ export const InputBar = memo(function InputBar({
               </Tooltip>
             ) : null}
 
+            {(speech.isModelLoading || speech.isTranscribing) && <Button size="xs" variant="ghost" onClick={speech.cancel}>{t("Cancel voice input")}</Button>}
             <span
               className="mx-0.5 h-3.5 w-px shrink-0 bg-border/20"
               aria-hidden="true"
@@ -1000,6 +1183,10 @@ export const InputBar = memo(function InputBar({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="pointer-events-auto flex justify-end px-1 pt-1">
+        <InputHistoryDialog history={inputHistory ?? EMPTY_INPUT_HISTORY} />
       </div>
 
       {/* Deep folder confirmation dialog */}

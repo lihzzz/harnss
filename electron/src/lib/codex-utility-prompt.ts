@@ -6,10 +6,10 @@ import { reportError } from "./error-utils";
 import type {
   CodexInitializeResponse,
   CodexModel,
-  CodexModelListResponse,
   CodexThreadStartResponse,
   CodexTurnStartResponse,
 } from "@shared/types/codex";
+import { listModelsWithConfigured } from "@shared/lib/codex-helpers";
 
 interface CodexUtilityPromptOptions {
   timeoutMs?: number;
@@ -159,8 +159,8 @@ export async function codexUtilityPrompt(
 
     let selectedModel: string | undefined;
     try {
-      const models = await rpc.request<CodexModelListResponse>("model/list", { includeHidden: false });
-      selectedModel = pickModelId(options?.model, models.data ?? []);
+      const models = await listModelsWithConfigured(rpc);
+      selectedModel = pickModelId(options?.model, models);
     } catch (err) {
       reportError("CODEX_UTILITY", err, { context: "model/list", logLabel });
     }

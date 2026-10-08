@@ -1,6 +1,6 @@
 {
   "name": "harnss",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "productName": "Harnss",
   "description": "Harness your AI coding agents — one desktop app for Claude Code, Codex, and any ACP agent",
   "author": {
@@ -32,11 +32,14 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.15.0",
     "@anthropic-ai/claude-agent-sdk": "^0.2.101",
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "3.8.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@monaco-editor/react": "^4.7.0",
     "@posthog/react": "^1.8.2",
     "@tanstack/react-virtual": "^3.13.22",
+    "@trycua/cua-driver": "^0.33.0",
+    "@vectorize-io/hindsight-all": "0.10.2",
+    "@vectorize-io/hindsight-client": "0.10.2",
     "dompurify": "^3.3.3",
     "electron-context-menu": "^4.1.1",
     "electron-liquid-glass": "github:darkkatarsis/electron-liquid-glass",
@@ -51,7 +54,16 @@
     "sonner": "^2.0.7",
     "zustand": "^5.0.12"
   },
+  "optionalDependencies": {
+    "@trycua/cua-driver-darwin-arm64": "^0.33.0",
+    "@trycua/cua-driver-darwin-x64": "^0.33.0",
+    "@trycua/cua-driver-linux-arm64-gnu": "^0.33.0",
+    "@trycua/cua-driver-linux-x64-gnu": "^0.33.0",
+    "@trycua/cua-driver-win32-arm64-msvc": "^0.33.0",
+    "@trycua/cua-driver-win32-x64-msvc": "^0.33.0"
+  },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@electron/rebuild": "^4.0.3",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.18",
@@ -71,13 +83,16 @@
     "diff": "^8.0.3",
     "electron": "^40.4.0",
     "electron-builder": "^26.8.1",
+    "katex": "^0.16.38",
     "lucide-react": "^0.563.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "shadcn": "^3.8.4",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",

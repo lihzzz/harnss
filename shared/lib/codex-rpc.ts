@@ -6,6 +6,7 @@
  */
 
 import type { ChildProcess } from "child_process";
+import { stopProcessAndWait } from "./process-stop";
 import type { RequestId } from "../types/codex-protocol/RequestId";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -29,6 +30,19 @@ export interface RpcError {
   code: number;
   message: string;
   data?: unknown;
+}
+
+/** Error returned by a Codex JSON-RPC request, retaining the wire error code. */
+export class CodexRpcError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+
+  constructor(error: RpcError) {
+    super(`Codex RPC error [${error.code}]: ${error.message}`);
+    this.name = "CodexRpcError";
+    this.code = error.code;
+    this.data = error.data;
+  }
 }
 
 export type ServerRequestHandler = (msg: {
@@ -138,6 +152,12 @@ export class CodexRpcClient {
     return !this.destroyed && this.proc.exitCode === null && !this.proc.killed;
   }
 
+  /** Destructive session operations require an observed process exit. */
+  async destroyAndWait(): Promise<void> {
+    this.destroyed = true;
+    await stopProcessAndWait(this.proc);
+  }
+
   get pid(): number | undefined {
     return this.proc.pid;
   }
@@ -181,7 +201,7 @@ export class CodexRpcClient {
         clearTimeout(pending.timer);
         if (hasError) {
           const err = msg.error as RpcError;
-          pending.reject(new Error(`Codex RPC error [${err.code}]: ${err.message}`));
+          pending.reject(new CodexRpcError(err));
         } else {
           pending.resolve(msg.result);
         }

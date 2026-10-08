@@ -1,187 +1,30 @@
-import { useState, useRef, useEffect, useCallback, memo } from "react";
-import { useClickOutside } from "@/hooks/useClickOutside";
-import { Search, MessageSquare, Hash, X } from "lucide-react";
-import type { SearchMessageResult, SearchSessionResult } from "@/types";
+import { lazy, Suspense, memo, useRef, useState } from "react";
+import { CalendarDays, Search } from "lucide-react";
+import type { HistoryLocation } from "@shared/types/productivity";
+import type { Project, Space } from "@/types";
+import { useI18n } from "@/lib/i18n";
 
+const HistoryPanel = lazy(() => import("./history/HistoryPanel").then((module) => ({ default: module.HistoryPanel })));
 interface SidebarSearchProps {
-  projectIds: string[];
-  onNavigateToMessage: (sessionId: string, messageId: string) => void;
-  onSelectSession: (sessionId: string) => void;
+  projects: Project[];
+  spaces: Space[];
+  activeSpaceId: string;
+  activeProjectId: string | null;
+  onNavigate: (location: HistoryLocation) => Promise<void>;
 }
-
-export const SidebarSearch = memo(function SidebarSearch({
-  projectIds,
-  onNavigateToMessage,
-  onSelectSession,
-}: SidebarSearchProps) {
-  const [query, setQuery] = useState("");
-  const [isOpen, setIsOpen] = useState(false);
-  const [messageResults, setMessageResults] = useState<SearchMessageResult[]>([]);
-  const [sessionResults, setSessionResults] = useState<SearchSessionResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  const doSearch = useCallback(
-    async (q: string) => {
-      if (!q.trim() || projectIds.length === 0) {
-        setMessageResults([]);
-        setSessionResults([]);
-        return;
-      }
-      setIsSearching(true);
-      try {
-        const results = await window.claude.sessions.search(projectIds, q.trim());
-        setMessageResults(results.messageResults);
-        setSessionResults(results.sessionResults);
-      } catch {
-        setMessageResults([]);
-        setSessionResults([]);
-      } finally {
-        setIsSearching(false);
-      }
-    },
-    [projectIds],
-  );
-
-  // Debounced search
-  useEffect(() => {
-    clearTimeout(timerRef.current);
-    if (!query.trim()) {
-      setMessageResults([]);
-      setSessionResults([]);
-      return;
-    }
-    timerRef.current = setTimeout(() => doSearch(query), 300);
-    return () => clearTimeout(timerRef.current);
-  }, [query, doSearch]);
-
-  // Close on click outside
-  const closeDropdown = useCallback(() => setIsOpen(false), []);
-  useClickOutside(containerRef, closeDropdown);
-
-  // Close on Escape
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setIsOpen(false);
-      setQuery("");
-      inputRef.current?.blur();
-    }
-  };
-
-  const hasResults = messageResults.length > 0 || sessionResults.length > 0;
-  const showDropdown = isOpen && query.trim().length > 0;
-
-  const highlightMatch = (text: string, q: string) => {
-    const lowerText = text.toLowerCase();
-    const lowerQ = q.toLowerCase();
-    const idx = lowerText.indexOf(lowerQ);
-    if (idx === -1) return text;
-    return (
-      <>
-        {text.slice(0, idx)}
-        <mark className="bg-yellow-500/30 text-inherit rounded-sm px-0.5">
-          {text.slice(idx, idx + q.length)}
-        </mark>
-        {text.slice(idx + q.length)}
-      </>
-    );
-  };
-
-  return (
-    <div ref={containerRef} className="relative no-drag px-3 pb-3 pt-1">
-      <div className="glass-outline sidebar-search-glass relative overflow-hidden rounded-xl transition-all focus-within:ring-2 focus-within:ring-primary/20" style={{ "--island-fill": "var(--sidebar-accent)" } as React.CSSProperties}>
-        <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sidebar-foreground/40" />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setIsOpen(true);
-          }}
-          onFocus={() => setIsOpen(true)}
-          onKeyDown={handleKeyDown}
-          placeholder="Search chats..."
-          className="w-full bg-black/5 py-1.5 pe-8 ps-9 text-[13px] text-sidebar-foreground placeholder:text-sidebar-foreground/40 outline-none transition-colors focus:bg-black/10 dark:bg-white/5 dark:focus:bg-white/10"
-        />
-        {query && (
-          <button
-            onClick={() => {
-              setQuery("");
-              setIsOpen(false);
-            }}
-            className="absolute end-2 top-1/2 -translate-y-1/2 text-sidebar-foreground/40 hover:text-sidebar-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-
-      {showDropdown && (
-        <div className="absolute inset-x-3 top-full z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-sidebar-border bg-popover p-1.5 shadow-xl glass-outline" style={{ "--island-fill": "var(--popover)" } as React.CSSProperties}>
-          {isSearching && (
-            <p className="px-2 py-3 text-center text-xs text-muted-foreground">Searching...</p>
-          )}
-
-          {!isSearching && !hasResults && (
-            <p className="px-2 py-3 text-center text-xs text-muted-foreground">No results found</p>
-          )}
-
-          {/* Session results */}
-          {sessionResults.length > 0 && (
-            <div className="mb-1">
-              <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                Chats
-              </p>
-              {sessionResults.map((r) => (
-                <button
-                  key={r.sessionId}
-                  onClick={() => {
-                    onSelectSession(r.sessionId);
-                    setIsOpen(false);
-                    setQuery("");
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-[13px] hover:bg-accent"
-                >
-                  <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate font-medium">
-                    {highlightMatch(r.title, query)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Message results */}
-          {messageResults.length > 0 && (
-            <div>
-              <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                Messages
-              </p>
-              {messageResults.map((r, i) => (
-                <button
-                  key={`${r.sessionId}-${r.messageId}-${i}`}
-                  onClick={() => {
-                    onNavigateToMessage(r.sessionId, r.messageId);
-                    setIsOpen(false);
-                    setQuery("");
-                  }}
-                  className="flex w-full flex-col gap-0.5 rounded-lg px-2.5 py-1.5 text-start hover:bg-accent"
-                >
-                  <span className="text-[13px] wrap-break-word line-clamp-2">
-                    {highlightMatch(r.snippet, query)}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground truncate">
-                    <MessageSquare className="me-1 inline h-3 w-3" />
-                    {r.sessionTitle}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+export const SidebarSearch = memo(function SidebarSearch(props: SidebarSearchProps) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"search" | "activity">("search");
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const changeOpen = (next: boolean) => { setOpen(next); if (!next) requestAnimationFrame(() => triggerRef.current?.focus()); };
+  return <div className="no-drag px-3 pb-3 pt-1">
+    <div className="flex gap-1 rounded-xl border border-sidebar-border bg-sidebar-accent/40">
+      <button type="button" onClick={(event) => { triggerRef.current = event.currentTarget; setView("search"); setOpen(true); }} className="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 text-start text-[13px] text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <Search className="size-4 shrink-0" /><span className="truncate">{t("Search all conversations")}</span>
+      </button>
+      <button type="button" title={t("Activity")} aria-label={t("Activity")} onClick={(event) => { triggerRef.current = event.currentTarget; setView("activity"); setOpen(true); }} className="rounded-xl px-2 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><CalendarDays className="size-4" /></button>
     </div>
-  );
+    {open && <Suspense fallback={<p role="status" className="p-2 text-xs">{t("Loading history…")}</p>}><HistoryPanel {...props} open={open} onOpenChange={changeOpen} initialView={view} /></Suspense>}
+  </div>;
 });

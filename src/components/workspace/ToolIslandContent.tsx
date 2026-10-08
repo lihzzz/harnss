@@ -15,6 +15,7 @@ import { GitPanel } from "@/components/git/GitPanel";
 import { FilesPanel } from "@/components/FilesPanel";
 import { ProjectFilesPanel } from "@/components/ProjectFilesPanel";
 import { McpPanel } from "@/components/McpPanel";
+import { FingerprintProbePanel } from "@/components/FingerprintProbePanel";
 import type { PanelToolId, EngineId, McpServerConfig, McpServerStatus, UIMessage, GrabbedElement } from "@/types";
 import type { TerminalTab } from "@/lib/terminal-tabs";
 import type { ResolvedTheme } from "@/hooks/useTheme";
@@ -162,5 +163,7 @@ export function ToolIslandContent({
           headerControls={headerControls}
         />
       );
+    case "fingerprint":
+      return <FingerprintProbePanel headerControls={headerControls} />;
   }
 }

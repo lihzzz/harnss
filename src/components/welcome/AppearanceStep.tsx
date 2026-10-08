@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { AppearanceStepProps } from "./shared";
 import type { ThemeOption } from "@/types";
+import { isMac, isWindows } from "@/lib/utils";
 
 // ── Theme option data ──
 
@@ -326,17 +327,17 @@ export function AppearanceStep({
               <Blend className="h-4.5 w-4.5 text-muted-foreground" />
               <div>
                 <div className="text-sm font-medium text-foreground">
-                  Window transparency
+                  Window background effect
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {glassSupported
-                    ? "See your desktop through the window"
-                    : "Not available on this platform"}
+                    ? (isMac ? "Native macOS glass or vibrancy" : isWindows ? "Mica Alt window material" : "Gaussian blur over an in-app backdrop")
+                    : "Using a solid, high-contrast background for this device or system setting"}
                 </div>
               </div>
             </div>
             <Switch
-              checked={transparency}
+              checked={glassSupported && transparency}
               onCheckedChange={onTransparencyChange}
               disabled={!glassSupported}
             />
