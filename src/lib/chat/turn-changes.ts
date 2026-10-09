@@ -7,6 +7,7 @@ import {
   type StructuredPatchEntry,
 } from "@/lib/diff/patch-utils";
 import { firstDefinedString } from "@/components/lib/tool-formatting";
+import { getFileName } from "@shared/lib/file-paths";
 
 // ── Types ──
 
@@ -39,8 +40,7 @@ export interface TurnSummary {
 // ── Helpers ──
 
 function basename(filePath: string): string {
-  const parts = filePath.split("/");
-  return parts[parts.length - 1] || filePath;
+  return getFileName(filePath) || filePath;
 }
 
 function getStructuredPatchEntry(

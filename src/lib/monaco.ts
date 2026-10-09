@@ -1,3 +1,5 @@
+import { getFileName } from "@shared/lib/file-paths";
+
 const EXTENSION_TO_MONACO: Record<string, string> = {
   ts: "typescript",
   tsx: "typescript",
@@ -76,7 +78,7 @@ export function disableMonacoDiagnostics(monaco: {
 }
 
 export function getMonacoLanguageFromPath(filePath: string): string {
-  const fileName = filePath.split("/").pop() ?? "";
+  const fileName = getFileName(filePath);
   const lower = fileName.toLowerCase();
 
   if (lower === "dockerfile") return "dockerfile";

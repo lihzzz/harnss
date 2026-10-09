@@ -3,6 +3,11 @@ import type { UIMessage } from "@/types";
 import { formatCompactSummary } from "./tool-formatting";
 
 describe("formatCompactSummary", () => {
+  it("shortens Windows tool input paths and result paths consistently", () => {
+    const message: UIMessage = { id: "read-win", role: "tool_call", content: "", toolName: "Read", timestamp: 0 };
+    expect(formatCompactSummary({ ...message, toolInput: { file_path: "C:\\项目\\src\\a.ts" } })).toBe("a.ts");
+    expect(formatCompactSummary({ ...message, toolResult: { filePath: "\\\\server\\share\\中文.ts" } })).toBe("中文.ts");
+  });
   it("does not report Claude multi-hunk single-file edits as multiple files", () => {
     const message: UIMessage = {
       id: "edit-1",

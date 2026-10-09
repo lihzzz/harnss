@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { UIMessage } from "@/types";
 import { extractResultText } from "@/components/lib/tool-formatting";
 import { GenericContent } from "./GenericContent";
+import { getFileName } from "@shared/lib/file-paths";
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -24,7 +25,7 @@ export function EnterPlanModeContent({ message }: { message: UIMessage }) {
 export function ExitPlanModeContent({ message }: { message: UIMessage }) {
   const plan = String(message.toolInput?.plan ?? "");
   const filePath = String(message.toolInput?.filePath ?? "");
-  const fileName = filePath ? filePath.split("/").pop() : null;
+  const fileName = filePath ? getFileName(filePath) : null;
 
   if (!plan) return <GenericContent message={message} />;
 

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { ImageAttachment, McpServerConfig, Project } from "@/types";
-import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
+import type { CollaborationMode } from "@shared/types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/engine/codex-adapter";
 import { createSystemMessage, createUserMessage } from "../../lib/message-factory";
 import { isRetryableUpstreamError } from "../../lib/session/retry";

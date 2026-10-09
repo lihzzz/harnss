@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
-import { spawn, ChildProcess } from "child_process";
+import type { ChildProcess } from "child_process";
+import { spawnExecutable } from "../lib/command-launch";
 import { Readable, Writable } from "stream";
 import crypto from "crypto";
 import path from "path";
@@ -354,11 +355,10 @@ async function createAcpConnection(
   let lastStderrError: string | undefined;
   const pendingPermissions = new Map<string, { resolve: (r: RequestPermissionResponse) => void }>();
 
-  const proc = spawn(agentDef.binary, agentDef.args ?? [], {
+  const proc = spawnExecutable(agentDef.binary, agentDef.args ?? [], {
     stdio: ["pipe", "pipe", "pipe"],
     cwd,
     env: { ...process.env, ...agentDef.env },
-    shell: process.platform === "win32",
   });
   acpProcesses.set(internalId, { process: proc, stopping: false, runtimeLease: options.runtimeLease, pendingPermissions });
   options.onSpawn?.(internalId, proc);
@@ -1034,17 +1034,20 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 }
 
 /** Stop all ACP sessions (called on app quit). Idempotent. */
-export function stopAll(): void {
+export async function stopAll(): Promise<void> {
+  const stopping: Promise<void>[] = [];
   for (const [sessionId, runtime] of acpProcesses) {
     stopUsageSession(sessionId);
     log("CLEANUP", `Stopping ACP session ${sessionId.slice(0, 8)}`);
     runtime.stopping = true;
     for (const permission of runtime.pendingPermissions.values()) permission.resolve({ outcome: { outcome: "cancelled" } });
     runtime.pendingPermissions.clear();
-    try { runtime.process.kill(); } catch { /* already dead */ }
+    stopping.push(stopProcessAndWait(runtime.process));
   }
   for (const sessionId of acpSessions.keys()) unregisterMemorySession(sessionId);
   acpSessions.clear();
   configBuffer.clear();
   commandsBuffer.clear();
+  const results = await Promise.allSettled(stopping);
+  for (const result of results) if (result.status === "rejected") reportError("ACP_STOP_ERR", result.reason);
 }

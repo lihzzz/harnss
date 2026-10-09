@@ -1,29 +1,16 @@
 import { ipcMain, shell } from "electron";
 import type { BrowserWindow } from "electron";
-import { execFile } from "child_process";
+import { execFileExecutable } from "../lib/command-launch";
+import { fileUrlToPortablePath } from "@shared/lib/file-paths";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
 import { log } from "../lib/logger";
-import { ALWAYS_SKIP } from "../lib/git-exec";
+import { ALWAYS_SKIP, listGitFiles } from "../lib/git-exec";
 import { getAppSetting } from "../lib/app-settings";
 import { captureEvent } from "../lib/posthog";
 import { reportError } from "../lib/error-utils";
 import { safeSend } from "../lib/safe-send";
-
-function listFilesGit(cwd: string): Promise<string[]> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      ["ls-files", "--cached", "--others", "--exclude-standard"],
-      { cwd, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err) return reject(err);
-        resolve(stdout.split("\n").filter((f) => f.trim()).sort());
-      },
-    );
-  });
-}
 
 function parseGitignore(gitignorePath: string): string[] {
   try {
@@ -96,7 +83,7 @@ async function listFilesWalk(cwd: string, maxFiles = 10000): Promise<string[]> {
 
 async function listProjectFiles(cwd: string): Promise<string[]> {
   try {
-    return await listFilesGit(cwd);
+    return await listGitFiles(cwd);
   } catch {
     log("FILES:LIST", "Not a git repo, falling back to filesystem walk");
     return await listFilesWalk(cwd);
@@ -559,21 +546,23 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   });
 
   ipcMain.handle("file:open-in-editor", async (_event, { filePath, line, editor: editorOverride }: { filePath: string; line?: number; editor?: string }) => {
+    if (/^file:/i.test(filePath)) {
+      const decodedPath = fileUrlToPortablePath(filePath);
+      if (!decodedPath) return { error: "Invalid local file URL" };
+      filePath = decodedPath;
+    }
     // Directories don't support --goto; just pass the path so the editor opens the folder
     let isDir = false;
     try { isDir = fs.statSync(filePath).isDirectory(); } catch { /* not found — treat as file */ }
 
     /** Try launching a single editor CLI. Resolves on success, rejects if not found. */
-    const tryEditor = (editor: string): Promise<{ ok: true; editor: string }> =>
-      new Promise((resolve, reject) => {
+    const tryEditor = async (editor: string): Promise<{ ok: true; editor: string }> => {
         const args = isDir
           ? [filePath]
           : ["--goto", line ? `${filePath}:${line}` : filePath];
-        execFile(editor, args, { timeout: 3000 }, (err) => {
-          if (err) reject(err);
-          else resolve({ ok: true, editor });
-        });
-      });
+        await execFileExecutable(editor, args, { encoding: "utf8", timeout: 3000 });
+        return { ok: true, editor };
+      };
 
     // Resolution order: explicit override → AppSettings preferredEditor → auto-detect
     const preferred = editorOverride ?? getAppSetting("preferredEditor") ?? "auto";
@@ -596,7 +585,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
     // Fallback: OS default
     try {
-      await shell.openPath(filePath);
+      const error = await shell.openPath(filePath);
+      if (error) throw new Error(error);
       void captureEvent("file_opened_in_editor", { editor: "default" });
       return { ok: true, editor: "default" };
     } catch (err) {

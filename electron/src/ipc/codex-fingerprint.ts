@@ -1,5 +1,5 @@
 import { ipcMain } from "electron";
-import { spawn } from "child_process";
+import { spawnExecutable } from "../lib/command-launch";
 import { app } from "electron";
 
 import { reportError } from "../lib/error-utils";
@@ -132,7 +132,7 @@ async function runFingerprintProbe({ model, effort }: CodexFingerprintProbeReque
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
   const codexPath = await getCodexBinaryPath();
-  const proc = spawn(codexPath, ["app-server"], {
+  const proc = spawnExecutable(codexPath, ["app-server"], {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: process.cwd(),
     env: {

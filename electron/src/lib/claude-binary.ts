@@ -1,11 +1,12 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execFileSync, spawn } from "child_process";
+import { spawn } from "child_process";
 import { getAppSetting } from "./app-settings";
 import { extractErrorMessage, reportError } from "./error-utils";
 import { log } from "./logger";
 import { getCliPath } from "./sdk";
+import { findExecutable, execFileExecutableSync } from "./command-launch";
 
 export type ClaudeBinarySource = "auto" | "managed" | "custom";
 export type ClaudeBinaryResolutionStrategy = "custom" | "env" | "known" | "path" | "sdk-fallback";
@@ -48,8 +49,7 @@ function isExecutable(filePath: string): boolean {
 function normalizeExecutablePath(candidate: string): string | null {
   const trimmed = candidate.trim();
   if (!trimmed) return null;
-  const normalized = path.normalize(trimmed);
-  return isExecutable(normalized) ? normalized : null;
+  return findExecutable(trimmed);
 }
 
 function getEnvOverride(): string | null {
@@ -58,12 +58,7 @@ function getEnvOverride(): string | null {
 }
 
 function getKnownPaths(): string[] {
-  if (process.platform === "win32") return [];
-  return [path.join(os.homedir(), ".local", "bin", "claude")];
-}
-
-function isScriptExecutable(filePath: string): boolean {
-  return [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"].includes(path.extname(filePath));
+  return [path.join(os.homedir(), ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude")];
 }
 
 function resolveFromCustom(): ClaudeBinaryResolution {
@@ -92,18 +87,8 @@ function resolveFromKnownPaths(): ClaudeBinaryResolution | null {
 }
 
 function resolveFromPathLookup(): ClaudeBinaryResolution | null {
-  try {
-    const cmd = process.platform === "win32" ? "where" : "which";
-    const output = execFileSync(cmd, ["claude"], { encoding: "utf-8", timeout: 5000 });
-    const candidates = output
-      .split(/\r?\n/g)
-      .map((line) => normalizeExecutablePath(line))
-      .filter((candidate): candidate is string => !!candidate);
-    const found = candidates[0];
-    return found ? { strategy: "path", path: found } : null;
-  } catch {
-    return null;
-  }
+  const found = findExecutable("claude");
+  return found ? { strategy: "path", path: found } : null;
 }
 
 function resolveSdkFallback(): ClaudeBinaryResolution | null {
@@ -287,9 +272,7 @@ export function getClaudeBinaryStatus(): { installed: boolean; installing: boole
 }
 
 function readClaudeVersion(binaryPath: string): string | null {
-  const command = isScriptExecutable(binaryPath) ? process.execPath : binaryPath;
-  const args = isScriptExecutable(binaryPath) ? [binaryPath, "--version"] : ["--version"];
-  const output = execFileSync(command, args, {
+  const output = execFileExecutableSync(binaryPath, ["--version"], {
     encoding: "utf-8",
     timeout: 10000,
   }).trim();

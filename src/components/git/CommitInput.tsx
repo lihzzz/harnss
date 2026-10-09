@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { EngineId } from "@/types";
+import { isMac } from "@/lib/utils";
 
 export interface CommitInputProps {
   cwd: string;
@@ -124,7 +125,7 @@ export function CommitInput({
             <TooltipContent side="bottom" sideOffset={4}>
               <p className="text-xs">
                 Commit changes
-                <span className="ms-1.5 text-background/50">⌘↵</span>
+                <span className="ms-1.5 text-background/50">{isMac ? "⌘↵" : "Ctrl+Enter"}</span>
               </p>
             </TooltipContent>
           </Tooltip>

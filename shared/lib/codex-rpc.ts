@@ -141,11 +141,7 @@ export class CodexRpcClient {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    try {
-      this.proc.kill();
-    } catch {
-      /* already dead */
-    }
+    void stopProcessAndWait(this.proc).catch((error) => this.reportError("codex-rpc", error, { context: "stop-process" }));
   }
 
   get isAlive(): boolean {

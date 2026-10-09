@@ -1,5 +1,5 @@
 import { ipcMain } from "electron";
-import { execFileSync } from "child_process";
+import { findExecutable } from "../lib/command-launch";
 import { loadMcpServers, addMcpServer, removeMcpServer } from "../lib/mcp-store";
 import { authenticateMcpServer } from "../lib/mcp-oauth-flow";
 import { loadOAuthData, deleteOAuthData } from "../lib/mcp-oauth-store";
@@ -102,18 +102,16 @@ async function probeSseServer(server: McpServerConfig): Promise<ProbeResult> {
   }
 }
 
-function probeStdioServer(server: McpServerConfig): ProbeResult {
+export function probeStdioServer(server: McpServerConfig): ProbeResult {
   const cmd = server.command;
   if (!cmd) return { name: server.name, status: "failed", error: "No command configured" };
 
   try {
-    execFileSync("/usr/bin/which", [cmd], { stdio: "ignore", timeout: 3000 });
-    return { name: server.name, status: "connected" };
-  } catch {
-    // Binary not found on PATH — still might work if it's an npx/bunx invocation
-    if (cmd === "npx" || cmd === "bunx" || cmd === "pnpx" || cmd === "node") {
+    if (findExecutable(cmd, { env: { ...process.env, ...server.env } })) {
       return { name: server.name, status: "connected" };
     }
+    return { name: server.name, status: "failed", error: `Command '${cmd}' not found` };
+  } catch {
     return { name: server.name, status: "failed", error: `Command '${cmd}' not found` };
   }
 }

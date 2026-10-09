@@ -5,6 +5,7 @@ import { OpenInEditorButton } from "./OpenInEditorButton";
 import type { TurnSummary, FileChange } from "@/lib/chat/turn-changes";
 import { useChatPersistedState } from "@/components/chat-ui-state";
 import { CHAT_ROW_CLASS, CHAT_ROW_WIDTH_CLASS } from "@/components/lib/chat-layout";
+import { getFileDirectory } from "@shared/lib/file-paths";
 
 // ── Color/icon mapping (matches FilesPanel conventions) ──
 
@@ -26,8 +27,8 @@ const InlineFileChange = memo(function InlineFileChange({
   const Icon = CHANGE_ICON[change.changeType];
   const color = CHANGE_COLOR[change.changeType];
   // Show directory path for context
-  const dirParts = change.filePath.split("/");
-  const dir = dirParts.length > 1 ? dirParts.slice(0, -1).join("/") + "/" : "";
+  const directory = getFileDirectory(change.filePath);
+  const dir = directory ? `${directory.replace(/\/$/, "")}/` : "";
 
   return (
     <div className="rounded-md border border-foreground/[0.06] overflow-hidden">

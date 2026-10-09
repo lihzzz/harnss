@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useWorktreeChips, WORKTREE_SETUP_PATH } from "@/hooks/useWorktreeChips";
 import { BOTTOM_CHAT_MAX_WIDTH_CLASS } from "@/lib/layout/constants";
+import { getFileDirectory, getFileName } from "@shared/lib/file-paths";
 
 const SETUP_PROMPT = `Analyze this project and generate a worktree setup configuration.
 
@@ -76,10 +77,9 @@ export const WorktreeBar = memo(function WorktreeBar({
     (branch: string) => {
       const primaryWorktree = worktrees.find((w) => w.isPrimary);
       const repoPath = primaryWorktree?.path ?? projectPath ?? "";
-      const lastSlash = repoPath.lastIndexOf("/");
-      const parentDir = lastSlash > 0 ? repoPath.slice(0, lastSlash) : repoPath;
-      const repoName = lastSlash > 0 ? repoPath.slice(lastSlash + 1) : repoPath;
-      return `${parentDir}/${repoName}-${branch}`;
+      const parentDir = getFileDirectory(repoPath);
+      const repoName = getFileName(repoPath);
+      return `${parentDir ? `${parentDir.replace(/\/$/, "")}/` : ""}${repoName}-${branch}`;
     },
     [worktrees, projectPath],
   );

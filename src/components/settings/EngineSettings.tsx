@@ -6,6 +6,7 @@ import { SettingRow, SettingsSelect, SettingsHeader, SettingsSection } from "@/c
 import type { AppSettings } from "@/types";
 import type { ComputerUseRuntimeStatus } from "@shared/types/computer-use";
 import { useI18n } from "@/lib/i18n";
+import { reportError } from "@/lib/analytics/analytics";
 
 interface EngineSettingsProps {
   appSettings: AppSettings | null;
@@ -122,7 +123,11 @@ export const EngineSettings = memo(function EngineSettings({
       setComputerUseEnabled(checked);
       await onUpdateAppSettings({ computerUseEnabled: checked, codexComputerUseEnabled: checked });
       if (checked) {
-        await window.claude.computerUseRequestPermissions();
+        try { await window.claude.computerUseRequestPermissions(); }
+        catch (error) {
+          setComputerUseStatusError(reportError("CUA_PERMISSION_REQUEST", error));
+          return;
+        }
       }
       await refreshComputerUseStatus(checked);
     },

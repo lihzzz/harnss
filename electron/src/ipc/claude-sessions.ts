@@ -7,9 +7,10 @@ import { safeSend } from "../lib/safe-send";
 import { AsyncChannel } from "../lib/async-channel";
 import { getSDK, clientAppEnv, getCliPath } from "../lib/sdk";
 import type { QueryHandle } from "../lib/sdk";
-import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKUserMessage, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { getMcpAuthHeaders } from "../lib/mcp-oauth-flow";
 import { getClaudeModelsCache, setClaudeModelsCache } from "../lib/claude-model-cache";
+import type { CachedModelInfo } from "../lib/claude-model-cache";
 import { reportError } from "../lib/error-utils";
 import { buildSdkMcpConfig } from "@shared/lib/mcp-config";
 import type { McpServerInput } from "@shared/lib/mcp-config";
@@ -40,7 +41,7 @@ interface PendingPermission {
 }
 
 interface SessionEntry {
-  channel: AsyncChannel<unknown>;
+  channel: AsyncChannel<SDKUserMessage>;
   queryHandle: QueryHandle | null;
   eventCounter: number;
   pendingPermissions: Map<string, PendingPermission>;
@@ -115,7 +116,7 @@ async function setSessionPermissionMode(
   if (!session.queryHandle) {
     throw new Error("No active query handle");
   }
-  await session.queryHandle.setPermissionMode(permissionMode);
+  await session.queryHandle.setPermissionMode(parsePermissionMode(permissionMode));
   if (session.startOptions) {
     session.startOptions.permissionMode = permissionMode;
   }
@@ -136,10 +137,18 @@ async function enforcePermissionMode(
 ): Promise<void> {
   if (!permissionMode || permissionMode === "default") return;
   try {
-    await queryHandle.setPermissionMode(permissionMode);
+    await queryHandle.setPermissionMode(parsePermissionMode(permissionMode));
     log("PERMISSION_MODE_ENFORCED", `session=${sessionId.slice(0, 8)} mode=${permissionMode} (${context})`);
   } catch (err) {
     reportError("PERMISSION_MODE_ENFORCE_ERR", err, { engine: "claude", sessionId, permissionMode, context });
+  }
+}
+
+function parsePermissionMode(value: string): PermissionMode {
+  switch (value) {
+    case "default": case "acceptEdits": case "bypassPermissions": case "plan": case "dontAsk": case "auto":
+      return value;
+    default: throw new Error(`Unsupported Claude permission mode: ${value}`);
   }
 }
 
@@ -424,7 +433,8 @@ function logSdkCliPath(context: string, cliPath?: string): void {
   log("SDK_CLI_PATH", `${context} unresolved; relying on SDK fallback`);
 }
 
-let modelsRevalidationPromise: Promise<{ models: Array<Record<string, unknown>>; updatedAt?: number; error?: string }> | null = null;
+type ModelsRevalidationResult = { models: CachedModelInfo[]; updatedAt?: number; error?: string };
+let modelsRevalidationPromise: Promise<ModelsRevalidationResult> | null = null;
 
 /** Read credential configuration without sending a user turn or retaining account details. */
 export async function hasConfiguredClaudeAccount(cwd: string): Promise<boolean> {
@@ -450,7 +460,7 @@ export async function hasConfiguredClaudeAccount(cwd: string): Promise<boolean> 
   }
 }
 
-async function revalidateClaudeModelsCache(cwd?: string): Promise<{ models: Array<Record<string, unknown>>; updatedAt?: number; error?: string }> {
+async function revalidateClaudeModelsCache(cwd?: string): Promise<ModelsRevalidationResult> {
   if (modelsRevalidationPromise) return modelsRevalidationPromise;
 
   modelsRevalidationPromise = (async () => {
@@ -487,7 +497,7 @@ async function revalidateClaudeModelsCache(cwd?: string): Promise<{ models: Arra
     let lastError = "";
     for (const [index, attempt] of attempts.entries()) {
       let queryHandle: QueryHandle | null = null;
-      const channel = new AsyncChannel<unknown>();
+      const channel = new AsyncChannel<SDKUserMessage>();
 
       try {
         logSdkCliPath(`models-revalidate attempt=${index + 1} ${attempt.label}`, attempt.cliPath);
@@ -623,7 +633,7 @@ async function startSession(options: StartOptions, getMainWindow: () => BrowserW
     runtimeLease?.assertActive();
     if (sessions.has(sessionId)) throw new Error("Claude session is already running");
 
-    const channel = new AsyncChannel<unknown>();
+    const channel = new AsyncChannel<SDKUserMessage>();
     const session: SessionEntry = {
       channel,
       queryHandle: null,
@@ -749,7 +759,7 @@ async function startSession(options: StartOptions, getMainWindow: () => BrowserW
 export function register(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle("claude:start", (_event, options: StartOptions = {}) => startSession(options, getMainWindow));
 
-  ipcMain.handle("claude:send", async (_event, { sessionId, message }: { sessionId: string; message: { message: { content: unknown } } }) => {
+  ipcMain.handle("claude:send", async (_event, { sessionId, message }: { sessionId: string; message: { message: Pick<SDKUserMessage["message"], "content"> } }) => {
     const session = sessions.get(sessionId);
     if (!session) {
       log("SEND", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
@@ -764,7 +774,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     const memory = await beforeMemorySend(sessionId, originalText);
     try { assertClaudeSessionActive(sessionId, session); }
     catch (error) { return { error: reportError("SEND_STOPPED", error, { engine: "claude", sessionId }) }; }
-    const content = memory.text === originalText || !originalText
+    const content: SDKUserMessage["message"]["content"] = memory.text === originalText || !originalText
       ? originalContent
       : Array.isArray(originalContent)
         ? [{ type: "text", text: memory.text.slice(0, memory.text.length - originalText.length) }, ...originalContent]
@@ -1119,19 +1129,14 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 }
 
 /** Stop all Claude sessions (called on app quit). Idempotent. */
-export function stopAll(): void {
-  for (const [sessionId, session] of sessions) {
-    stopUsageSession(sessionId);
+export async function stopAll(): Promise<void> {
+  const stopping: Promise<void>[] = [];
+  for (const sessionId of sessions.keys()) {
     log("CLEANUP", `Closing Claude session ${sessionId.slice(0, 8)}`);
-    session.stopping = true;
-    session.stopReason = "app-quit";
-    for (const [, pending] of session.pendingPermissions) {
-      pending.resolve({ behavior: "deny", message: "App closing" });
-    }
-    session.pendingPermissions.clear();
-    session.channel.close();
-    session.queryHandle?.close();
-    unregisterMemorySession(sessionId);
+    stopping.push(stopSession(sessionId, "app-quit"));
   }
+  const results = await Promise.allSettled(stopping);
+  for (const result of results) if (result.status === "rejected") reportError("CLAUDE_STOP_ERR", result.reason);
+  for (const sessionId of sessions.keys()) unregisterMemorySession(sessionId);
   sessions.clear();
 }

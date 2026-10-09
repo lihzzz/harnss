@@ -1,8 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetAppSetting } = vi.hoisted(() => ({
+const { mockGetAppSetting, mockSpawnSync, mockMacStatus, mockMacRequest } = vi.hoisted(() => ({
   mockGetAppSetting: vi.fn(),
+  mockSpawnSync: vi.fn(),
+  mockMacStatus: vi.fn(),
+  mockMacRequest: vi.fn(),
 }));
+vi.mock("child_process", () => ({ spawnSync: mockSpawnSync }));
+vi.mock("@trycua/cua-driver", () => ({ currentMacOsPermissionStatus: mockMacStatus }));
+vi.mock("@trycua/cua-driver/electron", () => ({ requestMacOSPermissions: mockMacRequest }));
+vi.mock("../error-utils", () => ({ reportError: (_label: string, error: unknown) => error instanceof Error ? error.message : String(error) }));
 
 vi.mock("../app-settings", () => ({
   getAppSetting: mockGetAppSetting,
@@ -13,14 +20,58 @@ async function loadModule() {
   return import("../computer-use-runtime");
 }
 
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+afterEach(() => Object.defineProperty(process, "platform", originalPlatform));
+
 describe("computer-use runtime configuration", () => {
   beforeEach(() => {
+    mockSpawnSync.mockReset().mockReturnValue({ status: 0, stdout: '{"driverVersion":"0.33.0"}', stderr: "" });
+    mockMacStatus.mockReset().mockReturnValue({ accessibility: true, screenRecording: true });
+    mockMacRequest.mockReset().mockReturnValue({ accessibility: true, screenRecording: true });
     mockGetAppSetting.mockReset();
     mockGetAppSetting.mockImplementation((key: string) => {
       if (key === "computerUseEnabled") return false;
       if (key === "computerUseBinaryPath") return "";
       return undefined;
     });
+  });
+
+  function enabledOn(platform: string): void {
+    Object.defineProperty(process, "platform", { configurable: true, value: platform });
+    mockGetAppSetting.mockImplementation((key: string) => key === "computerUseEnabled" ? true : "");
+  }
+
+  it("requires both macOS desktop permissions before reporting ready", async () => {
+    enabledOn("darwin");
+    const { getComputerUseRuntimeStatus } = await loadModule();
+    expect(await getComputerUseRuntimeStatus()).toMatchObject({ installed: true, ready: true });
+    mockMacStatus.mockReturnValue({ accessibility: true, screenRecording: false });
+    expect(await getComputerUseRuntimeStatus()).toMatchObject({ installed: true, ready: false, permissions: { screenRecording: false } });
+  });
+
+  it("reports an unknown permission state as unavailable instead of authorized", async () => {
+    enabledOn("darwin");
+    mockMacStatus.mockImplementation(() => { throw new Error("native permission query failed"); });
+    const { getComputerUseRuntimeStatus } = await loadModule();
+    const status = await getComputerUseRuntimeStatus();
+    expect(status).toMatchObject({ installed: true, ready: false, error: expect.stringContaining("native permission query failed") });
+    expect(status.permissions).toBeUndefined();
+  });
+
+  it("propagates a failed native permission request for the settings UI", async () => {
+    enabledOn("darwin");
+    mockMacRequest.mockImplementation(() => { throw new Error("request unavailable"); });
+    const { requestComputerUsePermissions } = await loadModule();
+    await expect(requestComputerUsePermissions()).rejects.toThrow("Unable to request macOS desktop permissions: request unavailable");
+  });
+
+  it("does not query or request macOS permissions on Windows", async () => {
+    enabledOn("win32");
+    const { getComputerUseRuntimeStatus, requestComputerUsePermissions } = await loadModule();
+    expect(await getComputerUseRuntimeStatus()).toMatchObject({ installed: true, ready: true });
+    expect(await requestComputerUsePermissions()).toBeUndefined();
+    expect(mockMacStatus).not.toHaveBeenCalled();
+    expect(mockMacRequest).not.toHaveBeenCalled();
   });
 
   it("does not inject a server when the runtime is disabled", async () => {

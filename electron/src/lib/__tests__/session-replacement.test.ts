@@ -94,7 +94,7 @@ describe("durable runtime replacement", () => {
     await repository.save(session());
     const unlink = fs.unlink.bind(fs);
     const failure = vi.spyOn(fs, "unlink").mockImplementation(async (file) => {
-      if (String(file).endsWith("/old.jsonl")) throw new Error("old file locked");
+      if (String(file).endsWith(`${path.sep}old.jsonl`)) throw new Error("old file locked");
       return unlink(file);
     });
     await expect(repository.save(session("new", "new-thread"), "old")).resolves.toBeUndefined();
@@ -112,11 +112,11 @@ describe("durable runtime replacement", () => {
     const unlink = fs.unlink.bind(fs);
     let recordWrites = 0;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && ++recordWrites === 2) throw new Error("commit unavailable");
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && ++recordWrites === 2) throw new Error("commit unavailable");
       return rename(from, to);
     });
     vi.spyOn(fs, "unlink").mockImplementation(async (file) => {
-      if (String(file).endsWith("/new.jsonl")) throw new Error("rollback unavailable");
+      if (String(file).endsWith(`${path.sep}new.jsonl`)) throw new Error("rollback unavailable");
       return unlink(file);
     });
     await expect(repository.save(session("new", "new-thread"), "old")).rejects.toThrow();
@@ -135,7 +135,7 @@ describe("durable runtime replacement", () => {
     const rename = fs.rename.bind(fs);
     let recordWrites = 0;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && ++recordWrites === 2) { reached.resolve(); await release.promise; }
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && ++recordWrites === 2) { reached.resolve(); await release.promise; }
       return rename(from, to);
     });
     const replacing = repository.save(session("new", "new-thread"), "old");
@@ -160,7 +160,7 @@ describe("durable runtime replacement", () => {
     const rename = fs.rename.bind(fs);
     let writes = 0;
     const failure = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && ++writes === failedWrite) throw new Error("record unavailable");
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && ++writes === failedWrite) throw new Error("record unavailable");
       return rename(from, to);
     });
     await expect(repository.save(session("new"), "old")).rejects.toThrow("record unavailable");
@@ -259,7 +259,7 @@ describe("durable runtime replacement", () => {
     const reached = deferred(); const release = deferred(); const rename = fs.rename.bind(fs);
     let writes = 0;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && String(to).endsWith(".json") && ++writes === 2) { reached.resolve(); await release.promise; }
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && String(to).endsWith(".json") && ++writes === 2) { reached.resolve(); await release.promise; }
       return rename(from, to);
     });
     const task = repository.append({ ...session("old", "new-thread"), appendedMessages: [{ id: "m2", role: "user", content: "appended", timestamp: 20 }], messageCount: 2 });
@@ -279,7 +279,7 @@ describe("durable runtime replacement", () => {
     const rename = fs.rename.bind(fs);
     let writes = 0; let commitFailed = false;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && String(to).endsWith(".json") && ++writes === 2) { commitFailed = true; throw new Error("commit unavailable"); }
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && String(to).endsWith(".json") && ++writes === 2) { commitFailed = true; throw new Error("commit unavailable"); }
       if (failRollback && commitFailed && String(to) === path.join(folder, "old.json")) throw new Error("rollback unavailable");
       return rename(from, to);
     });
@@ -299,7 +299,7 @@ describe("durable runtime replacement", () => {
     const reached = deferred(); const release = deferred(); const rename = fs.rename.bind(fs);
     let writes = 0;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && String(to).endsWith(".json") && ++writes === 2) { reached.resolve(); await release.promise; }
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && String(to).endsWith(".json") && ++writes === 2) { reached.resolve(); await release.promise; }
       return rename(from, to);
     });
     const replacement = repository.save(session("new"), "old");
@@ -314,7 +314,7 @@ describe("durable runtime replacement", () => {
     await repository.save(session());
     const rename = fs.rename.bind(fs); let writes = 0; let commitFailed = false;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && String(to).endsWith(".json") && ++writes === 2) { commitFailed = true; throw new Error("commit unavailable"); }
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && String(to).endsWith(".json") && ++writes === 2) { commitFailed = true; throw new Error("commit unavailable"); }
       if (commitFailed && String(to) === path.join(root, "sessions/project/old.jsonl")) throw new Error("rollback unavailable");
       return rename(from, to);
     });
@@ -334,7 +334,7 @@ describe("durable runtime replacement", () => {
     await repository.save(session());
     const rename = fs.rename.bind(fs); let writes = 0; let commitFailed = false;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.replacements/") && String(to).endsWith(".json") && ++writes === 2) { commitFailed = true; throw new Error("commit unavailable"); }
+      if (String(to).includes(`${path.sep}.replacements${path.sep}`) && String(to).endsWith(".json") && ++writes === 2) { commitFailed = true; throw new Error("commit unavailable"); }
       if (commitFailed && String(to) === path.join(root, "sessions/project/old.jsonl")) throw new Error("rollback unavailable");
       return rename(from, to);
     });

@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { parseGitPaths } from "./git-output";
 
 export const ALWAYS_SKIP = new Set([
   "node_modules", ".git", ".hg", ".svn", "dist", "build", ".next", ".nuxt",
@@ -15,4 +16,9 @@ export function gitExec(args: string[], cwd: string): Promise<string> {
       resolve(stdout);
     });
   });
+}
+
+export async function listGitFiles(cwd: string): Promise<string[]> {
+  const raw = await gitExec(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd);
+  return [...new Set(parseGitPaths(raw))].sort();
 }

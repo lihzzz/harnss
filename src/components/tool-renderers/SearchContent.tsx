@@ -1,6 +1,7 @@
 import { FileText } from "lucide-react";
 import type { UIMessage } from "@/types";
 import { formatResult } from "@/components/lib/tool-formatting";
+import { normalizeFilePathSeparators } from "@shared/lib/file-paths";
 
 /** Structured fields that the SDK's Grep/Glob tool can return. */
 interface GrepResultFields {
@@ -16,7 +17,7 @@ function hasGrepFields(result: UIMessage["toolResult"]): result is NonNullable<U
 
 /** Shorten an absolute or deep relative path to its last 2-3 segments. */
 function shortenPath(filePath: string): string {
-  const parts = filePath.split("/");
+  const parts = normalizeFilePathSeparators(filePath).split("/");
   if (parts.length <= 3) return filePath;
   return parts.slice(-3).join("/");
 }

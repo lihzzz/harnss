@@ -46,7 +46,7 @@ Harnss 是基于 Electron 与 React 的 AI 编程桌面客户端，面向 macOS�
 - **Node.js 22.12.0 或更高的 22.x 版本**：与 CI 的 Node 22 环境一致，也满足当前原生模块构建工具要求。
 - **pnpm 10.26.0**：版本由 `packageManager` 字段指定。
 - **Git**：用于克隆仓库和应用内的 Git 功能。
-- 原生模块编译环境：安装依赖时会运行 `electron-rebuild`。需要编译时，Windows 使用 Python 与 Visual Studio C++ Build Tools，macOS 使用 Xcode Command Line Tools，Linux 使用 Python 与 C/C++ 构建工具。
+- 原生模块编译环境：安装和打包使用 `scripts/rebuild-native.cjs`。Windows x64 / ARM64 优先使用 `node-pty` 随包提供的预编译文件，并跳过 macOS 专用模块；预编译缺失或指定源码构建时才需要 Python 与 Visual Studio C++ Build Tools。macOS 使用 Xcode Command Line Tools，Linux 使用 Python 与 C/C++ 构建工具。
 
 ```bash
 git clone --branch hy_dev https://github.com/lihzzz/harnss.git
@@ -118,6 +118,9 @@ Codex 模型指纹探测会发起三次短模型请求，与本地 ModelTrace �
 | `pnpm build` | 构建 Electron 代码与 renderer，输出到 `electron/dist/` 和 `dist/`。 |
 | `pnpm start` | 单独启动 Electron；源码运行还需要已构建的主进程和运行中的 Vite 服务。 |
 | `pnpm test` | 运行 Vitest 测试，配置见 `vitest.config.electron.ts`。 |
+| `pnpm test:native` | 运行原生依赖选择、目标架构与 ASAR 回归测试；不联网或编译依赖。 |
+| `pnpm check:native` | 检查当前 OS/CPU 的原生运行文件、平台包与二进制架构。 |
+| `pnpm typecheck` | 分别检查 renderer 和 Electron TypeScript。 |
 | `pnpm test:watch` | 以监听模式运行测试。 |
 | `pnpm dist:fast` | 构建可运行的应用目录，不生成安装器。 |
 | `pnpm dist:mac` | 生成 macOS DMG / ZIP。 |
@@ -126,7 +129,23 @@ Codex 模型指纹探测会发起三次短模型请求，与本地 ModelTrace �
 
 **`pnpm build` 后直接运行 `pnpm start` 仍会连接开发服务器。** 如需验证不依赖 Vite 的应用，请使用 `pnpm dist:fast` 并启动生成的程序。
 
-打包产物位于 `release/<version>/`。在目标操作系统上构建，架构和原生依赖处理参考 [electron-builder.config.js](electron-builder.config.js) 与[构建工作流](.github/workflows/build.yml)。Windows/Linux CI 会在临时构建环境中移除 macOS 专用的 `electron-liquid-glass` 依赖；本地遇到同类打包错误时可参考该步骤。
+打包产物位于 `release/<version>/`。在目标操作系统上构建，架构和原生依赖处理参考 [electron-builder.config.js](electron-builder.config.js) 与[构建工作流](.github/workflows/build.yml)。安装与打包共用原生依赖处理脚本；Windows/Linux 不重建 macOS 专用的 `electron-liquid-glass`，无需手动修改依赖清单。
+
+`pnpm install --frozen-lockfile` 根据 `pnpm-workspace.yaml` 为**当前操作系统同时安装 x64 和 ARM64 可选包**，包括 Cua 与 Sharp；不安装其他操作系统的平台包。更新前已安装的工作区需要再次安装；离线缓存不足可能无法补齐另一架构，目标检查会明确报告缺包。安装一次并不表示另一架构已实际运行通过。
+
+各平台只打包 `package.json`、`dist/`、`electron/dist/` 与生产依赖。日志、测试报告、源码和已有产物不会进入 ASAR；打包期间不要重新构建或修改这些运行文件。
+
+打包前会检查目标原生依赖，打包后再次检查 ASAR 内的平台包、二进制 CPU 类型和解包文件。可手动检查指定目标或产物：
+
+```bash
+pnpm check:native --platform win32 --arch arm64
+pnpm check:native --platform darwin --arch x64
+pnpm check:native --platform win32 --arch x64 --archive release/0.2.0/win-unpacked/resources/app.asar
+```
+
+检查不启动模型、代理或桌面服务。它不能替代 macOS Intel/Apple Silicon、Windows x64/ARM64 的实际安装、启动、权限和功能验收。CI 在 Windows、macOS 和 Linux 上运行 Vitest、原生/ASAR 测试、两套类型检查和构建；发布构建继续使用相同安装与检查流程。
+
+macOS 签名与公证使用 electron-builder 内置流程，不再使用额外的 `afterSign` 脚本。正式分发需要在构建环境配置签名证书，以及 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`（或 builder 支持的 API key/keychain 凭据）。Windows 正式签名也需要相应证书。仓库没有附带这些凭据，当前 CI 未配置签名密钥时生成的产物不能视为签名、公证或安装验收通过。
 
 单独执行 TypeScript 检查：
 
@@ -225,7 +244,7 @@ Prepare the following:
 - **Node.js 22.x, version 22.12.0 or later**: matches the Node 22 CI environment and satisfies the current native build tooling.
 - **pnpm 10.26.0**: pinned by the `packageManager` field.
 - **Git**: required for cloning and the integrated Git features.
-- Native build tools: dependency installation runs `electron-rebuild`. When compilation is needed, use Python and Visual Studio C++ Build Tools on Windows, Xcode Command Line Tools on macOS, or Python and C/C++ build tools on Linux.
+- Native build tools: installation and packaging use `scripts/rebuild-native.cjs`. Windows x64 / ARM64 uses the bundled `node-pty` prebuilds and skips macOS-only modules; Python and Visual Studio C++ Build Tools are needed only when prebuilds are missing or a source build is requested. Use Xcode Command Line Tools on macOS, or Python and C/C++ build tools on Linux.
 
 ```bash
 git clone --branch hy_dev https://github.com/lihzzz/harnss.git
@@ -297,6 +316,9 @@ The Codex fingerprint probe makes three short model requests and compares the re
 | `pnpm build` | Build Electron code and the renderer into `electron/dist/` and `dist/`. |
 | `pnpm start` | Launch Electron alone; a source checkout still needs a built main process and a running Vite server. |
 | `pnpm test` | Run Vitest tests using `vitest.config.electron.ts`. |
+| `pnpm test:native` | Run native selection, target architecture and ASAR regression tests without network access or native compilation. |
+| `pnpm check:native` | Check native runtime files, platform packages and binary architectures for the current OS/CPU. |
+| `pnpm typecheck` | Check renderer and Electron TypeScript separately. |
 | `pnpm test:watch` | Run tests in watch mode. |
 | `pnpm dist:fast` | Build an application directory without an installer. |
 | `pnpm dist:mac` | Build macOS DMG / ZIP packages. |
@@ -305,7 +327,23 @@ The Codex fingerprint probe makes three short model requests and compares the re
 
 **Running `pnpm start` after `pnpm build` still connects to the development server.** To check an application that runs without Vite, use `pnpm dist:fast` and launch the generated executable.
 
-Output goes to `release/<version>/`. Build on the target operating system and consult [electron-builder.config.js](electron-builder.config.js) and the [build workflow](.github/workflows/build.yml) for architecture and native dependency handling. Windows/Linux CI removes the macOS-only `electron-liquid-glass` dependency from its temporary build environment; use that step as a reference if local packaging hits the same dependency error.
+Output goes to `release/<version>/`. Build on the target operating system and consult [electron-builder.config.js](electron-builder.config.js) and the [build workflow](.github/workflows/build.yml) for architecture and native dependency handling. Installation and packaging share the native dependency script, which skips the macOS-only `electron-liquid-glass` rebuild on Windows/Linux without requiring manual manifest edits.
+
+`pnpm install --frozen-lockfile` uses `pnpm-workspace.yaml` to install optional packages for **both x64 and ARM64 on the current operating system**, including Cua and Sharp. It does not fetch platform packages for other operating systems. Existing checkouts need to install again; an offline cache may lack the other CPU's packages, which the target check reports explicitly. Installing both targets does not establish that both run correctly.
+
+Each platform packages only `package.json`, `dist/`, `electron/dist/` and production dependencies. Logs, test reports, sources and previous artifacts do not enter the ASAR. Do not rebuild or modify runtime inputs while packaging.
+
+Packaging checks the target dependencies before packing, then verifies the ASAR platform packages, binary CPU types and unpacked files. Check a target or archive explicitly with:
+
+```bash
+pnpm check:native --platform win32 --arch arm64
+pnpm check:native --platform darwin --arch x64
+pnpm check:native --platform win32 --arch x64 --archive release/0.2.0/win-unpacked/resources/app.asar
+```
+
+These checks do not start models, agents or desktop services. They do not replace installation, startup, permission and feature testing on macOS Intel/Apple Silicon and Windows x64/ARM64. CI runs Vitest, native/ASAR tests, both type checks and the build on Windows, macOS and Linux. Release packaging uses the same dependency installation and checks.
+
+macOS signing and notarization use electron-builder's built-in flow, without an additional `afterSign` script. Distribution requires a signing certificate and `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` (or supported API key/keychain credentials) in the build environment. Windows signing also requires its certificate. No credentials ship with this repository; CI artifacts created without signing keys are not evidence of signed, notarized or installation-tested releases.
 
 Run TypeScript checks separately:
 

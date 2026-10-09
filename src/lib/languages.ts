@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { getFileName } from "@shared/lib/file-paths";
 
 // ── File extension → Prism language mapping ──
 
@@ -29,7 +30,7 @@ const FILENAME_MAP: Record<string, string> = {
 
 /** Detect Prism language from a file path's extension or filename */
 export function getLanguageFromPath(filePath: string): string {
-  const fileName = filePath.split("/").pop()?.toLowerCase() ?? "";
+  const fileName = getFileName(filePath).toLowerCase();
   const nameNoExt = fileName.replace(/\.[^.]+$/, "");
 
   // Special filenames (Dockerfile, Makefile, etc.)

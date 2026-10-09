@@ -3,19 +3,19 @@ import type { InternalState } from "./session-store";
 import { codexItemToToolName, codexItemToToolInput, codexItemToToolResult, codexPlanToTodos } from "@/lib/engine/codex-adapter";
 import { ensureACPStreamingMsg, finalizeACPStreamingMsg } from "./acp-handler";
 import type { PermissionRequest } from "@/types";
-import type { ItemStartedNotification } from "../../types/codex-protocol/v2/ItemStartedNotification";
-import type { ItemCompletedNotification } from "../../types/codex-protocol/v2/ItemCompletedNotification";
-import type { AgentMessageDeltaNotification } from "../../types/codex-protocol/v2/AgentMessageDeltaNotification";
-import type { ReasoningTextDeltaNotification } from "../../types/codex-protocol/v2/ReasoningTextDeltaNotification";
-import type { CommandExecutionOutputDeltaNotification } from "../../types/codex-protocol/v2/CommandExecutionOutputDeltaNotification";
-import type { PlanDeltaNotification } from "../../types/codex-protocol/v2/PlanDeltaNotification";
-import type { TurnPlanUpdatedNotification } from "../../types/codex-protocol/v2/TurnPlanUpdatedNotification";
+import type { ItemStartedNotification } from "@shared/types/codex-protocol/v2/ItemStartedNotification";
+import type { ItemCompletedNotification } from "@shared/types/codex-protocol/v2/ItemCompletedNotification";
+import type { AgentMessageDeltaNotification } from "@shared/types/codex-protocol/v2/AgentMessageDeltaNotification";
+import type { ReasoningTextDeltaNotification } from "@shared/types/codex-protocol/v2/ReasoningTextDeltaNotification";
+import type { CommandExecutionOutputDeltaNotification } from "@shared/types/codex-protocol/v2/CommandExecutionOutputDeltaNotification";
+import type { PlanDeltaNotification } from "@shared/types/codex-protocol/v2/PlanDeltaNotification";
+import type { TurnPlanUpdatedNotification } from "@shared/types/codex-protocol/v2/TurnPlanUpdatedNotification";
 import type { CodexTokenUsageNotification } from "@/types";
 import type { CodexThreadGoal } from "@/types";
 import { parseThreadGoal } from "@shared/lib/codex-goal";
 import { createSystemMessage } from "@/lib/message-factory";
 import { isRetryableUpstreamError } from "@/lib/session/retry";
-import type { TurnCompletedNotification } from "../../types/codex-protocol/v2/TurnCompletedNotification";
+import type { TurnCompletedNotification } from "@shared/types/codex-protocol/v2/TurnCompletedNotification";
 
 /**
  * Process a Codex notification for a background session, mutating `state` in place.

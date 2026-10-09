@@ -94,7 +94,7 @@ describe("batch session operations", () => {
   it("retries only failed deletions after a partial unlink, and skips committed targets", async () => {
     const unlink = fs.unlink.bind(fs);
     const failure = vi.spyOn(fs, "unlink").mockImplementation(async (file) => {
-      if (String(file).endsWith("/one.jsonl")) throw new Error("file locked");
+      if (String(file).endsWith(`${path.sep}one.jsonl`)) throw new Error("file locked");
       return unlink(file);
     });
     await operations.start({ requestId: "first-delete", action: "delete", targets: [target("one"), target("two")] });
@@ -113,7 +113,7 @@ describe("batch session operations", () => {
   it("exposes pending startup cleanup as deduplicated retry jobs without replaying operations", async () => {
     const unlink = fs.unlink.bind(fs);
     const failure = vi.spyOn(fs, "unlink").mockImplementation(async (file) => {
-      if (String(file).endsWith("/one.jsonl")) throw new Error("file locked");
+      if (String(file).endsWith(`${path.sep}one.jsonl`)) throw new Error("file locked");
       return unlink(file);
     });
     await expect(repository.remove("project", "one", async () => {})).rejects.toMatchObject({ code: "DELETE_INCOMPLETE" });

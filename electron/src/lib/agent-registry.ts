@@ -5,6 +5,7 @@ import { promisify } from "util";
 import { app } from "electron";
 import type { InstalledAgent, BinaryCheckResult } from "@shared/types/registry";
 import type { ACPConfigOption } from "@shared/types/acp";
+import { findExecutable } from "./command-launch";
 
 // Re-export shared types so existing consumers importing from this file still work
 export type { InstalledAgent, BinaryCheckResult } from "@shared/types/registry";
@@ -126,18 +127,7 @@ export function getRegistryPlatformKeys(): string[] {
 
 /** Resolve a command name to its absolute path via `which` (or `where` on Windows). */
 async function resolveWhich(cmd: string): Promise<string | null> {
-  if (!cmd.trim()) return null;
-  try {
-    const whichCmd = process.platform === "win32" ? "where" : "which";
-    const { stdout } = await execFileAsync(whichCmd, [cmd]);
-    // `where` on Windows may return multiple CRLF lines; take the first non-empty.
-    return stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? null;
-  } catch {
-    return null; // command not found
-  }
+  return findExecutable(cmd);
 }
 
 function quotePosixArg(value: string): string {

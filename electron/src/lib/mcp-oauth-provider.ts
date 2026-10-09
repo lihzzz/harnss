@@ -1,7 +1,7 @@
 import { shell } from "electron";
 import { loadOAuthData, saveOAuthData, type StoredOAuthData } from "./mcp-oauth-store";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
-  OAuthClientProvider,
   OAuthTokens,
   OAuthClientInformation,
   OAuthClientInformationFull,

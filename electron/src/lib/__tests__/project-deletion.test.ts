@@ -69,7 +69,7 @@ describe("durable project deletion", () => {
   it("does not stop processes or retain a barrier when the initial intent cannot be persisted", async () => {
     const rename = fs.rename.bind(fs);
     const failure = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.project-deletions/")) throw new Error("disk full");
+      if (String(to).includes(`${path.sep}.project-deletions${path.sep}`)) throw new Error("disk full");
       return rename(from, to);
     });
     const stop = vi.fn(async () => {});
@@ -104,7 +104,7 @@ describe("durable project deletion", () => {
   it("keeps a catalog retry entry when committing deleted source data fails", async () => {
     const rename = fs.rename.bind(fs); let writes = 0;
     const failure = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.project-deletions/") && ++writes === 3) throw new Error("commit failed");
+      if (String(to).includes(`${path.sep}.project-deletions${path.sep}`) && ++writes === 3) throw new Error("commit failed");
       return rename(from, to);
     });
     await expect(repository.removeProject("project", async () => {})).rejects.toMatchObject({ code: "DELETE_INCOMPLETE" });

@@ -1,16 +1,59 @@
 import path from "path";
 import fs from "fs";
+import { EventEmitter } from "node:events";
 import { app } from "electron";
 import { getAppSetting } from "./app-settings";
 import { log } from "./logger";
 import { reportError } from "./error-utils";
+import { spawnExecutable } from "./command-launch";
+import { stopProcessAndWait } from "@shared/lib/process-stop";
 
 // Import the SDK's own types — Query is the return type of sdk.query()
-import type { Query, query as sdkQueryFn } from "@anthropic-ai/claude-agent-sdk";
+import type { Query, Options, query as sdkQueryFn } from "@anthropic-ai/claude-agent-sdk";
 
 type SDKQueryFn = typeof sdkQueryFn;
 
 let _sdkQuery: SDKQueryFn | null = null;
+
+/** Use the same native/shim handling for SDK sessions as for the other engines. */
+function createSdkSpawner(stderr: Options["stderr"]): NonNullable<Options["spawnClaudeCodeProcess"]> {
+  return (options) => {
+    // SDK invokes `node cli.js` for its bundled script. Resolve the script directly
+    // so packaged Electron can provide Node when it is absent from the user's PATH.
+    const nodeRuntime = /^(?:node|node\.exe)$/i.test(path.basename(options.command)) || options.command === process.execPath;
+    const script = nodeRuntime && /\.(?:cjs|mjs|js)$/i.test(options.args[0] ?? "");
+    const child = spawnExecutable(script ? options.args[0] : options.command, script ? options.args.slice(1) : options.args, {
+      cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"],
+    });
+    if (!child.stdin || !child.stdout) throw new Error("Claude process has no stdio streams");
+    child.stderr?.on("data", (data: Buffer) => stderr?.(data.toString()));
+    const events = new EventEmitter();
+    let stopping: Promise<void> | undefined;
+    let stopFinished = false;
+    child.on("error", (error) => events.emit("error", error));
+    child.on("exit", (code, signal) => {
+      // The SDK must not observe a completed stop while taskkill is still
+      // terminating descendants of its Windows agent process.
+      if (stopping) void stopping.then(() => events.emit("exit", code, signal), () => {});
+      else events.emit("exit", code, signal);
+    });
+    return {
+      stdin: child.stdin, stdout: child.stdout,
+      get killed() { return !!stopping || child.killed; },
+      get exitCode() { return stopping && !stopFinished ? null : child.exitCode; },
+      kill: (signal) => {
+        if (process.platform !== "win32") return child.kill(signal);
+        if (!child.pid) return false;
+        if (!stopping) {
+          stopping = stopProcessAndWait(child).then(() => { stopFinished = true; });
+          void stopping.catch((error) => { events.emit("error", error); });
+        }
+        return true;
+      },
+      on: events.on.bind(events), once: events.once.bind(events), off: events.off.bind(events),
+    };
+  };
+}
 
 export type { Query as QueryHandle };
 
@@ -18,7 +61,13 @@ export async function getSDK(): Promise<SDKQueryFn> {
   if (!_sdkQuery) {
     try {
       const sdk = await import("@anthropic-ai/claude-agent-sdk");
-      _sdkQuery = sdk.query;
+      _sdkQuery = (input) => sdk.query({
+        ...input,
+        options: {
+          ...input.options,
+          spawnClaudeCodeProcess: input.options?.spawnClaudeCodeProcess ?? createSdkSpawner(input.options?.stderr),
+        },
+      });
     } catch (err) {
       const msg = reportError("SDK_IMPORT_ERR", err);
       // Most common cause: Claude Code CLI is not installed

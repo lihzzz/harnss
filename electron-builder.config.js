@@ -1,16 +1,27 @@
 const path = require("path");
 const fs = require("fs");
 const { createHash } = require("crypto");
+const { finished } = require("node:stream/promises");
+const { rebuildNativeModules } = require("./scripts/rebuild-native.cjs");
+const { checkNativeDependencies } = require("./scripts/check-native-dependencies.cjs");
 
-// --- afterPack: strip bloat from the asar archive ---
-// electron-builder v26 has a bug where the `files` config (negation-only,
-// positive whitelist, AND FileSet with filter) is only applied to
-// nodeModuleFilePatterns (node_modules filtering), NOT to the app directory
-// walker (firstOrDefaultFilePatterns). Even the built-in default exclusions
-// (e.g. !**/{.git,...}) don't work — .git ends up in the asar.
-//
-// Workaround: afterPack runs after the asar is packed. We extract it, keep
-// ONLY what the app needs at runtime (whitelist), and repack.
+// Keep includes and exclusions in ONE matcher per platform. Builder 26
+// normalizes global `files` into FileSets but leaves platform strings separate;
+// a negative-only platform matcher then includes the whole project root.
+// Mutable logs/test outputs must never enter the original ASAR stream.
+const APP_FILES = [
+  "package.json",
+  "dist/**/*",
+  "electron/dist/**/*",
+  "!**/{test,tests,__tests__,__mocks__,spec,specs}/**",
+  "!**/*.d.ts",
+  "!**/*.d.cts",
+  "!**/*.d.mts",
+  "!**/*.map",
+];
+
+// Preserve native unpacking and verify archive bytes before repacking. The
+// allowlist remains a final guard; platform files rules exclude source inputs.
 const KEEP_ENTRIES = new Set([
   "package.json",
   "index.html",
@@ -33,8 +44,9 @@ async function afterPackHook(context) {
   // Fail before repacking if source files changed while the builder streamed them.
   // Otherwise extraction would preserve damaged bytes and compute fresh hashes for them.
   for (const file of ["package.json", "electron/dist/main.js", "electron/dist/history-worker.js", "dist/index.html"]) {
-    const expected = asar.statFile(asarPath, file).integrity?.hash;
-    const actual = createHash("sha256").update(asar.extractFile(asarPath, file)).digest("hex");
+    const archiveFile = path.normalize(file);
+    const expected = asar.statFile(asarPath, archiveFile).integrity?.hash;
+    const actual = createHash("sha256").update(asar.extractFile(asarPath, archiveFile)).digest("hex");
     if (!expected || actual !== expected) throw new Error(`ASAR integrity mismatch: ${file}. Keep build inputs unchanged while packaging.`);
   }
   const unpackedDirectories = new Set();
@@ -46,7 +58,8 @@ async function afterPackHook(context) {
     const modules = parts.lastIndexOf("node_modules");
     if (modules >= 0 && parts[modules + 1]) {
       const end = modules + (parts[modules + 1].startsWith("@") ? 3 : 2);
-      unpackedDirectories.add(parts.slice(0, end).join(path.sep));
+      // ASAR lookups use native separators, while minimatch patterns use '/'.
+      unpackedDirectories.add(parts.slice(0, end).join("/"));
     } else unpackedFiles.add(path.basename(relative));
   }
   const tmpDir = path.join(resourcesDir, "_asar_tmp");
@@ -75,10 +88,12 @@ async function afterPackHook(context) {
   console.log("  \u2022 afterPack: repacking asar...");
   fs.rmSync(asarPath, { force: true });
   // Preserve native runtime locations (including ONNX) when rebuilding the archive.
-  await asar.createPackageWithOptions(tmpDir, asarPath, {
+  const directories = [...unpackedDirectories];
+  const stream = await asar.createPackageWithOptions(tmpDir, asarPath, {
     unpack: `{${[...unpackedFiles].join(",")}}`,
-    ...(unpackedDirectories.size ? { unpackDir: `{${[...unpackedDirectories].join(",")}}` } : {}),
+    ...(directories.length ? { unpackDir: directories.length === 1 ? directories[0] : `{${directories.join(",")}}` } : {}),
   });
+  await finished(stream);
   asar.uncache(asarPath);
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
@@ -98,18 +113,6 @@ module.exports = {
     buildResources: "build",
   },
 
-  // --- Files to include in the app ---
-  // NOTE: Due to electron-builder v26 bug, these patterns only affect
-  // nodeModuleFilePatterns (node_modules filtering). App directory exclusions
-  // are handled by the afterPack hook above which strips bloat from the asar.
-  files: [
-    "!**/{test,tests,__tests__,__mocks__,spec,specs}/**",
-    "!**/*.d.ts",
-    "!**/*.d.cts",
-    "!**/*.d.mts",
-    "!**/*.map",
-  ],
-
   // --- ASAR packing ---
   asar: true,
   extraResources: [{ from: "build/icon.png", to: "harnss-tray.png" }],
@@ -124,18 +127,46 @@ module.exports = {
     "node_modules/@trycua/cua-driver/**",
     "node_modules/@trycua/cua-driver-*/**",
     "node_modules/@ubjs/**",
+    "node_modules/@img/**",
     "electron/dist/computer-use-mcp.js",
   ],
 
-  npmRebuild: true,
+  // Reuse installation's platform-aware rebuild policy during packaging.
+  // beforeBuild returning false would also disable normal dependency collection.
+  npmRebuild: false,
+  beforePack: async (context) => {
+    await rebuildNativeModules({
+      buildPath: context.packager.info.appDir,
+      electronVersion: context.packager.info.framework.version,
+      platform: context.packager.platform.nodeName,
+      arch: require("electron-builder").Arch[context.arch],
+      buildFromSource: context.packager.config.buildDependenciesFromSource === true,
+    });
+    checkNativeDependencies({
+      buildPath: context.packager.info.appDir,
+      platform: context.packager.platform.nodeName,
+      arch: require("electron-builder").Arch[context.arch],
+    });
+  },
   nodeGypRebuild: false,
   includePdb: false,
 
-  afterPack: afterPackHook,
+  afterPack: async (context) => {
+    await afterPackHook(context);
+    const resources = ["darwin", "mas"].includes(context.electronPlatformName)
+      ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents", "Resources")
+      : path.join(context.appOutDir, "resources");
+    checkNativeDependencies({
+      archive: path.join(resources, "app.asar"),
+      platform: context.packager.platform.nodeName,
+      arch: require("electron-builder").Arch[context.arch],
+    });
+  },
 
   // --- macOS ---
   mac: {
     target: ["dmg", "zip"],
+    files: [...APP_FILES],
     category: "public.app-category.developer-tools",
     icon: "build/icon.icns",
     darkModeSupport: true,
@@ -162,6 +193,7 @@ module.exports = {
     target: [{ target: "nsis", arch: ["x64", "arm64"] }],
     icon: "build/icon.ico",
     files: [
+      ...APP_FILES,
       "!node_modules/electron-liquid-glass/**",
       "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-darwin/**",
       "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-darwin/**",
@@ -190,6 +222,7 @@ module.exports = {
     category: "Development",
     icon: "build/icon.png",
     files: [
+      ...APP_FILES,
       "!node_modules/electron-liquid-glass/**",
       "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-darwin/**",
       "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-darwin/**",
@@ -204,5 +237,4 @@ module.exports = {
     depends: ["libnotify4", "libsecret-1-0"],
   },
 
-  afterSign: "scripts/notarize.js",
 };

@@ -89,7 +89,7 @@ describe("logical session coordination", () => {
     await repository.save({ ...session("healthy"), codexThreadId: "healthy-thread" });
     const unlink = fs.unlink.bind(fs);
     const failure = vi.spyOn(fs, "unlink").mockImplementation(async (file) => {
-      if (String(file).endsWith("/one.jsonl")) throw Object.assign(new Error("file locked"), { code: "EACCES" });
+      if (String(file).endsWith(`${path.sep}one.jsonl`)) throw Object.assign(new Error("file locked"), { code: "EACCES" });
       return unlink(file);
     });
     await expect(repository.remove("project", "one", async () => {})).rejects.toMatchObject({ code: "DELETE_INCOMPLETE" });
@@ -111,7 +111,7 @@ describe("logical session coordination", () => {
     const rename = fs.rename.bind(fs);
     let deletionWrites = 0;
     vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.deletions/") && ++deletionWrites === 3) throw new Error("disk full");
+      if (String(to).includes(`${path.sep}.deletions${path.sep}`) && ++deletionWrites === 3) throw new Error("disk full");
       return rename(from, to);
     });
     await expect(repository.remove("project", "one", async () => {})).rejects.toMatchObject({ code: "DELETE_INCOMPLETE" });
@@ -143,7 +143,7 @@ describe("logical session coordination", () => {
     await repository.save(session());
     const rename = fs.rename.bind(fs);
     const failure = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-      if (String(to).includes("/.deletions/")) throw new Error("intent write denied");
+      if (String(to).includes(`${path.sep}.deletions${path.sep}`)) throw new Error("intent write denied");
       return rename(from, to);
     });
     const stop = vi.fn();

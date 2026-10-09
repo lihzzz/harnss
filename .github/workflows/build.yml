@@ -2,8 +2,10 @@ name: Build & Release
 
 on:
   push:
+    branches: [main, hy_dev]
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,6 +13,7 @@ permissions:
 
 jobs:
   prepare-release:
+    needs: test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +33,11 @@ jobs:
           fi
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-26]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,17 +52,29 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests
         run: pnpm test
+
+      - name: Native dependency and ASAR regression tests
+        run: pnpm test:native
+
+      - name: Check renderer and Electron types
+        run: pnpm typecheck
+
+      - name: Check installed native runtime for this runner
+        run: pnpm check:native
+
+      - name: Build app
+        run: pnpm build
 
   # macOS: build both arm64 + x64 in one job so electron-builder writes a single
   # latest-mac.yml containing both architectures. Separate jobs race and the last
   # one to finish overwrites the other's YAML → wrong arch served to half the users.
   build-mac:
     needs: [prepare-release, test]
-    if: ${{ always() && needs.test.result == 'success' && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && needs.test.result == 'success' && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
     runs-on: macos-26
     steps:
       - name: Checkout
@@ -71,7 +90,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build app
         run: pnpm build
@@ -79,7 +98,6 @@ jobs:
       - name: Package (mac arm64 + x64)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: >
           pnpm exec electron-builder
           --mac
@@ -103,7 +121,7 @@ jobs:
   # writes a single latest.yml with both installers listed.
   build-win:
     needs: [prepare-release, test]
-    if: ${{ always() && needs.test.result == 'success' && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && needs.test.result == 'success' && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -118,18 +136,8 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Strip mac-only native dependency from Windows CI manifest
-        shell: bash
-        run: |
-          # electron-builder rebuilds native prod deps during packaging.
-          # On Windows, remove the macOS-only electron-liquid-glass package so
-          # @electron/rebuild never tries to compile Objective-C++ sources.
-          # Also drop the root postinstall because this CI job does not need
-          # the repo's dev-focused rebuild hook.
-          node -e "const fs=require('fs'); const pkg=require('./package.json'); delete pkg.scripts.postinstall; delete pkg.dependencies['electron-liquid-glass']; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
-
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build app
         run: pnpm build
@@ -155,13 +163,21 @@ jobs:
             !release/**/*.blockmap
           retention-days: 30
 
-  # Linux: can't use --x64 --arm64 in one invocation (AppImage builder tries to
-  # access cross-arch vendor binaries that don't exist in the other arch's staging
-  # dir). Build sequentially, then merge latest-linux.yml before publishing.
+  # Build Linux on matching CPUs so node-pty is not accidentally compiled for
+  # the host CPU. Builder uses latest-linux.yml / latest-linux-arm64.yml;
+  # these architecture-specific update manifests must remain separate.
   build-linux:
     needs: [prepare-release, test]
-    if: ${{ always() && needs.test.result == 'success' && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
-    runs-on: ubuntu-22.04
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && needs.test.result == 'success' && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: ubuntu-22.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -180,73 +196,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential python3 libsecret-1-dev libnotify-dev
 
-      - name: Strip mac-only native dependency from Linux CI manifest
-        shell: bash
-        run: |
-          # electron-builder rebuilds native prod deps during packaging.
-          # On Linux, remove the macOS-only electron-liquid-glass package so
-          # @electron/rebuild never tries to compile Objective-C++ sources.
-          # Also drop the root postinstall because this CI job does not need
-          # the repo's dev-focused rebuild hook.
-          node -e "const fs=require('fs'); const pkg=require('./package.json'); delete pkg.scripts.postinstall; delete pkg.dependencies['electron-liquid-glass']; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
-
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build app
         run: pnpm build
 
-      - name: Package (linux x64)
-        run: >
-          pnpm exec electron-builder
-          --linux --x64
-          --config electron-builder.config.js
-          --publish never
-
-      - name: Save x64 update manifest
-        run: cp release/*/latest-linux.yml latest-linux-x64.yml 2>/dev/null || true
-
-      - name: Package (linux arm64)
-        run: >
-          pnpm exec electron-builder
-          --linux --arm64
-          --config electron-builder.config.js
-          --publish never
-
-      - name: Merge update manifests
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          DIR="release/${VERSION}"
-          # arm64 build overwrites latest-linux.yml — merge x64 entries back in
-          if [ -f "latest-linux-x64.yml" ] && [ -f "${DIR}/latest-linux.yml" ]; then
-            yq eval-all '
-              select(fileIndex == 0).files += select(fileIndex == 1).files
-              | select(fileIndex == 0)
-            ' latest-linux-x64.yml "${DIR}/latest-linux.yml" > "${DIR}/latest-linux-merged.yml"
-            mv "${DIR}/latest-linux-merged.yml" "${DIR}/latest-linux.yml"
-          elif [ -f "latest-linux-x64.yml" ]; then
-            cp latest-linux-x64.yml "${DIR}/latest-linux.yml"
-          fi
-
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Package (linux ${{ matrix.arch }})
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="${GITHUB_REF_NAME}"
-          DIR="release/${VERSION}"
-          for file in "${DIR}"/*.AppImage "${DIR}"/*.deb "${DIR}"/latest-linux.yml; do
-            if [ -f "$file" ]; then
-              echo "Uploading: $(basename "$file")"
-              gh release upload "$TAG" "$file" --clobber || true
-            fi
-          done
+        run: >
+          pnpm exec electron-builder
+          --linux --${{ matrix.arch }}
+          --config electron-builder.config.js
+          --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Harnss-linux
+          name: Harnss-linux-${{ matrix.arch }}
           path: |
             release/**/*.AppImage
             release/**/*.deb

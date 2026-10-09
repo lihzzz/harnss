@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getSessionRecoveryVersion, isSessionFrozen, isSessionRecovering, subscribeSessionRecoveries } from "@/lib/session/batch-runtime";
 import type { ImageAttachment, UIMessage } from "../../types";
-import type { CollaborationMode } from "../../types/codex-protocol/CollaborationMode";
+import type { CollaborationMode } from "@shared/types/codex-protocol/CollaborationMode";
 import { imageAttachmentsToCodexInputs } from "../../lib/engine/codex-adapter";
 import { suppressNextSessionCompletion } from "../../lib/notification-utils";
 import { buildSdkContent } from "../../lib/engine/protocol";

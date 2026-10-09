@@ -9,18 +9,18 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import type { TodoItem, AppPermissionBehavior, ModelInfo, ImageAttachment, SessionInfo, BackgroundSessionSnapshot, SlashCommand, CodexSessionEvent, CodexServerRequest, CodexExitEvent, CodexTokenUsageNotification, CodexThreadGoal } from "@/types";
-import type { CollaborationMode } from "@/types/codex-protocol/CollaborationMode";
-import type { ItemStartedNotification } from "@/types/codex-protocol/v2/ItemStartedNotification";
-import type { ItemCompletedNotification } from "@/types/codex-protocol/v2/ItemCompletedNotification";
-import type { AgentMessageDeltaNotification } from "@/types/codex-protocol/v2/AgentMessageDeltaNotification";
-import type { ReasoningTextDeltaNotification } from "@/types/codex-protocol/v2/ReasoningTextDeltaNotification";
-import type { ReasoningSummaryTextDeltaNotification } from "@/types/codex-protocol/v2/ReasoningSummaryTextDeltaNotification";
-import type { CommandExecutionOutputDeltaNotification } from "@/types/codex-protocol/v2/CommandExecutionOutputDeltaNotification";
-import type { TurnCompletedNotification } from "@/types/codex-protocol/v2/TurnCompletedNotification";
-import type { TurnPlanUpdatedNotification } from "@/types/codex-protocol/v2/TurnPlanUpdatedNotification";
-import type { PlanDeltaNotification } from "@/types/codex-protocol/v2/PlanDeltaNotification";
-import type { AccountLoginCompletedNotification } from "@/types/codex-protocol/v2/AccountLoginCompletedNotification";
-import type { AccountUpdatedNotification } from "@/types/codex-protocol/v2/AccountUpdatedNotification";
+import type { CollaborationMode } from "@shared/types/codex-protocol/CollaborationMode";
+import type { ItemStartedNotification } from "@shared/types/codex-protocol/v2/ItemStartedNotification";
+import type { ItemCompletedNotification } from "@shared/types/codex-protocol/v2/ItemCompletedNotification";
+import type { AgentMessageDeltaNotification } from "@shared/types/codex-protocol/v2/AgentMessageDeltaNotification";
+import type { ReasoningTextDeltaNotification } from "@shared/types/codex-protocol/v2/ReasoningTextDeltaNotification";
+import type { ReasoningSummaryTextDeltaNotification } from "@shared/types/codex-protocol/v2/ReasoningSummaryTextDeltaNotification";
+import type { CommandExecutionOutputDeltaNotification } from "@shared/types/codex-protocol/v2/CommandExecutionOutputDeltaNotification";
+import type { TurnCompletedNotification } from "@shared/types/codex-protocol/v2/TurnCompletedNotification";
+import type { TurnPlanUpdatedNotification } from "@shared/types/codex-protocol/v2/TurnPlanUpdatedNotification";
+import type { PlanDeltaNotification } from "@shared/types/codex-protocol/v2/PlanDeltaNotification";
+import type { AccountLoginCompletedNotification } from "@shared/types/codex-protocol/v2/AccountLoginCompletedNotification";
+import type { AccountUpdatedNotification } from "@shared/types/codex-protocol/v2/AccountUpdatedNotification";
 import {
   CodexStreamingBuffer,
   codexItemToToolName,

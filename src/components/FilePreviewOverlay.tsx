@@ -7,6 +7,7 @@ import { useResolvedTheme } from "@/hooks/useTheme";
 import { getLanguageFromPath } from "@/lib/languages";
 import { getMonacoLanguageFromPath, disableMonacoDiagnostics } from "@/lib/monaco";
 import { captureException } from "@/lib/analytics/analytics";
+import { getFileDirectory, getFileName } from "@shared/lib/file-paths";
 
 const MonacoEditor = lazy(() =>
   import("@monaco-editor/react").then((mod) => ({ default: mod.default })),
@@ -140,8 +141,8 @@ const OverlayContent = memo(function OverlayContent({
   }, [sourceRect]);
 
   // File metadata
-  const fileName = filePath.split("/").pop() ?? filePath;
-  const dirPath = filePath.split("/").slice(0, -1).join("/");
+  const fileName = getFileName(filePath);
+  const dirPath = getFileDirectory(filePath);
   const language = getLanguageFromPath(filePath);
   const monacoLang = getMonacoLanguageFromPath(filePath);
   const lineCount = content ? content.split("\n").length : 0;

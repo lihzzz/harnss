@@ -2,8 +2,8 @@ import { ipcMain } from "electron";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import os from "os";
 import { reportError } from "../lib/error-utils";
+import { getClaudeProjectDirectory } from "../lib/claude-project-path";
 
 interface SessionPreview {
   firstUserMessage: string;
@@ -24,11 +24,6 @@ interface UIMessage {
   toolResult?: unknown;
   subagentSteps?: unknown[];
   subagentStatus?: string;
-}
-
-function getCCProjectDir(projectPath: string): string {
-  const hash = projectPath.replace(/\//g, "-");
-  return path.join(os.homedir(), ".claude", "projects", hash);
 }
 
 function extractSessionPreview(filePath: string): SessionPreview | null {
@@ -212,7 +207,7 @@ function parseJsonlToUIMessages(filePath: string): UIMessage[] {
 export function register(): void {
   ipcMain.handle("cc-sessions:list", async (_event, projectPath: string) => {
     try {
-      const projectDir = getCCProjectDir(projectPath);
+      const projectDir = getClaudeProjectDirectory(projectPath);
       if (!fs.existsSync(projectDir)) return [];
 
       const jsonlFiles = fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
@@ -250,7 +245,7 @@ export function register(): void {
 
   ipcMain.handle("cc-sessions:import", async (_event, projectPath: string, ccSessionId: string) => {
     try {
-      const projectDir = getCCProjectDir(projectPath);
+      const projectDir = getClaudeProjectDirectory(projectPath);
       const filePath = path.join(projectDir, `${ccSessionId}.jsonl`);
 
       if (!fs.existsSync(filePath)) {

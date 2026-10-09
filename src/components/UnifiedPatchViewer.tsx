@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { ChevronsUpDown } from "lucide-react";
 import { OpenInEditorButton } from "./OpenInEditorButton";
+import { getFileName } from "@shared/lib/file-paths";
 
 interface UnifiedPatchViewerProps {
   diffText: string;
@@ -30,7 +31,7 @@ export const UnifiedPatchViewer = memo(function UnifiedPatchViewer({
   filePath,
 }: UnifiedPatchViewerProps) {
   const lines = useMemo(() => diffText.replace(/\r\n/g, "\n").split("\n"), [diffText]);
-  const fileName = filePath ? filePath.split("/").pop() : null;
+  const fileName = filePath ? getFileName(filePath) : null;
   const [expanded, setExpanded] = useState(false);
 
   const totalLines = lines.length;

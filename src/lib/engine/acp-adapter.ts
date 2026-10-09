@@ -1,5 +1,6 @@
 export { SimpleStreamingBuffer as ACPStreamingBuffer } from "./streaming-buffer";
 import { extractToolResultImages } from "./protocol";
+import { resolvePortableFilePath } from "@shared/lib/file-paths";
 
 /**
  * Normalize ACP tool input into Claude SDK-compatible shape so ToolCall.tsx
@@ -61,7 +62,7 @@ export function normalizeToolInput(
     case "read": {
       const filePath = locations?.[0]?.path
         ?? (typeof raw.filePath === "string" ? raw.filePath : null)
-        ?? (firstParsed?.path ? resolveRelativePath(firstParsed.path, raw.cwd as string | undefined) : null);
+        ?? (firstParsed?.path ? resolvePortableFilePath(firstParsed.path, raw.cwd as string | undefined) : null);
       if (filePath) {
         const result: Record<string, unknown> = { file_path: filePath };
         // Preserve line range info for display (ACP agents send these)
@@ -98,7 +99,7 @@ export function normalizeToolInput(
       // file_path from locations; old_string/new_string come from content[] via normalizeToolResult
       const filePath = locations?.[0]?.path
         ?? (typeof raw.filePath === "string" ? raw.filePath : null)
-        ?? (firstParsed?.path ? resolveRelativePath(firstParsed.path, raw.cwd as string | undefined) : null);
+        ?? (firstParsed?.path ? resolvePortableFilePath(firstParsed.path, raw.cwd as string | undefined) : null);
       const result: Record<string, unknown> = {};
       if (filePath) result.file_path = filePath;
       if (typeof raw.old_string === "string") result.old_string = raw.old_string;
@@ -168,12 +169,6 @@ export function mergeToolInput(
     ...existingInput,
     ...normalized,
   };
-}
-
-/** Resolve a relative path against cwd. Returns as-is if already absolute or cwd missing. */
-function resolveRelativePath(path: string, cwd?: string | null): string {
-  if (path.startsWith("/") || !cwd) return path;
-  return `${cwd.replace(/\/$/, "")}/${path}`;
 }
 
 function parseTodosFromUnknown(value: unknown): Array<{ content: string; status: "pending" | "completed" }> | null {

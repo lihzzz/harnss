@@ -9,6 +9,7 @@ import { AsyncChannel } from "../lib/async-channel";
 import * as claude from "./claude-sessions";
 import * as codex from "./codex-sessions";
 import * as acp from "./acp-sessions";
+import * as processStop from "@shared/lib/process-stop";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 const state = vi.hoisted(() => ({
@@ -55,6 +56,12 @@ vi.mock("../lib/memory/service", () => ({
   observeClaudeEvent: vi.fn(), observeCodexNotification: vi.fn(), observeAcpUpdate: vi.fn(), completeMemoryTurn: vi.fn(),
 }));
 vi.mock("../lib/usage", () => ({ beginUsageTurn: vi.fn(), endUsageTurn: vi.fn(), stopUsageSession: vi.fn() }));
+// Command launch has separate real native/shim/argument tests. These fixtures
+// exercise protocol lifecycle races without invoking a real installed agent.
+vi.mock("../lib/command-launch", async () => {
+  const childProcess = await import("child_process");
+  return { spawnExecutable: childProcess.spawn };
+});
 
 // Real stdio and process exit, with a local fixture speaking only the protocol
 // methods needed here. No installed agent, credentials, model or user data.
@@ -151,6 +158,20 @@ afterEach(async () => {
 });
 
 describe("project deletion includes unsaved drafts", () => {
+  it.each(["codex", "acp"] as const)("awaits every %s runtime during application shutdown", async (engine) => {
+    await save(engine);
+    await resume(engine);
+    await ({ codex, acp })[engine].stopAll();
+    expect(state.children[0].exitCode !== null || state.children[0].signalCode !== null).toBe(true);
+  });
+
+  it("awaits Claude runtime cleanup during application shutdown", async () => {
+    await save("claude"); const fixture = sdkFixture(); state.getSDK.mockResolvedValue(fixture.query);
+    await invoke("claude:start", { resume: "old", source });
+    await claude.stopAll();
+    expect(claude.sessions.size).toBe(0);
+  });
+
   it("cancels Claude while loading the SDK before any draft snapshot exists", async () => {
     const sdk = deferred<ReturnType<typeof sdkFixture>["query"]>(); const fixture = sdkFixture();
     state.getSDK.mockReturnValue(sdk.promise);
@@ -176,7 +197,7 @@ describe("project deletion includes unsaved drafts", () => {
     await getSessionRepository().removeProject("project", async () => {});
     const result = await starting;
     expect(result.cancelled === true || typeof result.error === "string").toBe(true);
-    expect(state.children[0].signalCode).not.toBeNull();
+    expect(state.children[0].exitCode !== null || state.children[0].signalCode !== null).toBe(true);
     expect(state.requests).not.toContain(engine === "codex" ? "thread/start" : "session/new");
   });
 
@@ -189,7 +210,7 @@ describe("project deletion includes unsaved drafts", () => {
     await getSessionRepository().removeProject("project", async () => {}); memory.resolve({ text: "Input" });
     expect(await sending).toHaveProperty("error");
     expect(state.requests).not.toContain(engine === "codex" ? "turn/start" : "session/prompt");
-    expect(state.children[0].signalCode).not.toBeNull();
+    expect(state.children[0].exitCode !== null || state.children[0].signalCode !== null).toBe(true);
   });
 });
 
@@ -223,7 +244,7 @@ describe("deletion while an engine is being restored", () => {
     const restoring = resume(engine);
     await vi.waitFor(() => expect(state.requests).toContain("initialize"));
     await remove();
-    expect(state.children[0].signalCode).not.toBeNull();
+    expect(state.children[0].exitCode !== null || state.children[0].signalCode !== null).toBe(true);
     expect(await restoring).toHaveProperty("error");
     expect(state.requests).not.toContain(engine === "codex" ? "thread/resume" : "session/load");
     expect(await getSessionRepository().load("project", "old")).toBeNull();
@@ -235,7 +256,7 @@ describe("deletion while an engine is being restored", () => {
     expect(result.error).toBeUndefined();
     expect(result.sessionId).toEqual(expect.any(String));
     await remove();
-    expect(state.children[0].signalCode).not.toBeNull();
+    expect(state.children[0].exitCode !== null || state.children[0].signalCode !== null).toBe(true);
     expect(await getSessionRepository().list("project")).toEqual([]);
   });
 
@@ -257,7 +278,7 @@ describe("deletion while an engine is being restored", () => {
     await remove();
     const result = await starting;
     expect(result.cancelled === true || typeof result.error === "string").toBe(true);
-    expect(state.children[0].signalCode).not.toBeNull();
+    expect(state.children[0].exitCode !== null || state.children[0].signalCode !== null).toBe(true);
     expect(acp.acpSessions.size).toBe(0);
   });
 
@@ -276,7 +297,7 @@ describe("deletion while an engine is being restored", () => {
   it.each(["codex", "acp"] as const)("keeps the source after a %s stop failure without reactivating the cancelled runtime", async (engine) => {
     await save(engine);
     const result = await resume(engine);
-    const kill = vi.spyOn(state.children[0], "kill").mockReturnValue(false);
+    const kill = vi.spyOn(processStop, "stopProcessAndWait").mockRejectedValue(new Error("fixture stop failed"));
     try {
       await expect(remove()).rejects.toMatchObject({ code: "STOP_FAILED" });
       expect(await getSessionRepository().load("project", "old")).not.toBeNull();

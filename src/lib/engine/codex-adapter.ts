@@ -6,10 +6,10 @@
  */
 
 import type { TodoItem, ImageAttachment, ToolResultImage, ToolUseResult, CodexThreadItem } from "@/types";
-import type { FileUpdateChange } from "@/types/codex-protocol/v2/FileUpdateChange";
-import type { PatchChangeKind } from "@/types/codex-protocol/v2/PatchChangeKind";
-import type { TurnPlanStep } from "@/types/codex-protocol/v2/TurnPlanStep";
-import type { WebSearchAction } from "@/types/codex-protocol/v2/WebSearchAction";
+import type { FileUpdateChange } from "@shared/types/codex-protocol/v2/FileUpdateChange";
+import type { PatchChangeKind } from "@shared/types/codex-protocol/v2/PatchChangeKind";
+import type { TurnPlanStep } from "@shared/types/codex-protocol/v2/TurnPlanStep";
+import type { WebSearchAction } from "@shared/types/codex-protocol/v2/WebSearchAction";
 import { parseUnifiedDiff } from "@/lib/diff/unified-diff";
 import { isRecord } from "@/lib/utils";
 
@@ -103,7 +103,7 @@ export function codexItemToToolInput(item: CodexThreadItem): Record<string, unkn
     case "mcpToolCall":
       return (item.arguments ?? {}) as Record<string, unknown>;
     case "webSearch":
-      return codexWebSearchToToolPayload(item);
+      return { ...codexWebSearchToToolPayload(item) };
     case "imageView":
       return { file_path: item.path ?? "" };
     default:
@@ -201,7 +201,7 @@ export function codexItemToToolResult(item: CodexThreadItem): ToolUseResult | un
         type: "web_search",
         status: "completed",
         content: describeWebSearchAction(structuredContent),
-        structuredContent,
+        structuredContent: { ...structuredContent },
       };
     }
     default:

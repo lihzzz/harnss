@@ -1,9 +1,10 @@
 import { execSync } from "child_process";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, session, shell, systemPreferences, Tray, webContents } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray, webContents } from "electron";
 import path from "path";
 import http from "http";
 import contextMenu from "electron-context-menu";
 import { getBootstrapMinWindowWidth } from "../../src/lib/layout/constants";
+import { fitWindowToWorkArea } from "./lib/window-bounds";
 
 // Packaged .app bundles launched from Finder get a minimal PATH (/usr/bin:/bin).
 // Inherit the user's shell PATH so child processes (SDK's `node`, git, etc.) resolve.
@@ -73,6 +74,29 @@ if (glassEnabled) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let preferredMinimumWidth = getBootstrapMinWindowWidth(process.platform);
+let fittingWindow = false;
+
+function fitMainWindowToDisplay(): void {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || fittingWindow) return;
+  const bounds = window.getBounds();
+  const workArea = screen.getDisplayMatching(bounds).workArea;
+  const fitted = fitWindowToWorkArea(bounds, workArea, { width: preferredMinimumWidth, height: 600 });
+  fittingWindow = true;
+  try {
+    const [minWidth, minHeight] = window.getMinimumSize();
+    if (minWidth !== fitted.minimumWidth || minHeight !== fitted.minimumHeight) {
+      window.setMinimumSize(fitted.minimumWidth, fitted.minimumHeight);
+    }
+    // Preserve native maximize/fullscreen behavior, while keeping restored windows reachable.
+    if (!window.isMaximized() && !window.isFullScreen()
+      && (bounds.x !== fitted.bounds.x || bounds.y !== fitted.bounds.y
+        || bounds.width !== fitted.bounds.width || bounds.height !== fitted.bounds.height)) {
+      window.setBounds(fitted.bounds);
+    }
+  } finally { fittingWindow = false; }
+}
 let quitting = false;
 let tray: Tray | null = null;
 const quickCapture = new QuickCapture((request) => safeSend(getMainWindow, "quick-capture:requested", request));
@@ -188,14 +212,20 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
 }
 
 function createWindow(): void {
+  const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  preferredMinimumWidth = getBootstrapMinWindowWidth(process.platform);
+  const initial = fitWindowToWorkArea({
+    x: workArea.x + Math.max(0, Math.round((workArea.width - 1200) / 2)),
+    y: workArea.y + Math.max(0, Math.round((workArea.height - 800) / 2)),
+    width: 1200, height: 800,
+  }, workArea, { width: preferredMinimumWidth, height: 600 });
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     show: false,
-    width: 1200,
-    height: 800,
+    ...initial.bounds,
     // Matches the renderer's stricter island-layout minimum before first IPC sync,
     // including the extra Windows frame buffer.
-    minWidth: getBootstrapMinWindowWidth(process.platform),
-    minHeight: 600,
+    minWidth: initial.minimumWidth,
+    minHeight: initial.minimumHeight,
     // Packaged builds get the icon from the .app bundle / electron-builder config
     ...(!app.isPackaged && { icon: path.join(__dirname, "../../build/icon.png") }),
     webPreferences: {
@@ -236,6 +266,9 @@ function createWindow(): void {
   mainWindow.on("session-end", () => { quitting = true; });
   mainWindow.on("query-session-end", () => { quitting = true; });
   mainWindow.on("closed", () => { mainWindow = null; });
+  mainWindow.on("moved", fitMainWindowToDisplay);
+  mainWindow.on("unmaximize", fitMainWindowToDisplay);
+  mainWindow.on("leave-full-screen", fitMainWindowToDisplay);
   backgroundEffects.refresh();
 
   mainWindow.once("ready-to-show", () => {
@@ -349,14 +382,8 @@ ipcMain.handle("browser:set-color-scheme", async (_event, payload: { targetWebCo
 // panel appeared while at min size), so content never overflows off-screen.
 ipcMain.on("app:set-min-width", (_event, minWidth: number) => {
   if (mainWindow && Number.isFinite(minWidth) && minWidth >= 600) {
-    const clamped = Math.min(Math.round(minWidth), 4000);
-    const [, minH] = mainWindow.getMinimumSize();
-    mainWindow.setMinimumSize(clamped, minH);
-    // Grow the window if it's currently smaller than the new minimum
-    const [currentW, currentH] = mainWindow.getSize();
-    if (currentW < clamped) {
-      mainWindow.setSize(clamped, currentH);
-    }
+    preferredMinimumWidth = Math.min(Math.round(minWidth), 4000);
+    fitMainWindowToDisplay();
   }
 });
 
@@ -537,6 +564,8 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+  screen.on("display-metrics-changed", fitMainWindowToDisplay);
+  screen.on("display-removed", fitMainWindowToDisplay);
 
   // Restore an explicitly enabled memory daemon in the background. If its
   // dependency is unavailable, the memory service remains fail-safe and the
@@ -595,9 +624,9 @@ app.on("will-quit", (event) => {
   globalInputShortcuts.dispose();
   tray?.destroy();
   tray = null;
-  claudeSessionsIpc.stopAll();
-  acpSessionsIpc.stopAll();
-  codexSessionsIpc.stopAll();
+  const engineShutdown = Promise.all([
+    claudeSessionsIpc.stopAll(), acpSessionsIpc.stopAll(), codexSessionsIpc.stopAll(),
+  ]).catch((err) => reportError("ENGINE_SHUTDOWN_ERR", err));
   for (const term of terminals.values()) term.pty.kill();
   terminals.clear();
   globalShortcut.unregisterAll();
@@ -609,6 +638,7 @@ app.on("will-quit", (event) => {
     .then(({ stopMemoryDaemon }) => stopMemoryDaemon())
     .catch((err) => reportError("MEMORY_DAEMON", err, { context: "shutdown" }));
   Promise.all([
+    engineShutdown,
     shutdownPostHog().catch((err) => {
       // Log and continue exit even if analytics shutdown fails
       reportError("POSTHOG", err, { context: "shutdown" });

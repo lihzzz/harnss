@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { Readable, Writable } from "node:stream";
+import { Writable } from "node:stream";
+import { spawnExecutable } from "../command-launch";
+import { stopProcessAndWait } from "@shared/lib/process-stop";
 import { describe, expect, it } from "vitest";
 import * as acp from "@agentclientprotocol/sdk";
 
@@ -19,16 +20,26 @@ describe.skipIf(!runOpenCodeE2E)("OpenCode ACP integration", () => {
       XDG_STATE_HOME: path.join(dataDir, "state"),
       XDG_CACHE_HOME: path.join(dataDir, "cache"),
     };
-    const processHandle = spawn("opencode", ["acp", "--cwd", process.cwd()], {
+    const processHandle = spawnExecutable("opencode", ["acp", "--cwd", process.cwd()], {
       cwd: process.cwd(),
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
     try {
+      const stdout = processHandle.stdout;
+      if (!processHandle.stdin || !stdout) throw new Error("OpenCode process has no stdio streams");
+      const output = new ReadableStream<Uint8Array>({
+        start(controller) {
+          stdout.on("data", (chunk: Buffer) => controller.enqueue(chunk));
+          stdout.on("end", () => controller.close());
+          stdout.on("error", (error) => controller.error(error));
+        },
+        cancel() { stdout.destroy(); },
+      });
       const stream = acp.ndJsonStream(
         Writable.toWeb(processHandle.stdin),
-        Readable.toWeb(processHandle.stdout),
+        output,
       );
       const connection = new acp.ClientSideConnection(() => ({
         sessionUpdate: async () => {},
@@ -53,7 +64,7 @@ describe.skipIf(!runOpenCodeE2E)("OpenCode ACP integration", () => {
       expect(session.configOptions?.some((option) => option.category === "model")).toBe(true);
       expect(session.configOptions?.some((option) => option.category === "mode")).toBe(true);
     } finally {
-      processHandle.kill();
+      await stopProcessAndWait(processHandle);
       await rm(dataDir, { recursive: true, force: true });
     }
   }, 30_000);

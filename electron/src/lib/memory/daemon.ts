@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HindsightServer } from "@vectorize-io/hindsight-all";
+import { createManagedMemoryServer, type MemoryServer } from "./managed-server";
 import type { MemoryDaemonStatus } from "@shared/types/memory";
 import { getAppSettings } from "../app-settings";
 import { log } from "../logger";
@@ -10,10 +10,11 @@ import { reportError } from "../error-utils";
 import { getMemoryLlmKey, hasMemoryLlmKey } from "./secrets";
 import { getDataDir } from "../data-dir";
 
-let server: HindsightServer | null = null;
+let server: MemoryServer | null = null;
 let serverKey = "";
 let effectiveLlm: Pick<MemoryDaemonStatus, "provider" | "model" | "llmBaseUrl"> | null = null;
 let startPromise: Promise<void> | null = null;
+let stopPromise: Promise<void> | null = null;
 let lastError: string | undefined;
 let daemonReady = false;
 let stopRequested = false;
@@ -30,6 +31,7 @@ function uvxCandidates(): string[] {
 }
 
 function addCommandDirectory(command: string): void {
+  if (!/[\\/]/.test(command)) return; // Already found on PATH; do not prepend the current directory.
   const directory = path.dirname(command);
   const pathEntries = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
   if (!pathEntries.includes(directory)) process.env.PATH = [directory, ...pathEntries].join(path.delimiter);
@@ -139,39 +141,45 @@ export function getMemoryBaseUrl(): string {
   return `http://127.0.0.1:${getAppSettings().memory.localPort}`;
 }
 
-export async function startMemoryDaemon(): Promise<void> {
+export function startMemoryDaemon(): Promise<void> {
   // Coalesce concurrent callers before touching an in-flight server. This is
   // important during app startup when settings, a session, and the UI can all
   // request a health check at once.
+  if (stopPromise) return stopPromise.then(() => startMemoryDaemon());
   if (startPromise) return startPromise;
   stopRequested = false;
-  const settings = getAppSettings().memory;
-  if (!settings.enabled) throw new Error("Long-term memory is disabled");
-  const uv = getUvStatus();
-  if (!uv.installed) throw new Error(uv.error ?? "uv is required to start Hindsight");
+  // Publish the promise before the first health check/import can yield.
+  startPromise = Promise.resolve().then(async () => {
+    const settings = getAppSettings().memory;
+    if (!settings.enabled) throw new Error("Long-term memory is disabled");
+    const uv = getUvStatus();
+    if (!uv.installed) throw new Error(uv.error ?? "uv is required to start Hindsight");
 
-  const nextKey = settingsKey();
-  if (server && serverKey === nextKey) {
-    const activeServer = server;
-    if (await activeServer.checkHealth() && !stopRequested && server === activeServer) {
-      daemonReady = true;
-      return;
+    const nextKey = settingsKey();
+    if (server && serverKey === nextKey) {
+      const activeServer = server;
+      if (await activeServer.checkHealth() && !stopRequested && server === activeServer) {
+        daemonReady = true;
+        return;
+      }
     }
-  }
-  if (stopRequested) return;
-  daemonReady = false;
-  if (server) {
-    await server.stop().catch(() => undefined);
-    server = null;
-  }
-  startPromise = (async () => {
+    if (stopRequested) return;
+    daemonReady = false;
+    if (server) {
+      await server.stop();
+      server = null;
+      serverKey = "";
+      effectiveLlm = null;
+    }
+    if (stopRequested) return;
     configureSharedUvEnvironment();
     const hindsight = await import("@vectorize-io/hindsight-all");
+    if (stopRequested) return;
     const llmKey = getMemoryLlmKey();
     const hindsightHome = path.join(getDataDir(), "hindsight");
     const profileEnv = path.join(hindsightHome, ".hindsight", "profiles", "harnss.env");
     removeProfileApiKey(profileEnv);
-    server = new hindsight.HindsightServer({
+    const startingServer = createManagedMemoryServer(hindsight, {
       profile: "harnss",
       embedVersion: "0.10.2",
       host: "127.0.0.1",
@@ -200,28 +208,28 @@ export async function startMemoryDaemon(): Promise<void> {
         error: (message) => log("MEMORY_DAEMON_ERR", message),
       },
     });
+    server = startingServer;
     try {
       if (llmKey) writeProfileApiKey(profileEnv, llmKey);
-      await server.start();
+      await startingServer.start();
+    } catch (error) {
+      // A failed start may already have spawned the daemon. Retain the handle
+      // if cleanup fails so a later stop/retry can still address that profile.
+      try {
+        await startingServer.stop();
+        if (server === startingServer) server = null;
+      } catch (stopError) {
+        throw new AggregateError([error, stopError], `Hindsight startup and cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${stopError instanceof Error ? stopError.message : String(stopError)}`);
+      }
+      throw error;
     } finally {
       removeProfileApiKey(profileEnv);
     }
-    if (stopRequested) {
-      const started = server;
-      server = null;
-      await started.stop().catch(() => undefined);
-      return;
-    }
-    // hindsight-all 0.10 writes all supplied env values to the profile env
-    // file. Remove the LLM key after startup so it remains encrypted at rest
-    // in Harnss, while the already-running daemon keeps its process env.
-    removeProfileApiKey(profileEnv);
     serverKey = nextKey;
     effectiveLlm = { provider: settings.llmProvider, model: settings.llmModel, llmBaseUrl: settings.llmBaseUrl };
-    daemonReady = true;
+    daemonReady = !stopRequested;
     lastError = undefined;
-  })().catch((error) => {
-    server = null;
+  }).catch((error) => {
     daemonReady = false;
     lastError = reportError("MEMORY_DAEMON_START", error);
     throw error;
@@ -231,16 +239,24 @@ export async function startMemoryDaemon(): Promise<void> {
   return startPromise;
 }
 
-export async function stopMemoryDaemon(): Promise<void> {
+export function stopMemoryDaemon(): Promise<void> {
+  if (stopPromise) return stopPromise;
   stopRequested = true;
-  const pending = startPromise;
-  if (pending) await pending.catch(() => undefined);
-  const current = server;
-  server = null;
-  effectiveLlm = null;
   daemonReady = false;
-  serverKey = "";
-  if (current) await current.stop().catch((error) => log("MEMORY_DAEMON_STOP", error));
+  stopPromise = Promise.resolve().then(async () => {
+    const pending = startPromise;
+    if (pending) await pending.catch(() => undefined);
+    const current = server;
+    if (current) await current.stop();
+    if (server === current) server = null;
+    effectiveLlm = null;
+    serverKey = "";
+    lastError = undefined;
+  }).catch((error) => {
+    lastError = reportError("MEMORY_DAEMON_STOP", error);
+    throw error;
+  }).finally(() => { stopPromise = null; });
+  return stopPromise;
 }
 
 export async function checkMemoryDaemon(): Promise<boolean> {
@@ -272,7 +288,7 @@ export async function getMemoryDaemonStatus(): Promise<MemoryDaemonStatus> {
 export async function ensureMemoryDaemon(): Promise<boolean> {
   try {
     await startMemoryDaemon();
-    return true;
+    return daemonReady;
   } catch {
     return false;
   }

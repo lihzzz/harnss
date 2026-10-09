@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { deriveToolName, normalizeToolInput } from "./acp-adapter";
 
 describe("ACP OpenCode tool compatibility", () => {
+  it.each(["read", "edit"])("preserves Windows absolute paths in parsed %s commands", (kind) => {
+    expect(normalizeToolInput({
+      command: ["powershell", "-Command", "Get-Content a.ts"],
+      cwd: "C:\\repo", parsed_cmd: [{ path: "C:\\repo\\a.ts" }],
+    }, kind)).toEqual({ file_path: "C:\\repo\\a.ts" });
+  });
   it("normalizes OpenCode tool titles when ACP omits kind", () => {
     expect(deriveToolName("bash")).toBe("Bash");
     expect(deriveToolName("read_file")).toBe("Read");

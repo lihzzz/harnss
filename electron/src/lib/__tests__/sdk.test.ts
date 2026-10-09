@@ -13,7 +13,7 @@ const {
     getAppPath: vi.fn(() => "/Applications/Harnss.app/Contents/Resources/app.asar"),
   },
   mockGetAppSetting: vi.fn(() => "Harnss"),
-  mockExistsSync: vi.fn(() => false),
+  mockExistsSync: vi.fn<(candidate: unknown) => boolean>(() => false),
   mockLog: vi.fn(),
 }));
 
@@ -57,7 +57,7 @@ describe("sdk path resolution", () => {
 
     expect(
       mod.resolveCliPathFromEntry("/x/node_modules/@anthropic-ai/claude-agent-sdk/embed.js", false),
-    ).toBe("/x/node_modules/@anthropic-ai/claude-agent-sdk/cli.js");
+    ).toBe(path.normalize("/x/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"));
   });
 
   it("maps packaged app paths to app.asar.unpacked", async () => {
@@ -69,7 +69,7 @@ describe("sdk path resolution", () => {
         true,
       ),
     ).toBe(
-      "/Applications/Harnss.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+      path.normalize("/Applications/Harnss.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"),
     );
   });
 
@@ -97,7 +97,7 @@ describe("sdk path resolution", () => {
 
   it("falls back to the packaged app path only after SDK-based strategies fail", async () => {
     mockApp.isPackaged = true;
-    const packagedCliPath = "/Applications/Harnss.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js";
+    const packagedCliPath = path.normalize("/Applications/Harnss.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js");
     mockExistsSync.mockReturnValueOnce(false).mockReturnValueOnce(false).mockReturnValueOnce(true);
 
     const mod = await loadSdkModule();

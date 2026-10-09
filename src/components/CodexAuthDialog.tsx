@@ -10,7 +10,7 @@ import { Key, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AuthDialogShell } from "@/components/AuthDialogShell";
 import type { CodexSessionEvent } from "@/types";
-import type { AccountLoginCompletedNotification } from "@/types/codex-protocol/v2/AccountLoginCompletedNotification";
+import type { AccountLoginCompletedNotification } from "@shared/types/codex-protocol/v2/AccountLoginCompletedNotification";
 import { reportError } from "@/lib/analytics/analytics";
 
 /** Typed result from `codex.login` — either a chatgpt OAuth redirect or an error. */

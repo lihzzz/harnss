@@ -23,7 +23,7 @@ vi.mock("electron", () => ({
   app: { getVersion: () => "test" },
   ipcMain: { handle: mocks.handle },
 }));
-vi.mock("child_process", () => ({ spawn: () => ({ pid: 123 }) }));
+vi.mock("../lib/command-launch", () => ({ spawnExecutable: () => ({ pid: 123 }) }));
 vi.mock("../lib/codex-binary", () => ({
   getCodexBinaryPath: async () => "codex",
   getCodexHome: () => "/tmp/harnss-fingerprint-test",

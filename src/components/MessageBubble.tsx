@@ -1,6 +1,8 @@
 import { lazy, memo, Suspense, useEffect, useState, useMemo, useCallback, createContext, useContext, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
 import { AlertCircle, Brain, ChevronDown, ChevronUp, Clock, Crosshair, File, Folder, Info, RotateCcw, Send, Undo2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { parseLocalFileLink } from "@shared/lib/file-paths";
+import { markdownUrlTransform } from "@/lib/markdown-links";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -212,41 +214,12 @@ const MermaidDiagram = lazy(() =>
 const IsBlockCodeContext = createContext(false);
 const IsStreamingMarkdownContext = createContext(false);
 
-function parseFileHref(href: string): { filePath: string; line?: number } | null {
-  if (!href) return null;
-
-  try {
-    const url = new URL(href);
-    if (url.protocol !== "file:") return null;
-    const filePath = decodeURIComponent(url.pathname);
-    const hashLine = /^#L(\d+)$/i.exec(url.hash)?.[1];
-    const line = hashLine ? Number(hashLine) : undefined;
-    return { filePath, line };
-  } catch {
-    // Not an absolute URL; continue with path-like fallback.
-  }
-
-  if (
-    href.startsWith("/") ||
-    href.startsWith("./") ||
-    href.startsWith("../") ||
-    /^[A-Za-z]:[\\/]/.test(href)
-  ) {
-    const [, pathPart, linePart] = href.match(/^(.*?)(?::(\d+))?$/) ?? [];
-    if (pathPart) {
-      return { filePath: pathPart, line: linePart ? Number(linePart) : undefined };
-    }
-  }
-
-  return null;
-}
-
 const MD_COMPONENTS: Components = {
   a({ href, children, ...props }) {
     const onClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
       if (!href || href.startsWith("#")) return;
       event.preventDefault();
-      const fileTarget = parseFileHref(href);
+      const fileTarget = parseLocalFileLink(href);
       if (fileTarget) {
         void window.claude.openInEditor(fileTarget.filePath, fileTarget.line);
         return;
@@ -641,6 +614,7 @@ export const MessageBubble = memo(function MessageBubble({
                         remarkPlugins={REMARK_PLUGINS}
                         rehypePlugins={REHYPE_PLUGINS}
                         components={MD_COMPONENTS}
+                        urlTransform={markdownUrlTransform}
                       >
                         {markdownContent}
                       </ReactMarkdown>

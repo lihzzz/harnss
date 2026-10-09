@@ -2,6 +2,7 @@ import type { UIMessage, SubagentToolStep } from "@/types";
 import { getMcpCompactSummary } from "@/components/McpToolContent";
 import { getTodoItems } from "@/lib/chat/todo-utils";
 import { getDistinctPatchPaths, getStructuredPatches } from "@/lib/diff/patch-utils";
+import { getFileName } from "@shared/lib/file-paths";
 
 // ── Compact summary for collapsed tool line ──
 
@@ -11,7 +12,7 @@ export function formatCompactSummary(message: UIMessage): string {
   const result = message.toolResult;
   const filePathFromResult = extractResultFilePath(result);
   if (!input) {
-    return filePathFromResult ? filePathFromResult.split("/").pop() ?? filePathFromResult : "";
+    return filePathFromResult ? getFileName(filePathFromResult) : "";
   }
 
   // Plan mode tools — extract plan title from markdown heading
@@ -69,8 +70,8 @@ export function formatCompactSummary(message: UIMessage): string {
   if (input.file_path && patchPaths.length > 1) {
     return `${patchPaths.length} files`;
   }
-  if (input.file_path) return String(input.file_path).split("/").pop() ?? "";
-  if (filePathFromResult) return filePathFromResult.split("/").pop() ?? filePathFromResult;
+  if (input.file_path) return getFileName(String(input.file_path));
+  if (filePathFromResult) return getFileName(filePathFromResult);
   if (input.pattern) {
     const pat = String(input.pattern);
     const glob = input.glob ? ` in ${String(input.glob)}` : "";
@@ -156,7 +157,7 @@ export function formatLatestStep(steps: SubagentToolStep[]): string {
 
 export function formatStepSummary(step: SubagentToolStep): string {
   const input = step.toolInput;
-  if (input.file_path) return String(input.file_path).split("/").pop() ?? "";
+  if (input.file_path) return getFileName(String(input.file_path));
   if (input.command) return String(input.command).split("\n")[0].slice(0, 60);
   if (input.pattern) return String(input.pattern);
   if (input.description) return String(input.description).slice(0, 90);

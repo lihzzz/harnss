@@ -7,7 +7,7 @@
  */
 
 import { app, BrowserWindow, ipcMain } from "electron";
-import { spawn } from "child_process";
+import { spawnExecutable } from "../lib/command-launch";
 import crypto from "crypto";
 import { log } from "../lib/logger";
 import { safeSend } from "../lib/safe-send";
@@ -74,7 +74,7 @@ export type CodexGoalResult =
   | { supported: true; goal: CodexThreadGoal | null; error?: string }
   | { supported: false; goal: null; reason: "method-not-found"; error?: string };
 
-import { SUPPORTED_SERVER_REQUESTS, isSupportedServerRequestMethod, listModelsWithConfigured, pickModelId } from "@shared/lib/codex-helpers";
+import { isSupportedServerRequestMethod, listModelsWithConfigured, pickModelId } from "@shared/lib/codex-helpers";
 
 const codexSessions = new Map<string, CodexSession>();
 
@@ -147,7 +147,7 @@ function getCodexAppServerEnv(): NodeJS.ProcessEnv {
 }
 
 function spawnCodexAppServer(codexPath: string, cwd: string, sessionId?: string) {
-  return spawn(codexPath, getCodexAppServerArgs(sessionId), {
+  return spawnExecutable(codexPath, getCodexAppServerArgs(sessionId), {
     stdio: ["pipe", "pipe", "pipe"],
     cwd,
     env: getCodexAppServerEnv(),
@@ -194,7 +194,7 @@ async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
 
     const rpc = new CodexRpcClient(proc);
     try {
-      const initResult = await rpc.request<CodexInitializeResponse>("initialize", {
+      await rpc.request<CodexInitializeResponse>("initialize", {
         clientInfo: getAppServerClientInfo(),
         capabilities: { experimentalApi: true },
       });
@@ -219,7 +219,7 @@ async function getComputerUseStatus(): Promise<CodexComputerUseStatus> {
         ready: enabled && featureEnabled && runtime.ready && mcpConnected && cuaTools.length > 0,
         codexPath,
         codexVersion,
-        codexHome: initResult.codexHome,
+        codexHome: getCodexHome(),
       };
     } finally {
       rpc.destroy();
@@ -1139,11 +1139,14 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 }
 
 /** Stop all Codex sessions (called on app quit). */
-export function stopAll(): void {
+export async function stopAll(): Promise<void> {
+  const stopping: Promise<void>[] = [];
   for (const [id, session] of codexSessions) {
     stopUsageSession(id);
-    session.rpc.destroy();
+    stopping.push(session.rpc.destroyAndWait());
     codexSessions.delete(id);
     unregisterMemorySession(id);
   }
+  const results = await Promise.allSettled(stopping);
+  for (const result of results) if (result.status === "rejected") reportError("CODEX_STOP_ERR", result.reason);
 }

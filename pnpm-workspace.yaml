@@ -1,5 +1,11 @@
 packages:
   - cli
+supportedArchitectures:
+  os:
+    - current
+  cpu:
+    - x64
+    - arm64
 onlyBuiltDependencies:
   - electron
   - electron-winstaller

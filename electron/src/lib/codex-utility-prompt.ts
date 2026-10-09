@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawnExecutable } from "./command-launch";
 import { CodexRpcClient } from "./codex-rpc";
 import { getCodexBinaryPath } from "./codex-binary";
 import { log } from "./logger";
@@ -45,7 +45,7 @@ export async function codexUtilityPrompt(
 
   try {
     const codexPath = await getCodexBinaryPath();
-    const proc = spawn(codexPath, ["app-server"], {
+    const proc = spawnExecutable(codexPath, ["app-server"], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd,
       env: {

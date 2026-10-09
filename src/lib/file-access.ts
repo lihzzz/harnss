@@ -6,6 +6,7 @@
 import { Eye, Pencil, Plus } from "lucide-react";
 import type { UIMessage } from "@/types";
 import { getStructuredPatches, getPatchPath } from "@/lib/diff/patch-utils";
+import { getFileDirectory, getFileName, normalizeFilePathSeparators } from "@shared/lib/file-paths";
 
 export type AccessType = "read" | "modified" | "created";
 
@@ -252,16 +253,12 @@ export function extractFiles(messages: UIMessage[], cwd?: string, includeClaudeM
 }
 
 export function getRelativePath(fullPath: string, cwd?: string): { fileName: string; dirPath: string } {
-  const relative = cwd && fullPath.startsWith(cwd)
-    ? fullPath.slice(cwd.length + 1)
-    : fullPath;
-
-  const lastSlash = relative.lastIndexOf("/");
-  if (lastSlash === -1) {
-    return { fileName: relative, dirPath: "" };
-  }
-  return {
-    fileName: relative.slice(lastSlash + 1),
-    dirPath: relative.slice(0, lastSlash),
-  };
+  const normalized = normalizeFilePathSeparators(fullPath);
+  const base = cwd ? normalizeFilePathSeparators(cwd).replace(/\/+$/, "") : "";
+  const windows = /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//");
+  const comparable = windows ? normalized.toLowerCase() : normalized;
+  const comparableBase = windows ? base.toLowerCase() : base;
+  const relative = base && comparable.startsWith(`${comparableBase}/`)
+    ? normalized.slice(base.length + 1) : normalized;
+  return { fileName: getFileName(relative), dirPath: getFileDirectory(relative) };
 }

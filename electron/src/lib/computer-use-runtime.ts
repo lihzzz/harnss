@@ -4,6 +4,7 @@ import path from "path";
 import type { McpServerInput } from "@shared/lib/mcp-config";
 import type { ComputerUseRuntimeStatus } from "@shared/types/computer-use";
 import { getAppSetting } from "./app-settings";
+import { reportError } from "./error-utils";
 
 export const COMPUTER_USE_MCP_SERVER_NAME = "harnss_cua";
 
@@ -125,28 +126,28 @@ export async function getComputerUseRuntimeStatus(): Promise<ComputerUseRuntimeS
   const result = invocation.mode === "external"
     ? readExternalVersion(invocation.command)
     : readInternalVersion(invocation);
-  const permissions = process.platform === "darwin"
-    ? await readMacPermissions()
-    : undefined;
-  const permissionsReady = !permissions || (permissions.accessibility && permissions.screenRecording);
+  let permissions: ComputerUseRuntimeStatus["permissions"];
+  let permissionError: string | undefined;
+  if (process.platform === "darwin") {
+    try { permissions = await readMacPermissions(); }
+    catch (error) { permissionError = `Unable to check macOS desktop permissions: ${reportError("CUA_PERMISSION_STATUS", error)}`; }
+  }
+  const permissionsReady = process.platform !== "darwin"
+    || Boolean(permissions?.accessibility && permissions.screenRecording);
   return {
     enabled,
     command: invocation.command,
     mode: invocation.mode,
-    installed: result.installed,
     ready: result.installed && permissionsReady,
     ...(permissions ? { permissions } : {}),
     ...result,
+    ...(permissionError ? { error: result.error ? `${result.error}; ${permissionError}` : permissionError } : {}),
   };
 }
 
-async function readMacPermissions(): Promise<ComputerUseRuntimeStatus["permissions"]> {
-  try {
-    const cua = await import("@trycua/cua-driver");
-    return cua.currentMacOsPermissionStatus();
-  } catch {
-    return undefined;
-  }
+async function readMacPermissions(): Promise<NonNullable<ComputerUseRuntimeStatus["permissions"]>> {
+  const cua = await import("@trycua/cua-driver");
+  return cua.currentMacOsPermissionStatus();
 }
 
 /** Ask macOS for the native permissions required by the Cua runtime. */
@@ -155,7 +156,7 @@ export async function requestComputerUsePermissions(): Promise<ComputerUseRuntim
   try {
     const permissions = await import("@trycua/cua-driver/electron");
     return permissions.requestMacOSPermissions();
-  } catch {
-    return undefined;
+  } catch (error) {
+    throw new Error(`Unable to request macOS desktop permissions: ${reportError("CUA_PERMISSION_REQUEST", error)}`, { cause: error });
   }
 }

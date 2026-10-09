@@ -1,6 +1,10 @@
 import { getAppSettings } from "../app-settings";
 import { getMemoryLlmKey } from "./secrets";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Tests provider credentials without starting Hindsight or creating a memory bank. */
 export async function testMemoryLlm(enteredKey?: string): Promise<{ ok: boolean; error?: string }> {
   const settings = getAppSettings().memory;
@@ -44,10 +48,11 @@ export async function testMemoryLlm(enteredKey?: string): Promise<{ ok: boolean;
         : "Check the provider configuration and availability.";
       return { ok: false, error: `Connection failed (HTTP ${response.status}). ${hint}` };
     }
-    const data = await response.json();
-    const valid = anthropic
-      ? data?.type === "message" && Array.isArray(data.content) && data.content.length > 0
-      : Array.isArray(data?.choices) && data.choices.some((choice: { message?: { role?: string; content?: unknown } }) => choice?.message && (choice.message.role === "assistant" || typeof choice.message.content === "string"));
+    const data: unknown = await response.json();
+    const valid = isRecord(data) && (anthropic
+      ? data.type === "message" && Array.isArray(data.content) && data.content.length > 0
+      : Array.isArray(data.choices) && data.choices.some((choice: unknown) => isRecord(choice)
+        && isRecord(choice.message) && (choice.message.role === "assistant" || typeof choice.message.content === "string")));
     return valid ? { ok: true } : { ok: false, error: "The endpoint did not return a valid model response. Check the Base URL and model." };
   } catch (error) {
     // Do not return provider bodies or exception messages that may echo credentials.

@@ -19,6 +19,7 @@ import { app } from "electron";
 import { log } from "./logger";
 import { reportError } from "./error-utils";
 import { getAppSetting } from "./app-settings";
+import { findExecutable, execFileExecutableSync } from "./command-launch";
 
 // Codex Desktop app bundle is prioritized because it ships a newer binary
 // that supports features like collaborationMode (plan mode), while the
@@ -77,8 +78,9 @@ function resolveCodexPathSync(): string {
   if (source === "custom") {
     const customPath = getAppSetting("codexCustomBinaryPath")?.trim();
     if (!customPath) throw new Error("Codex custom binary path is not set");
-    if (!isExecutable(customPath)) throw new Error(`Configured Codex binary path is not executable: ${customPath}`);
-    return customPath;
+    const resolved = findExecutable(customPath);
+    if (!resolved) throw new Error(`Configured Codex binary path is not executable: ${customPath}`);
+    return resolved;
   }
 
   if (source === "managed") {
@@ -89,7 +91,10 @@ function resolveCodexPathSync(): string {
 
   // 1. Env override
   const envPath = process.env.CODEX_CLI_PATH;
-  if (envPath && isExecutable(envPath)) return envPath;
+  if (envPath) {
+    const resolved = findExecutable(envPath);
+    if (resolved) return resolved;
+  }
 
   // 2. Managed copy
   const managed = getManagedBinaryPath();
@@ -104,13 +109,8 @@ function resolveCodexPathSync(): string {
   }
 
   // 4. System PATH (fallback)
-  try {
-    const cmd = process.platform === "win32" ? "where" : "which";
-    const resolved = execFileSync(cmd, ["codex"], { encoding: "utf-8", timeout: 5000 }).trim();
-    if (resolved && isExecutable(resolved)) return resolved;
-  } catch {
-    /* not in PATH */
-  }
+  const resolved = findExecutable("codex");
+  if (resolved) return resolved;
 
   throw new Error("Codex binary not found");
 }
@@ -235,7 +235,7 @@ export function getCodexBinaryStatus(): {
 export async function getCodexVersion(): Promise<string | null> {
   try {
     const binPath = await getCodexBinaryPath();
-    const output = execFileSync(binPath, ["--version"], {
+    const output = execFileExecutableSync(binPath, ["--version"], {
       encoding: "utf-8",
       timeout: 10000,
     }).trim();
@@ -267,11 +267,11 @@ function runNpmPack(packageSpec: string, cwd: string): void {
     cwd,
     encoding: "utf-8" as const,
     timeout: 120000,
-    stdio: ["ignore", "pipe", "pipe"] as const,
+    stdio: "pipe" as const,
   };
 
   try {
-    execFileSync(getNpmCommand(), args, options);
+    execFileExecutableSync(getNpmCommand(), args, options);
     return;
   } catch (error) {
     const err = error as NodeJS.ErrnoException;

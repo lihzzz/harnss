@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { execFile } from "child_process";
 import { gitExec, ALWAYS_SKIP } from "../lib/git-exec";
+import { parseGitPaths, parseGitStatus } from "../lib/git-output";
 import { captureEvent } from "../lib/posthog";
 import { reportError } from "../lib/error-utils";
 import { log } from "../lib/logger";
@@ -29,9 +30,9 @@ function isNestedPath(parentPath: string, childPath: string): boolean {
 
 function parseWorktreePaths(raw: string): string[] {
   const paths: string[] = [];
-  for (const line of raw.split("\n")) {
+  for (const line of raw.split("\0")) {
     if (line.startsWith("worktree ")) {
-      paths.push(line.slice("worktree ".length).trim());
+      paths.push(line.slice("worktree ".length));
     }
   }
   return paths;
@@ -182,7 +183,7 @@ export function register(): void {
     const worktreeSeedPaths = [...reposByPath.keys()];
     for (const seedPath of worktreeSeedPaths) {
       try {
-        const worktreesRaw = await gitExec(["worktree", "list", "--porcelain"], seedPath);
+        const worktreesRaw = await gitExec(["worktree", "list", "--porcelain", "-z"], seedPath);
         const worktreePaths = parseWorktreePaths(worktreesRaw);
         for (const rawWorktreePath of worktreePaths) {
           const metadata = await readRepoMetadata(rawWorktreePath);
@@ -203,69 +204,8 @@ export function register(): void {
 
   ipcMain.handle("git:status", async (_event, cwd: string) => {
     try {
-      const raw = await gitExec(["status", "--porcelain=v2", "--branch"], cwd);
-      const lines = raw.split("\n");
-      let branch = "HEAD";
-      let upstream: string | undefined;
-      let ahead = 0;
-      let behind = 0;
-      const files: Array<{ path: string; oldPath?: string; status: string; group: string }> = [];
-
-      for (const line of lines) {
-        if (line.startsWith("# branch.head ")) {
-          branch = line.slice("# branch.head ".length);
-        } else if (line.startsWith("# branch.upstream ")) {
-          upstream = line.slice("# branch.upstream ".length);
-        } else if (line.startsWith("# branch.ab ")) {
-          const match = line.match(/\+(\d+) -(\d+)/);
-          if (match) {
-            ahead = parseInt(match[1], 10);
-            behind = parseInt(match[2], 10);
-          }
-        } else if (line.startsWith("1 ") || line.startsWith("2 ")) {
-          const parts = line.split(" ");
-          const xy = parts[1];
-          const isRename = line.startsWith("2 ");
-          let filePath: string;
-          let oldPath: string | undefined;
-          if (isRename) {
-            const rest = parts.slice(8).join(" ");
-            const tabParts = rest.split("\t");
-            filePath = tabParts[0];
-            oldPath = tabParts[1];
-          } else {
-            filePath = parts.slice(8).join(" ");
-          }
-
-          const x = xy[0];
-          const y = xy[1];
-          const statusMap: Record<string, string> = { M: "modified", A: "added", D: "deleted", R: "renamed", C: "copied", U: "unmerged" };
-
-          if (x !== "." && x !== "?") {
-            files.push({
-              path: filePath,
-              oldPath: isRename ? oldPath : undefined,
-              status: statusMap[x] || "modified",
-              group: "staged",
-            });
-          }
-          if (y !== "." && y !== "?") {
-            files.push({
-              path: filePath,
-              status: statusMap[y] || "modified",
-              group: "unstaged",
-            });
-          }
-        } else if (line.startsWith("u ")) {
-          const parts = line.split(" ");
-          const filePath = parts.slice(10).join(" ");
-          files.push({ path: filePath, status: "unmerged", group: "unstaged" });
-        } else if (line.startsWith("? ")) {
-          files.push({ path: line.slice(2), status: "untracked", group: "untracked" });
-        }
-      }
-
-      return { branch, upstream, ahead, behind, files };
+      const raw = await gitExec(["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], cwd);
+      return parseGitStatus(raw);
     } catch (err) {
       return { error: reportError("GIT_STATUS_ERR", err) };
     }
@@ -309,11 +249,8 @@ export function register(): void {
 
   ipcMain.handle("git:discard", async (_event, { cwd, files }: { cwd: string; files: string[] }) => {
     try {
-      const statusRaw = await gitExec(["status", "--porcelain"], cwd);
-      const untrackedSet = new Set<string>();
-      for (const line of statusRaw.split("\n")) {
-        if (line.startsWith("??")) untrackedSet.add(line.slice(3).trim());
-      }
+      const untrackedRaw = await gitExec(["ls-files", "--others", "--exclude-standard", "-z"], cwd);
+      const untrackedSet = new Set(parseGitPaths(untrackedRaw));
 
       const tracked = files.filter((f) => !untrackedSet.has(f));
       const untracked = files.filter((f) => untrackedSet.has(f));
