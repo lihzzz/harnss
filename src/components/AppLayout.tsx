@@ -5,8 +5,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAppOrchestrator } from "@/hooks/useAppOrchestrator";
 import { useQuickCapture } from "@/hooks/app-layout/useQuickCapture";
+import { useAppLaunchActions } from "@/hooks/app-layout/useAppLaunchActions";
+import { ProjectAppAgentPermissions } from "./apps/ProjectAppAgentPermissions";
 import { QuickCapturePanel } from "./QuickCapturePanel";
 import type { HistoryLocation } from "@shared/types/productivity";
+import type { WorkspaceBinding, ProjectAppSessionOrigin } from "@shared/types/workspace";
 import { useUsageActivity } from "@/hooks/useUsageActivity";
 import { useSpaceTheme } from "@/hooks/useSpaceTheme";
 import { useGlassTheme } from "@/hooks/useGlassTheme";
@@ -41,6 +44,7 @@ import { FilePreviewOverlay } from "./FilePreviewOverlay";
 const SettingsView = lazy(() =>
   import("./SettingsView").then((m) => ({ default: m.SettingsView })),
 );
+const ProjectAppsView = lazy(() => import("./apps/ProjectAppsView").then((m) => ({ default: m.ProjectAppsView })));
 import { CodexAuthDialog } from "./CodexAuthDialog";
 import { ACPAuthDialog } from "./ACPAuthDialog";
 import { isMac, isWindows } from "@/lib/utils";
@@ -115,7 +119,7 @@ export function AppLayout() {
     [activeProjectPath, manager.messages],
   );
   const {
-    showSettings, setShowSettings, scrollToMessageId, setScrollToMessageId, chatSearchOpen, setChatSearchOpen,
+    showSettings, setShowSettings, showApps, setShowApps, scrollToMessageId, setScrollToMessageId, chatSearchOpen, setChatSearchOpen,
   } = ui;
   const {
     handleToggleTool, handleToolReorder, handleNewChat, handleSend,
@@ -160,7 +164,13 @@ export function AppLayout() {
     handleClosePreview,
   } = layoutUI;
 
-  useUsageActivity(welcomeCompleted && !showSettings);
+  useUsageActivity(welcomeCompleted && !showSettings && !showApps);
+  const [addAppRequest, setAddAppRequest] = useState<{ projectId: string; requestId: string } | null>(null);
+  const appActions = useAppLaunchActions({
+    manager, projects: projectManager.projects, selectedAgent,
+    closeApps: () => setShowApps(false), selectSpace: spaceManager.setActiveSpaceId,
+    closeSplit: splitView.dismissSplitView,
+  });
 
   const [pendingSplitPaneSend, setPendingSplitPaneSend] = useState<{
     sessionId: string;
@@ -203,10 +213,11 @@ export function AppLayout() {
 
   const handleOpenNewChat = useCallback(
     async (projectId: string) => {
+      setShowApps(false);
       splitView.dismissSplitView();
       await handleNewChat(projectId);
     },
-    [handleNewChat, splitView.dismissSplitView],
+    [handleNewChat, splitView.dismissSplitView, setShowApps],
   );
 
   const handleComposerClear = useCallback(
@@ -221,10 +232,11 @@ export function AppLayout() {
 
   const handleSidebarSelectSession = useCallback(
     (sessionId: string) => {
+      setShowApps(false);
       splitView.dismissSplitView();
       handleSelectSession(sessionId);
     },
-    [handleSelectSession, splitView.dismissSplitView],
+    [handleSelectSession, splitView.dismissSplitView, setShowApps],
   );
 
 
@@ -334,10 +346,13 @@ export function AppLayout() {
   );
 
   const createSplitPaneDraftSession = useCallback(
-    async (replacedSessionId: string, projectId: string, agent: InstalledAgent | null) => {
+    async (replacedSessionId: string, projectId: string, agent: InstalledAgent | null, context?: { workspaceBinding?: WorkspaceBinding; origin?: ProjectAppSessionOrigin }) => {
       const wantedEngine = agent?.engine ?? "claude";
       const wantedModel = settings.getModelForEngine(wantedEngine) || undefined;
+      const replaced = manager.sessions.find((session) => session.id === replacedSessionId);
       await manager.createSession(projectId, {
+        workspaceBinding: context?.workspaceBinding ?? replaced?.workspaceBinding,
+        origin: context?.origin ?? replaced?.origin,
         model: wantedModel,
         permissionMode: settings.permissionMode,
         planMode: settings.planMode,
@@ -350,7 +365,7 @@ export function AppLayout() {
       splitView.replaceSessionId(replacedSessionId, DRAFT_ID);
       splitView.setFocusedSession(DRAFT_ID);
     },
-    [manager.createSession, settings, splitView],
+    [manager.createSession, manager.sessions, settings, splitView],
   );
 
   // ── Drag-and-drop from sidebar ──
@@ -735,9 +750,10 @@ export function AppLayout() {
     if (!response.ok) throw new Error(response.error.message);
     splitView.dismissSplitView();
     setShowSettings(false);
+    setShowApps(false);
     await manager.switchSession(response.value.runtimeSessionId, response.value);
     setPendingHistoryLocation(response.value);
-  }, [manager.switchSession, splitView.dismissSplitView, setShowSettings]);
+  }, [manager.switchSession, splitView.dismissSplitView, setShowSettings, setShowApps]);
   useEffect(() => {
     if (!pendingHistoryLocation || manager.activeSessionId !== pendingHistoryLocation.runtimeSessionId) return;
     if (pendingHistoryLocation.messageId === null) { setPendingHistoryLocation(null); return; }
@@ -1052,13 +1068,14 @@ export function AppLayout() {
     manager, focusedId: splitView.enabled ? (splitView.focusedSessionId ?? manager.activeSessionId) : manager.activeSessionId,
     projectId: activeProjectId ?? null, selectedAgent, projects: projectManager.projects, agents,
     blocked: !welcomeCompleted || showCodexAuthDialog || showAcpAuthDialog || !!manager.pendingPermission,
-    activate: () => setShowSettings(false), selectAgent: o.agentState.setSelectedAgent,
+    activate: () => { setShowSettings(false); setShowApps(false); }, selectAgent: o.agentState.setSelectedAgent,
     selectSpace: spaceManager.setActiveSpaceId, closeSplit: splitView.dismissSplitView,
   });
 
   return (
     <ThemeProvider value={resolvedTheme}>
     <AgentProvider value={agentContextValue}>
+    <ProjectAppAgentPermissions />
     <div
       className={`relative flex h-screen overflow-hidden bg-sidebar text-foreground${settings.islandLayout ? "" : " no-islands"}${settings.islandShine ? "" : " no-island-shine"}`}
       style={islandLayoutVars}
@@ -1102,6 +1119,11 @@ export function AppLayout() {
           onCreateFolder: o.handleCreateFolder,
           onSetOrganizeByChatBranch: settings.setOrganizeByChatBranch,
           onOpenWorkflow: () => setWorkflowOpen(true),
+          onOpenApps: (projectId) => {
+            setWorkflowOpen(false);
+            setAddAppRequest(projectId ? { projectId, requestId: crypto.randomUUID() } : null);
+            setShowApps(true);
+          },
         }}
         spaceState={{
           spaces: spaceManager.spaces,
@@ -1146,6 +1168,20 @@ export function AppLayout() {
       )}
 
       <div ref={contentRef} className={`flex min-w-0 flex-1 flex-col ${settings.islandLayout ? "m-[var(--island-gap)]" : sidebar.isOpen ? "flat-divider-s" : ""} ${isResizing ? "select-none" : ""}`}>
+        {showApps && (
+          <Suspense fallback={<div className="p-6 text-muted-foreground" role="status">…</div>}>
+            <ProjectAppsView
+              projects={projectManager.projects}
+              spaces={spaceManager.spaces}
+              activeSpaceId={spaceManager.activeSpaceId}
+              addProjectRequest={addAppRequest}
+              onClose={() => setShowApps(false)}
+              onContinue={appActions.continueApp}
+              onOpenSession={appActions.openAppSession}
+              onAddProject={() => projectManager.createProject(spaceManager.activeSpaceId)}
+            />
+          </Suspense>
+        )}
         {showSettings && (
           <Suspense fallback={null}>
           <SettingsView
@@ -1174,7 +1210,7 @@ export function AppLayout() {
         )}
         {/* Keep chat area mounted (hidden) when settings is open to avoid
             destroying/recreating the entire ChatView DOM tree on toggle */}
-        <div className={showSettings ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+        <div className={showSettings || showApps ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
         {/* ── Top row: Split View OR (Chat | Right Panel | Tools Column | ToolPicker) ── */}
         <div
           ref={(element) => {

@@ -38,6 +38,7 @@ import type { McpServerInput } from "@shared/lib/mcp-config";
 import type { ACPAuthMethod, ACPAuthenticateResult } from "@shared/types/acp";
 import { withComputerUseMcpServer } from "../lib/computer-use-runtime";
 import { withHindsightMcpServers, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeAcpUpdate, completeMemoryTurn } from "../lib/memory/service";
+import { cancelProjectAppAgentPermissions, registerProjectAppAgentSession, revokeProjectAppAgentSession, withProjectAppMcpServer } from "../lib/project-apps/agent-bridge";
 import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
 import { stopProcessAndWait } from "@shared/lib/process-stop";
 import { getSessionRepository } from "../lib/session-service";
@@ -75,6 +76,7 @@ interface ACPSessionEntry {
   eventCounter: number;
   pendingPermissions: Map<string, { resolve: (response: RequestPermissionResponse) => void }>;
   cwd: string;
+  projectId: string | undefined;
   supportsLoadSession: boolean;
   agentName: string;
   authMethods: ACPAuthMethod[];
@@ -108,6 +110,7 @@ function assertAcpProcessActive(sessionId: string): void {
 }
 
 export async function stopForDeletion(sessionId: string): Promise<void> {
+  revokeProjectAppAgentSession(sessionId);
   stopUsageSession(sessionId);
   const runtime = acpProcesses.get(sessionId);
   if (!runtime) return;
@@ -117,7 +120,7 @@ export async function stopForDeletion(sessionId: string): Promise<void> {
   runtime.pendingPermissions.clear();
   await stopProcessAndWait(runtime.process);
   acpSessions.delete(sessionId);
-  unregisterMemorySession(sessionId);
+  unregisterMemorySession(sessionId); revokeProjectAppAgentSession(sessionId);
   configBuffer.delete(sessionId);
   commandsBuffer.delete(sessionId);
 }
@@ -377,7 +380,7 @@ async function createAcpConnection(
     acpProcesses.delete(internalId);
     options.runtimeLease?.release();
     acpSessions.delete(internalId);
-    unregisterMemorySession(internalId);
+    unregisterMemorySession(internalId); revokeProjectAppAgentSession(internalId);
     configBuffer.delete(internalId);
     commandsBuffer.delete(internalId);
   });
@@ -402,7 +405,7 @@ async function createAcpConnection(
     options.runtimeLease?.release();
     for (const permission of pendingPermissions.values()) permission.resolve({ outcome: { outcome: "cancelled" } });
     pendingPermissions.clear();
-    unregisterMemorySession(internalId);
+    unregisterMemorySession(internalId); revokeProjectAppAgentSession(internalId);
     configBuffer.delete(internalId);
     commandsBuffer.delete(internalId);
     // Guard: session may already be deleted by the "error" handler (ENOENT race)
@@ -415,7 +418,7 @@ async function createAcpConnection(
     entry.pendingPermissions.clear();
     safeSend(getMainWindow, "acp:exit", { _sessionId: internalId, code });
     acpSessions.delete(internalId);
-    unregisterMemorySession(internalId);
+    unregisterMemorySession(internalId); revokeProjectAppAgentSession(internalId);
     configBuffer.delete(internalId);
     commandsBuffer.delete(internalId);
   });
@@ -596,7 +599,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
       if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "acp");
-      const sourceServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), internalId);
+      await registerProjectAppAgentSession(internalId, options.source?.projectId ?? options.memoryContext?.projectId, options.cwd);
+      assertAcpProcessActive(internalId);
+      const sourceServers = withProjectAppMcpServer(withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), internalId), internalId);
       const acpMcpServers = await buildAcpMcpServers(sourceServers);
       assertAcpProcessActive(internalId);
       const entry: ACPSessionEntry = {
@@ -607,6 +612,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         eventCounter: 0,
         pendingPermissions,
         cwd: options.cwd,
+        projectId: options.source?.projectId ?? options.memoryContext?.projectId,
         supportsLoadSession,
         agentName: agentDef.name,
         authMethods,
@@ -755,7 +761,9 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
       const { proc, connection, pendingPermissions, internalId, supportsLoadSession, authMethods } = connResult;
 
       if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "acp");
-      const sourceServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), internalId);
+      await registerProjectAppAgentSession(internalId, options.source.projectId, options.cwd);
+      assertAcpProcessActive(internalId);
+      const sourceServers = withProjectAppMcpServer(withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), internalId), internalId);
       const acpMcpServers = await buildAcpMcpServers(sourceServers);
       assertAcpProcessActive(internalId);
 
@@ -765,7 +773,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
       if (supportsLoadSession && options.agentSessionId) {
         // Restore full context — suppress history replay from reaching the renderer
-        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId: options.agentSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, supportsLoadSession, agentName: agentDef.name, authMethods, isReloading: true };
+        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId: options.agentSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, projectId: options.source.projectId, supportsLoadSession, agentName: agentDef.name, authMethods, isReloading: true };
         acpSessions.set(internalId, entry);
         const loadResult = await withTimeout(connection.loadSession({ sessionId: options.agentSessionId, cwd: options.cwd, mcpServers: acpMcpServers }), ACP_START_TIMEOUT_MS, `${agentDef.name} ACP session/load`, connection.signal);
         assertAcpProcessActive(internalId);
@@ -780,7 +788,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const sessionResult = await withTimeout(connection.newSession({ cwd: options.cwd, mcpServers: acpMcpServers }), ACP_START_TIMEOUT_MS, `${agentDef.name} ACP session/new`, connection.signal);
         assertAcpProcessActive(internalId);
         acpSessionId = sessionResult.sessionId;
-        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, supportsLoadSession, agentName: agentDef.name, authMethods, isReloading: false };
+        const entry: ACPSessionEntry = { process: proc, connection, acpSessionId, internalId, analyticsProperties, eventCounter: 0, pendingPermissions, cwd: options.cwd, projectId: options.source.projectId, supportsLoadSession, agentName: agentDef.name, authMethods, isReloading: false };
         acpSessions.set(internalId, entry);
         configOptions = resolveConfigOptions(sessionResult, internalId, "ACP_REVIVE");
         log("ACP_REVIVE", `newSession fallback, session=${acpSessionId.slice(0, 12)}`);
@@ -894,9 +902,11 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     const nextCwd = cwd ?? session.cwd;
     log("ACP_RELOAD", `session=${sessionId.slice(0, 8)} calling loadSession with ${mcpServers?.length ?? 0} MCP server(s) cwd=${nextCwd}`);
 
-    const acpMcpServers = await buildAcpMcpServers(withHindsightMcpServers(withComputerUseMcpServer(mcpServers), sessionId));
-
     try {
+      const projectId = session.projectId;
+      revokeProjectAppAgentSession(sessionId);
+      await registerProjectAppAgentSession(sessionId, projectId, nextCwd);
+      const acpMcpServers = await buildAcpMcpServers(withProjectAppMcpServer(withHindsightMcpServers(withComputerUseMcpServer(mcpServers), sessionId), sessionId));
       // Suppress history replay notifications so the renderer doesn't get duplicates
       assertAcpProcessActive(sessionId);
       session.isReloading = true;
@@ -923,6 +933,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   });
 
   ipcMain.handle("acp:cancel", async (_event, sessionId: string) => {
+    cancelProjectAppAgentPermissions(sessionId);
     const session = acpSessions.get(sessionId);
     if (!session) {
       log("ACP_CANCEL", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
@@ -1037,6 +1048,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 export async function stopAll(): Promise<void> {
   const stopping: Promise<void>[] = [];
   for (const [sessionId, runtime] of acpProcesses) {
+    revokeProjectAppAgentSession(sessionId);
     stopUsageSession(sessionId);
     log("CLEANUP", `Stopping ACP session ${sessionId.slice(0, 8)}`);
     runtime.stopping = true;
@@ -1044,7 +1056,7 @@ export async function stopAll(): Promise<void> {
     runtime.pendingPermissions.clear();
     stopping.push(stopProcessAndWait(runtime.process));
   }
-  for (const sessionId of acpSessions.keys()) unregisterMemorySession(sessionId);
+  for (const sessionId of acpSessions.keys()) { unregisterMemorySession(sessionId); revokeProjectAppAgentSession(sessionId); }
   acpSessions.clear();
   configBuffer.clear();
   commandsBuffer.clear();

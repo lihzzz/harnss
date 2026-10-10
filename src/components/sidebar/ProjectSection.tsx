@@ -59,6 +59,7 @@ export function ProjectSection({
   activeSessionId,
   organizeByChatBranch,
   onNewChat,
+  onAddApp,
   onDeleteProject,
   onRenameProject,
   onUpdateIcon,
@@ -81,6 +82,7 @@ export function ProjectSection({
   activeSessionId: string | null;
   organizeByChatBranch: boolean;
   onNewChat: () => void;
+  onAddApp: () => void;
   onDeleteProject: () => void;
   onRenameProject: (name: string) => void;
   onUpdateIcon: (icon: string | null, iconType: "emoji" | "lucide" | null) => void;
@@ -341,6 +343,10 @@ export function ProjectSection({
                 openingIconPickerRef.current = false;
               }}
             >
+              <DropdownMenuItem onClick={onAddApp}>
+                <FolderPlus className="size-4" />
+                {t("Add to Apps")}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={onCreateFolder}>
                 <FolderPlus className="me-2 h-3.5 w-3.5" />
                 {t("newFolder")}

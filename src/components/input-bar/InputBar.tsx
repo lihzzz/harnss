@@ -250,6 +250,16 @@ export const InputBar = memo(function InputBar({
     };
     return registerQuickCaptureComposer(inputHistorySessionId, {
       focus,
+      insertDraft: (text) => {
+        const element = editableRef.current;
+        const state = captureStateRef.current;
+        if (!element?.isConnected || element.textContent?.trim() || element.querySelector('[data-mention-path]')
+          || state.attachments.length || state.grabbedElements?.length || state.isSending
+          || state.speech.isListening || state.speech.isTranscribing || isSessionFrozen(inputHistorySessionId)) return false;
+        element.textContent = text;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      },
       hasDraft: () => {
         const state = captureStateRef.current;
         return !!editableRef.current?.textContent?.trim() || !!editableRef.current?.querySelector('[data-mention-path]')

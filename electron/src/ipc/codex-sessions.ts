@@ -23,6 +23,7 @@ import {
   getCodexMcpServerOverrides,
 } from "../lib/computer-use-runtime";
 import { getHindsightCodexMcpOverrides, registerMemorySession, unregisterMemorySession, beforeMemorySend, observeCodexNotification, completeMemoryTurn } from "../lib/memory/service";
+import { cancelProjectAppAgentPermissions, registerProjectAppAgentSession, revokeProjectAppAgentSession, getProjectAppMcpServer } from "../lib/project-apps/agent-bridge";
 import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
 import { getSessionRepository } from "../lib/session-service";
 import type { SessionRuntimeLease } from "../lib/session-repository";
@@ -84,12 +85,13 @@ function assertCodexSessionActive(session: CodexSession): void {
 }
 
 export async function stopForDeletion(sessionId: string): Promise<void> {
+  revokeProjectAppAgentSession(sessionId);
   stopUsageSession(sessionId);
   const session = codexSessions.get(sessionId);
   if (!session) return;
   await session.rpc.destroyAndWait();
   codexSessions.delete(sessionId);
-  unregisterMemorySession(sessionId);
+  unregisterMemorySession(sessionId); revokeProjectAppAgentSession(sessionId);
 }
 
 /** Expose the currently selected model for utility prompts (title/commit generation). */
@@ -135,6 +137,8 @@ function getCodexAppServerArgs(sessionId?: string): string[] {
     args.push(...getCodexMcpServerOverrides(computerUse));
   }
   if (sessionId) args.push(...getHindsightCodexMcpOverrides(sessionId));
+  const apps = sessionId ? getProjectAppMcpServer(sessionId) : null;
+  if (apps) args.push(...getCodexMcpServerOverrides(apps));
   return args;
 }
 
@@ -496,7 +500,7 @@ function setupCodexHandlers(
     stopUsageSession(internalId);
     log("codex", ` Process exited: code=${code} signal=${signal} session=${internalId}`);
     codexSessions.delete(internalId);
-    unregisterMemorySession(internalId);
+    unregisterMemorySession(internalId); revokeProjectAppAgentSession(internalId);
     safeSend(getMainWindow, "codex:exit", {
       _sessionId: internalId,
       code,
@@ -538,6 +542,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         log("codex",` Starting app-server: ${codexPath} (session=${internalId})`);
 
         if (options.memoryContext?.projectId) registerMemorySession(internalId, options.memoryContext.projectId, "codex");
+        await registerProjectAppAgentSession(internalId, options.memoryContext?.projectId, options.cwd);
+        runtimeLease?.assertActive();
         const proc = spawnCodexAppServer(codexPath, options.cwd, internalId);
         if (runtimeLease) proc.once("exit", runtimeLease.release);
 
@@ -645,7 +651,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         const errMsg = reportError("CODEX_START_ERR", err, { engine: "codex", sessionId: internalId });
         try { await stopForDeletion(internalId); }
         catch (stopError) { reportError("CODEX_START_STOP_ERR", stopError, { engine: "codex", sessionId: internalId }); }
-        if (!codexSessions.has(internalId)) { runtimeLease?.release(); unregisterMemorySession(internalId); }
+        if (!codexSessions.has(internalId)) { runtimeLease?.release(); unregisterMemorySession(internalId); revokeProjectAppAgentSession(internalId); }
         return { error: errMsg };
       }
     },
@@ -725,6 +731,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
 
   // ─── codex:interrupt ───
   ipcMain.handle("codex:interrupt", async (_, sessionId: string) => {
+    cancelProjectAppAgentPermissions(sessionId);
     const session = codexSessions.get(sessionId);
     if (!session?.threadId || !session.activeTurnId) return { error: "No active turn" };
 
@@ -1046,6 +1053,8 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         log("codex",` Resuming thread ${data.threadId} in new process (session=${internalId})`);
 
         if (data.memoryContext?.projectId) registerMemorySession(internalId, data.memoryContext.projectId, "codex");
+        await registerProjectAppAgentSession(internalId, data.source.projectId, data.cwd);
+        runtimeLease.assertActive();
         const proc = spawnCodexAppServer(codexPath, data.cwd, internalId);
         proc.once("exit", runtimeLease.release);
         const rpc = new CodexRpcClient(proc);
@@ -1101,7 +1110,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
         catch (stopError) { reportError("CODEX_RESUME_STOP_ERR", stopError, { engine: "codex", sessionId: internalId }); }
         if (!codexSessions.has(internalId)) {
           runtimeLease?.release();
-          unregisterMemorySession(internalId);
+          unregisterMemorySession(internalId); revokeProjectAppAgentSession(internalId);
         }
         return { error: errMsg };
       }
@@ -1145,7 +1154,7 @@ export async function stopAll(): Promise<void> {
     stopUsageSession(id);
     stopping.push(session.rpc.destroyAndWait());
     codexSessions.delete(id);
-    unregisterMemorySession(id);
+    unregisterMemorySession(id); revokeProjectAppAgentSession(id);
   }
   const results = await Promise.allSettled(stopping);
   for (const result of results) if (result.status === "rejected") reportError("CODEX_STOP_ERR", result.reason);

@@ -99,7 +99,8 @@ export interface PaneControllerContext {
   splitView?: {
     setFocusedSession: (sessionId: string | null) => void;
   };
-  createSplitPaneDraftSession?: (replacedSessionId: string, projectId: string, agent: InstalledAgent | null) => Promise<void>;
+  createSplitPaneDraftSession?: (replacedSessionId: string, projectId: string, agent: InstalledAgent | null,
+    context: Pick<ChatSession, "workspaceBinding" | "origin">) => Promise<void>;
   queueSplitPaneSendAfterSwitch?: (sessionId: string, text: string, images?: ImageAttachment[], displayText?: string) => Promise<void>;
 }
 
@@ -232,7 +233,8 @@ export function usePaneController(
         return;
       }
 
-      await ctx.createSplitPaneDraftSession?.(sessionId, session.projectId, agent);
+      await ctx.createSplitPaneDraftSession?.(sessionId, session.projectId, agent,
+        { workspaceBinding: session.workspaceBinding, origin: session.origin });
     };
 
     const handlePaneClear = async () => {
@@ -241,7 +243,8 @@ export function usePaneController(
         await ctx.handleComposerClear();
         return;
       }
-      await ctx.createSplitPaneDraftSession?.(sessionId, session.projectId, selectedPaneAgent);
+      await ctx.createSplitPaneDraftSession?.(sessionId, session.projectId, selectedPaneAgent,
+        { workspaceBinding: session.workspaceBinding, origin: session.origin });
     };
 
     const handlePaneSend = async (text: string, images?: ImageAttachment[], displayText?: string) => {

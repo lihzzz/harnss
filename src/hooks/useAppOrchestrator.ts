@@ -129,6 +129,7 @@ export function useAppOrchestrator() {
   });
 
   const spaceWorkflow = useAppSpaceWorkflow({
+    appsViewActive: environment.showApps,
     projectManager,
     spaceManager,
     manager,
@@ -250,6 +251,8 @@ export function useAppOrchestrator() {
   });
 
   const ui = {
+    showApps: environment.showApps,
+    setShowApps: environment.setShowApps,
     showSettings: environment.showSettings,
     setShowSettings: environment.setShowSettings,
     scrollToMessageId: environment.scrollToMessageId,

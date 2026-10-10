@@ -25,6 +25,8 @@ import { useBackgroundReaper } from "./session/useBackgroundReaper";
 import { useDraftMaterialization } from "./session/useDraftMaterialization";
 import { useSessionRevival } from "./session/useSessionRevival";
 import { useSessionLifecycle } from "./session/useSessionLifecycle";
+import { resolveSessionCwd } from "./session/workspace-binding";
+import { toast } from "sonner";
 
 export function useSessionManager(
   projects: Project[],
@@ -466,6 +468,21 @@ export function useSessionManager(
 
   const completeAcpAuth = useCallback(async (result: ACPAuthenticateResult) => {
     if (!acpSessionId) return;
+    const authOptions = { ...startOptionsRef.current };
+    const authActiveId = activeSessionIdRef.current;
+    const authProjectId = authActiveId === DRAFT_ID ? draftProjectIdRef.current
+      : sessionsRef.current.find((session) => session.id === authActiveId)?.projectId;
+    const authProject = authProjectId ? findProject(authProjectId) : null;
+    let authCwd: string | undefined;
+    try {
+      if (authProject) authCwd = await resolveSessionCwd(authProject, authOptions.workspaceBinding, getProjectCwd);
+      else if (authOptions.workspaceBinding) throw new Error("The application's project is no longer available.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+      acp.setIsProcessing(false);
+      return;
+    }
+    if (activeSessionIdRef.current !== authActiveId || startOptionsRef.current.conversationId !== authOptions.conversationId) return;
     const pendingPrompt = pendingAcpDraftPromptRef.current;
     acpAgentSessionIdRef.current = result.agentSessionId ?? acpAgentSessionIdRef.current;
     if (result.configOptions) {
@@ -486,10 +503,13 @@ export function useSessionManager(
       if (project) {
         liveSessionIdsRef.current.add(acpSessionId);
         const now = Date.now();
-        const currentBranch = currentBranchRef.current;
+        const currentBranch = authOptions.workspaceBinding ? undefined : currentBranchRef.current;
         setSessions((prev) => [
           {
             id: acpSessionId,
+            conversationId: authOptions.conversationId ?? acpSessionId,
+            workspaceBinding: authOptions.workspaceBinding,
+            origin: authOptions.origin,
             projectId: project.id,
             title: "New Chat",
             createdAt: now,
@@ -510,7 +530,7 @@ export function useSessionManager(
         setDraftAcpSessionId(null);
         setAcpMcpStatuses(draftMcpStatusesRef.current.length > 0 ? draftMcpStatusesRef.current : []);
         if (pendingPrompt) {
-          generateSessionTitle(acpSessionId, pendingPrompt.text, getProjectCwd(project), "acp");
+          generateSessionTitle(acpSessionId, pendingPrompt.text, authCwd ?? getProjectCwd(project), "acp");
         }
       }
     }
@@ -589,7 +609,8 @@ export function useSessionManager(
     }
 
     return {
-      session,
+      session: { ...session, workspaceBinding: persistedSession.workspaceBinding, origin: persistedSession.origin,
+        conversationId: persistedSession.conversationId ?? session.conversationId ?? session.id },
       initialMessages: persistedSession.messages ?? [],
       initialMeta: {
         isProcessing: false,
@@ -626,6 +647,8 @@ export function useSessionManager(
     setCurrentBranch,
     currentBranch,
     activeSession,
+    activeWorkspaceBinding: isDraft ? startOptions.workspaceBinding : activeSession?.workspaceBinding,
+    activeSessionOrigin: isDraft ? startOptions.origin : activeSession?.origin,
     activeEngine,
     isDraft,
     draftProjectId,

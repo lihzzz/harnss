@@ -365,7 +365,8 @@ export function register(): void {
       const args = ["worktree", "remove"];
       if (force) args.push("--force");
       args.push(resolvedPath);
-      const output = await gitExec(args, cwd);
+      const { getProjectAppsService } = await import("../lib/project-apps");
+      const output = await getProjectAppsService().withWorkspaceRemoval(resolvedPath, () => gitExec(args, cwd));
       return { ok: true, output };
     } catch (err) {
       return { error: reportError("GIT_REMOVE_WORKTREE_ERR", err) };

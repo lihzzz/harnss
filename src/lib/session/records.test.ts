@@ -4,6 +4,29 @@ import { extractSessionMeta } from "@shared/lib/session-persistence";
 import { buildPersistedSession, toChatSession } from "./records";
 
 describe("session records", () => {
+  it("round-trips an application target and origin through save and sidebar restoration", () => {
+    const session: ChatSession = {
+      id: "runtime-b", conversationId: "logical-conversation", projectId: "project", title: "Web app",
+      createdAt: 1, totalCost: 0, isActive: true,
+      workspaceBinding: { projectId: "project", rootKind: "worktree", rootPath: "C:/worktrees/a",
+        repoCommonDir: "C:/repo/.git", relativeCwd: "apps/web" },
+      origin: { kind: "project-app", appId: "app", runId: "run" },
+    };
+    const saved = buildPersistedSession(session, [], 0, null);
+    const listed = extractSessionMeta({ ...saved }, 1);
+    const restored = toChatSession(listed, false);
+    expect(restored).toMatchObject({ conversationId: "logical-conversation",
+      workspaceBinding: session.workspaceBinding, origin: session.origin });
+    expect(buildPersistedSession({ ...restored, id: "runtime-c" }, [], 0, null)).toMatchObject({
+      conversationId: "logical-conversation", workspaceBinding: session.workspaceBinding, origin: session.origin,
+    });
+  });
+
+  it("does not turn malformed application targets into legacy unbound conversations", () => {
+    expect(() => extractSessionMeta({ id: "session", projectId: "project",
+      workspaceBinding: { projectId: "project", rootPath: "/lost" } }, 1)).toThrow("workspace binding is invalid");
+  });
+
   it("keeps the ACP session ID in sidebar metadata", () => {
     const meta = extractSessionMeta({
       id: "session-1",

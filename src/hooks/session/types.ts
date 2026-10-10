@@ -2,11 +2,14 @@ import type { ChatSession, UIMessage, SessionInfo, PermissionRequest, ImageAttac
 import type { BackgroundSessionStore } from "../../lib/background/session-store";
 import { permissionModeToCodexPolicy, permissionModeToCodexSandbox } from "../../lib/engine/codex-adapter";
 import type { CollaborationMode } from "@shared/types/codex-protocol/CollaborationMode";
+import type { ProjectAppSessionOrigin, WorkspaceBinding } from "@shared/types/workspace";
 
 export const DRAFT_ID = "__draft__";
 export const DEFAULT_PERMISSION_MODE = "default";
 
 export interface StartOptions {
+  workspaceBinding?: WorkspaceBinding;
+  origin?: ProjectAppSessionOrigin;
   /** Stable logical conversation ID for workflows that create a session programmatically. */
   conversationId?: string;
   model?: string;

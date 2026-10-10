@@ -13,6 +13,8 @@ export function toChatSession(
   return {
     id: session.id,
     conversationId: session.conversationId ?? session.id,
+    workspaceBinding: session.workspaceBinding,
+    origin: session.origin,
     projectId: session.projectId,
     title: session.title,
     createdAt: session.createdAt,
@@ -44,6 +46,8 @@ export function buildPersistedSession(
   return {
     id: session.id,
     conversationId: session.conversationId ?? session.id,
+    workspaceBinding: session.workspaceBinding,
+    origin: session.origin,
     projectId: session.projectId,
     title: session.title,
     createdAt: session.createdAt,

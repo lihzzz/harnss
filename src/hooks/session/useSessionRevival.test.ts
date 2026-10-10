@@ -49,6 +49,8 @@ function fixture(engineId: EngineId) {
     setInitialMeta: vi.fn(), setInitialConfigOptions: vi.fn(), setAcpMcpStatuses: vi.fn(), setQueuedCount: vi.fn(),
   };
   const api = {
+    projectApps: { validateWorkspace: vi.fn<Window["claude"]["projectApps"]["validateWorkspace"]>()
+      .mockImplementation(async (workspace) => ({ ok: true, value: { workspace, cwd: "/worktree-a/apps/web" } })) },
     start: vi.fn<Window["claude"]["start"]>().mockResolvedValue({ sessionId: newId, pid: 0 }),
     send: vi.fn<Window["claude"]["send"]>().mockResolvedValue({ ok: true }),
     stop: vi.fn<Window["claude"]["stop"]>().mockResolvedValue({ ok: true }),
@@ -103,6 +105,31 @@ function fixture(engineId: EngineId) {
 }
 
 describe.each(["claude", "codex", "acp"] as const)("%s renderer restoration ownership", (engineId) => {
+  it("restores in the bound worktree and preserves application identity when the runtime changes", async () => {
+    const f = fixture(engineId);
+    const source = f.refs.sessionsRef.current[0];
+    source.conversationId = "logical-app-conversation";
+    source.workspaceBinding = { projectId: "project", rootKind: "worktree", rootPath: "/worktree-a",
+      repoCommonDir: "/project/.git", relativeCwd: "apps/web" };
+    source.origin = { kind: "project-app", appId: "web", runId: "run" };
+    await f.revive("Continue editing");
+    expect(f.starting).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/worktree-a/apps/web" }));
+    expect(f.api.sessions.save.mock.calls[0][0]).toMatchObject({ conversationId: "logical-app-conversation",
+      workspaceBinding: source.workspaceBinding, origin: source.origin });
+    expect(f.refs.sessionsRef.current.find((session) => session.id === f.newId)?.workspaceBinding).toEqual(source.workspaceBinding);
+  });
+
+  it("keeps the prompt queued without starting an engine when the bound directory is gone", async () => {
+    const f = fixture(engineId);
+    f.refs.sessionsRef.current[0].workspaceBinding = { projectId: "project", rootKind: "worktree", rootPath: "/gone",
+      repoCommonDir: "/project/.git", relativeCwd: "." };
+    f.api.projectApps.validateWorkspace.mockResolvedValue({ ok: false, error: { code: "TARGET_GONE", message: "Worktree is unavailable", retryable: false } });
+    await f.revive("Do not lose this input");
+    expect(f.starting).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(f.refs.messageQueueRef.current.get(f.id)?.[0].text).toBe("Do not lose this input");
+    expect(f.refs.messagesRef.current.at(-1)).toMatchObject({ content: "Worktree is unavailable", isError: true });
+  });
   it("saves the original snapshot before switching, then waits for the new view before one send", async () => {
     const f = fixture(engineId); f.holdReady();
     const pending = f.revive("Unsent input");
@@ -227,6 +254,17 @@ describe.each(["claude", "codex", "acp"] as const)("%s renderer restoration owne
 });
 
 describe("manual restarts", () => {
+  it.each(["claude", "codex", "acp"] as const)("retains the fixed workspace when restarting %s", async (engineId) => {
+    const f = fixture(engineId);
+    const workspaceBinding = { projectId: "project", rootKind: "worktree" as const, rootPath: "/worktree-a",
+      repoCommonDir: "/project/.git", relativeCwd: "apps/web" };
+    f.refs.sessionsRef.current[0].workspaceBinding = workspaceBinding;
+    await f.restart.restartActiveSessionInCurrentWorktree();
+    if (engineId === "claude") expect(f.api.restartSession.mock.calls[0][2]).toBe("/worktree-a/apps/web");
+    else if (engineId === "acp") expect(f.api.acp.reloadSession.mock.calls[0][2]).toBe("/worktree-a/apps/web");
+    else expect(f.api.codex.resume).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/worktree-a/apps/web" }));
+    expect(f.api.projectApps.validateWorkspace).toHaveBeenCalledWith(workspaceBinding);
+  });
   it("discards a Claude restart's late status refresh after navigation", async () => {
     const f = fixture("claude"); const refreshing = deferred<void>();
     f.engine.refreshMcpStatus.mockImplementation(async (isCurrent) => {

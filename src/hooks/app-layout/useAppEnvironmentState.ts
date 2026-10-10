@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useGlassOrchestrator } from "@/hooks/useGlassOrchestrator";
 import { useNotifications } from "@/hooks/useNotifications";
 import type { ChatSession, MacBackgroundEffect, NotificationSettings, PermissionRequest, SessionInfo, ThemeOption, CodexThreadGoal } from "@/types";
@@ -18,8 +18,18 @@ interface UseAppEnvironmentStateInput {
   onOpenSession?: (sessionId: string) => void;
 }
 
+type MainView = { kind: "workspace" } | { kind: "apps" } | { kind: "settings"; section: SettingsSection };
+
 export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
-  const [showSettings, setShowSettings] = useState<SettingsSection | false>(false);
+  const [mainView, setMainView] = useState<MainView>({ kind: "workspace" });
+  const showSettings: SettingsSection | false = mainView.kind === "settings" ? mainView.section : false;
+  const showApps = mainView.kind === "apps";
+  const setShowSettings = useCallback((section: SettingsSection | false) => {
+    setMainView((current) => section ? { kind: "settings", section } : current.kind === "settings" ? { kind: "workspace" } : current);
+  }, []);
+  const setShowApps = useCallback((visible: boolean) => {
+    setMainView((current) => visible ? { kind: "apps" } : current.kind === "apps" ? { kind: "workspace" } : current);
+  }, []);
   const [scrollToMessageId, setScrollToMessageId] = useState<string | undefined>();
   const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
@@ -53,15 +63,18 @@ export function useAppEnvironmentState(input: UseAppEnvironmentStateInput) {
   });
 
   useEffect(() => {
-    if (!showSettings) window.dispatchEvent(new Event("resize"));
-  }, [showSettings]);
+    window.dispatchEvent(new Event("resize"));
+  }, [mainView.kind]);
 
   useEffect(() => {
     setChatSearchOpen(false);
   }, [input.activeSessionId]);
 
   return {
-    showSettings,
+    mainView,
+    showApps,
+    setShowApps,
+    showSettings: mainView.kind === "settings" ? mainView.section : false as const,
     setShowSettings,
     scrollToMessageId,
     setScrollToMessageId,

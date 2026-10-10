@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useSyncExternalStore, memo, type DragEvent } from "react";
-import { Inbox, PanelLeft, Plus, Paintbrush } from "lucide-react";
+import { Inbox, LayoutGrid, PanelLeft, Plus, Paintbrush } from "lucide-react";
 import { isMac } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,6 +109,7 @@ interface AppSidebarProjectActions {
   onCreateFolder: (projectId: string) => void;
   onSetOrganizeByChatBranch: (on: boolean) => void;
   onOpenWorkflow: () => void;
+  onOpenApps: (projectId?: string) => void;
 }
 
 interface AppSidebarSpaceState {
@@ -179,6 +180,7 @@ export const AppSidebar = memo(function AppSidebar({
     onCreateFolder,
     onSetOrganizeByChatBranch,
     onOpenWorkflow,
+    onOpenApps,
   } = projectActions;
   const { spaces, activeSpaceId } = spaceState;
   const {
@@ -631,6 +633,14 @@ export const AppSidebar = memo(function AppSidebar({
           />
           <button
             type="button"
+            onClick={() => onOpenApps()}
+            className="mx-3 mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+            {t("Apps")}
+          </button>
+          <button
+            type="button"
             onClick={onOpenWorkflow}
             className="mx-3 mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
           >
@@ -651,6 +661,7 @@ export const AppSidebar = memo(function AppSidebar({
 
                   return (
                     <ProjectSection
+                      onAddApp={() => onOpenApps(project.id)}
                       key={project.id}
                       islandLayout={islandLayout}
                       project={project}

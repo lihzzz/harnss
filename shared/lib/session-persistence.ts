@@ -3,8 +3,11 @@
  */
 
 import { parseThreadGoal } from "./codex-goal";
+import type { ProjectAppSessionOrigin, WorkspaceBinding } from "../types/workspace";
 
 export interface SessionMeta {
+  workspaceBinding?: WorkspaceBinding;
+  origin?: ProjectAppSessionOrigin;
   conversationId?: string;
   id: string;
   projectId: string;
@@ -53,6 +56,8 @@ export function getLastUserMessageTimestamp(
  */
 export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt: number): SessionMeta {
   return {
+    workspaceBinding: parseWorkspaceBinding(data.workspaceBinding),
+    origin: parseSessionOrigin(data.origin),
     id: data.id as string,
     conversationId: data.conversationId as string | undefined,
     projectId: data.projectId as string,
@@ -76,4 +81,29 @@ export function extractSessionMeta(data: Record<string, unknown>, lastMessageAt:
       ? null
       : parseThreadGoal(data.codexGoal),
   };
+}
+
+/** Corrupt bindings must fail visibly instead of restoring in a different directory. */
+function parseWorkspaceBinding(value: unknown): WorkspaceBinding | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null
+    || !("projectId" in value) || typeof value.projectId !== "string"
+    || !("rootKind" in value) || (value.rootKind !== "project" && value.rootKind !== "worktree")
+    || !("rootPath" in value) || typeof value.rootPath !== "string"
+    || !("repoCommonDir" in value) || (value.repoCommonDir !== null && typeof value.repoCommonDir !== "string")
+    || !("relativeCwd" in value) || typeof value.relativeCwd !== "string") {
+    throw new Error("The conversation workspace binding is invalid. Rebind its application directory before continuing.");
+  }
+  return { projectId: value.projectId, rootKind: value.rootKind, rootPath: value.rootPath,
+    repoCommonDir: value.repoCommonDir, relativeCwd: value.relativeCwd };
+}
+
+function parseSessionOrigin(value: unknown): ProjectAppSessionOrigin | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || !("kind" in value) || value.kind !== "project-app"
+    || !("appId" in value) || typeof value.appId !== "string"
+    || !("runId" in value) || (value.runId !== null && typeof value.runId !== "string")) {
+    throw new Error("The conversation application origin is invalid.");
+  }
+  return { kind: "project-app", appId: value.appId, runId: value.runId };
 }

@@ -2,6 +2,8 @@ export interface QuickCaptureComposer {
   focus: () => boolean;
   hasDraft: () => boolean;
   dictate: () => Promise<void>;
+  /** Insert user-reviewable context only when this composer has no unsent draft. */
+  insertDraft?: (text: string) => boolean;
 }
 
 const composers = new Map<string, QuickCaptureComposer>();

@@ -3,6 +3,8 @@ import type { CodexFingerprintProbeRequest } from "@shared/types/codex-fingerpri
 import type { BackgroundEffectState } from "@shared/types/background-effect";
 import type { BatchJob, BatchPreparedRequest, BatchStartRequest, HistoryApi, HistoryIndexStatus, QuickCaptureApi, QuickCaptureTarget, QuickCaptureUpdate, SessionBatchApi, SessionResumeSource } from "@shared/types/productivity";
 import { applyBackgroundEffectClasses } from "@shared/lib/background-effect-classes";
+import type { AppEvent, ProjectAppsApi } from "@shared/types/project-apps";
+import type { ProjectAppAgentPermissionEvent } from "@shared/types/project-app-agent";
 
 interface PreloadDocument {
   addEventListener: (type: string, listener: () => void, options: { once: boolean }) => void;
@@ -84,7 +86,38 @@ try {
   console.error("[preload] early setup failed:", e);
 }
 
+const projectApps: ProjectAppsApi = {
+  pendingAgentPermissions: () => ipcRenderer.invoke("project-apps:agent-permissions"),
+  respondAgentPermission: (response) => ipcRenderer.invoke("project-apps:agent-permission-response", response),
+  onAgentPermission: (callback) => {
+    const listener = (_event: IpcRendererEvent, event: ProjectAppAgentPermissionEvent) => callback(event);
+    ipcRenderer.on("project-apps:agent-permission", listener);
+    return () => ipcRenderer.removeListener("project-apps:agent-permission", listener);
+  },
+  list: () => ipcRenderer.invoke("project-apps:list"),
+  workspaces: (projectId) => ipcRenderer.invoke("project-apps:workspaces", projectId),
+  validateWorkspace: (workspace) => ipcRenderer.invoke("project-apps:validate-workspace", workspace),
+  discover: (workspace) => ipcRenderer.invoke("project-apps:discover", workspace),
+  save: (request) => ipcRenderer.invoke("project-apps:save", request),
+  remove: (request) => ipcRenderer.invoke("project-apps:remove", request),
+  start: (request) => ipcRenderer.invoke("project-apps:start", request),
+  stop: (request) => ipcRenderer.invoke("project-apps:stop", request),
+  restart: (request) => ipcRenderer.invoke("project-apps:restart", request),
+  logs: (request) => ipcRenderer.invoke("project-apps:logs", request),
+  prepareContext: (request) => ipcRenderer.invoke("project-apps:prepare-context", request),
+  links: (appId) => ipcRenderer.invoke("project-apps:links", appId),
+  linkSession: (link) => ipcRenderer.invoke("project-apps:link-session", link),
+  exportConfig: (ids) => ipcRenderer.invoke("project-apps:export-config", ids),
+  importConfig: (request) => ipcRenderer.invoke("project-apps:import-config", request),
+  onEvent: (callback) => {
+    const listener = (_event: IpcRendererEvent, event: AppEvent) => callback(event);
+    ipcRenderer.on("project-apps:event", listener);
+    return () => ipcRenderer.removeListener("project-apps:event", listener);
+  },
+};
+
 contextBridge.exposeInMainWorld("claude", {
+  projectApps,
   getGlassSupported: () => ipcRenderer.invoke("app:getGlassSupported"),
   getBackgroundEffect: () => ipcRenderer.invoke("app:get-background-effect"),
   setTransparency: (enabled: boolean) => ipcRenderer.invoke("app:set-transparency", enabled),

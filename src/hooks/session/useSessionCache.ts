@@ -86,15 +86,20 @@ export function useSessionCache({
     if (isSessionFrozen(id) || !refs.projectsRef.current.some((project) => project.id === data.projectId)) return;
     const codexGoal = data.engine === "codex" ? parseThreadGoal(data.codexGoal) : null;
     startTransition(() => {
-      setStartOptions((prev) => ({
-        ...prev,
+      const sessionOptions = {
+        ...startOptionsRef.current,
+        conversationId: data.conversationId ?? data.id,
+        workspaceBinding: data.workspaceBinding,
+        origin: data.origin,
         engine: data.engine ?? "claude",
         model: data.model,
         effort: data.effort,
         permissionMode: data.permissionMode,
         planMode: !!data.planMode,
         agentId: data.agentId,
-      }));
+      };
+      startOptionsRef.current = sessionOptions;
+      setStartOptions(sessionOptions);
       setInitialMessages(data.messages);
       setInitialMeta({
         isProcessing: false,
@@ -114,6 +119,9 @@ export function useSessionCache({
           ...s,
           isActive: s.id === id,
           ...(s.id === id ? {
+            conversationId: data.conversationId ?? data.id,
+            workspaceBinding: data.workspaceBinding,
+            origin: data.origin,
             ...(data.engine ? { engine: data.engine } : {}),
             ...(data.agentId ? { agentId: data.agentId } : {}),
             ...(data.agentSessionId ? { agentSessionId: data.agentSessionId } : {}),

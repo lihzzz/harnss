@@ -63,8 +63,13 @@ export function register(): void {
     }
   });
 
-  ipcMain.handle("spaces:save", (_event, spaces: Space[]) => {
+  ipcMain.handle("spaces:save", async (_event, spaces: Space[]) => {
     try {
+      const removed = (readSpaces(true) ?? []).filter((space) => space.id !== "default" && !spaces.some((next) => next.id === space.id));
+      if (removed.length) {
+        const { getProjectAppsService } = await import("../lib/project-apps");
+        for (const space of removed) await getProjectAppsService().reassignSpace(space.id);
+      }
       writeSpaces(spaces);
       return { ok: true };
     } catch (err) {

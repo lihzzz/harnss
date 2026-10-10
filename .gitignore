@@ -12,9 +12,16 @@ docs/
 /docs/productivity-enhancements/*
 !/docs/productivity-enhancements/system-analysis.md
 !/docs/productivity-enhancements/implementation-status.md
+!/docs/project-apps/
+/docs/project-apps/*
+!/docs/project-apps/integration-plan.md
+!/docs/project-apps/user-guide.md
+!/docs/project-apps/implementation-status.md
 /release/
 .cache/
 .claude/agent-memory/
 frontend/
 cli
 .idea/
+/outputs/
+.workbuddy-ai/

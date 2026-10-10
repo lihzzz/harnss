@@ -20,6 +20,7 @@ type SplitViewState = ReturnType<typeof useSplitView>;
 type SpaceTerminalsState = ReturnType<typeof useSpaceTerminals>;
 
 interface UseAppSpaceWorkflowInput {
+  appsViewActive: boolean;
   projectManager: ProjectManagerState;
   spaceManager: SpaceManagerState;
   manager: SessionManagerState;
@@ -152,6 +153,8 @@ export function useAppSpaceWorkflow(input: UseAppSpaceWorkflowInput) {
     const prev = prevSpaceIdRef.current;
     const next = input.spaceManager.activeSpaceId;
     prevSpaceIdRef.current = next;
+    // In Apps, Space is a catalog filter. The mounted chat and its draft stay put.
+    if (input.appsViewActive) return;
     if (prev === next) return;
     if (next === draftSpaceIdRef.current) return;
 
@@ -196,7 +199,7 @@ export function useAppSpaceWorkflow(input: UseAppSpaceWorkflowInput) {
 
     setIsSpaceSwitching(false);
     void Promise.resolve(input.manager.deselectSession()).finally(finishSpaceSwitch);
-  }, [input.manager, input.projectManager.projects, input.spaceManager.activeSpaceId, input.splitView, readLastSessionMap]);
+  }, [input.appsViewActive, input.manager, input.projectManager.projects, input.spaceManager.activeSpaceId, input.splitView, readLastSessionMap]);
 
   useEffect(() => {
     const setCurrentBranch = input.manager.setCurrentBranch;

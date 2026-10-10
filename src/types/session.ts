@@ -3,6 +3,7 @@ import type { EngineId } from "./engine";
 import type { ImageAttachment } from "./attachments";
 import type { ContextUsage } from "./mcp";
 import type { CodexThreadGoal } from "./codex";
+import type { ProjectAppSessionOrigin, WorkspaceBinding } from "@shared/types/workspace";
 
 // ── Effort ──
 
@@ -92,6 +93,9 @@ export interface ChatFolder {
 
 /** Fields shared between live and persisted session representations. */
 export interface SessionBase {
+  /** Fixed execution directory for application-linked conversations. */
+  workspaceBinding?: WorkspaceBinding;
+  origin?: ProjectAppSessionOrigin;
   /** Stable logical id shared by revived/forked runtime sessions. */
   conversationId?: string;
   id: string;

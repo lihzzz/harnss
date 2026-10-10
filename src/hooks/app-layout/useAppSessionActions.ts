@@ -5,6 +5,8 @@ import { useSettingsCompat } from "@/hooks/useSettingsCompat";
 import type { ImageAttachment, InstalledAgent, ClaudeEffort, EngineId } from "@/types";
 import type { SettingsSection } from "@/components/SettingsView";
 import { buildSessionOptions } from "./session-utils";
+import { toast } from "sonner";
+import { reportError } from "@/lib/analytics/analytics";
 
 type SessionManagerState = ReturnType<typeof useSessionManager>;
 type SettingsState = ReturnType<typeof useSettingsCompat>;
@@ -33,6 +35,10 @@ export function useAppSessionActions(input: UseAppSessionActionsInput) {
   }, [input.manager.supportedModels, input.settings.claudeEffort]);
 
   const handleAgentWorktreeChange = useCallback((nextPath: string | null) => {
+    if (input.manager.activeWorkspaceBinding) {
+      toast.error("This application conversation has a fixed working directory. Choose another target from the application panel.");
+      return;
+    }
     input.settings.setGitCwd(nextPath);
 
     if (input.manager.activeSessionId && !input.manager.isDraft && input.manager.activeSession) {
@@ -74,7 +80,11 @@ export function useAppSessionActions(input: UseAppSessionActionsInput) {
         getClaudeEffortForModel,
         agent,
       );
-      void input.manager.createSession(input.manager.activeSession!.projectId, options);
+      void input.manager.createSession(input.manager.activeSession!.projectId, {
+        ...options,
+        workspaceBinding: input.manager.activeSession!.workspaceBinding,
+        origin: input.manager.activeSession!.origin,
+      }).catch((error: unknown) => toast.error(reportError("APP_SESSION_AGENT_CHANGE", error)));
       return;
     }
 
@@ -120,7 +130,11 @@ export function useAppSessionActions(input: UseAppSessionActionsInput) {
         getClaudeEffortForModel,
         input.selectedAgent,
       );
-      await input.manager.createSession(input.manager.activeSession!.projectId, options);
+      await input.manager.createSession(input.manager.activeSession!.projectId, {
+        ...options,
+        workspaceBinding: input.manager.activeSession!.workspaceBinding,
+        origin: input.manager.activeSession!.origin,
+      });
     }
     await input.manager.send(text, images, displayText);
   }, [getClaudeEffortForModel, input.manager, input.selectedAgent, input.settings]);

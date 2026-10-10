@@ -57,7 +57,7 @@ interface BrowserNavBarProps {
   /** Whether element inspect mode is active. */
   inspectMode: boolean;
   /** Toggle element inspect mode. */
-  onToggleInspect: () => void;
+  onToggleInspect?: () => void;
 
   /** Whether DevTools are open. */
   isDevToolsOpen: boolean;
@@ -140,7 +140,7 @@ export function BrowserNavBar({
       </div>
 
       {/* Inspect button */}
-      <button
+      {onToggleInspect && <button
         type="button"
         className={`flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-20 ${
           inspectMode
@@ -152,7 +152,7 @@ export function BrowserNavBar({
         title={inspectMode ? "Cancel inspect" : "Grab element"}
       >
         <Crosshair className="h-3 w-3" />
-      </button>
+      </button>}
 
       {/* DevTools button */}
       <button

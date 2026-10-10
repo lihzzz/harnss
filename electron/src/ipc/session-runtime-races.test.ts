@@ -55,6 +55,13 @@ vi.mock("../lib/memory/service", () => ({
   registerMemorySession: vi.fn(), unregisterMemorySession: vi.fn(), beforeMemorySend: state.beforeSend,
   observeClaudeEvent: vi.fn(), observeCodexNotification: vi.fn(), observeAcpUpdate: vi.fn(), completeMemoryTurn: vi.fn(),
 }));
+// Application bridge authentication/scope/approval behavior is covered by its
+// own tests; these fixtures isolate engine process and repository lifetimes.
+vi.mock("../lib/project-apps/agent-bridge", () => ({
+  registerProjectAppAgentSession: vi.fn(async () => {}), revokeProjectAppAgentSession: vi.fn(), cancelProjectAppAgentPermissions: vi.fn(),
+  withProjectAppMcpServer: (servers: unknown[] = []) => servers,
+  getProjectAppMcpServer: () => null, getProjectAppAgentProjectId: () => "project",
+}));
 vi.mock("../lib/usage", () => ({ beginUsageTurn: vi.fn(), endUsageTurn: vi.fn(), stopUsageSession: vi.fn() }));
 // Command launch has separate real native/shim/argument tests. These fixtures
 // exercise protocol lifecycle races without invoking a real installed agent.

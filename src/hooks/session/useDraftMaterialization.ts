@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { toast } from "sonner";
 import type { UIMessage, ChatSession, McpServerConfig, Project, ImageAttachment, EngineId } from "../../types";
 import { toMcpStatusState } from "../../lib/mcp-utils";
@@ -17,6 +17,7 @@ import {
   pickCodexModel,
 } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks, StartOptions } from "./types";
+import { resolveSessionCwd } from "./workspace-binding";
 
 interface UseDraftMaterializationParams {
   refs: SharedSessionRefs;
@@ -37,6 +38,8 @@ export function useDraftMaterialization({
   generateSessionTitle,
   applyCodexModelDefaultEffort,
 }: UseDraftMaterializationParams) {
+  const eagerClaudeAttempt = useRef(0);
+  const eagerAcpAttempt = useRef(0);
   const { claude, acp, codex } = engines;
   const {
     setSessions,
@@ -76,13 +79,17 @@ export function useDraftMaterialization({
 
   // Eagerly start a Claude SDK session for immediate MCP status display
   const eagerStartSession = useCallback(async (projectId: string, options?: StartOptions) => {
+    const attempt = ++eagerClaudeAttempt.current;
+    const conversationId = options?.conversationId;
     const project = refs.projectsRef.current.find((p) => p.id === projectId);
     if (!project) return;
     const mcpServers = await window.claude.mcp.list(projectId);
     let result;
     try {
+      const cwd = await resolveSessionCwd(project, options?.workspaceBinding, getProjectCwd);
+      if (attempt !== eagerClaudeAttempt.current) return;
       result = await window.claude.start({
-        cwd: getProjectCwd(project),
+        cwd,
         model: options?.model,
         permissionMode: getEffectiveClaudePermissionMode(options ?? {}),
         thinkingEnabled: options?.thinkingEnabled,
@@ -100,7 +107,9 @@ export function useDraftMaterialization({
       return;
     }
     // Only commit if still in draft for the same project
-    if (activeSessionIdRef.current === DRAFT_ID && draftProjectIdRef.current === projectId) {
+    if (attempt === eagerClaudeAttempt.current && activeSessionIdRef.current === DRAFT_ID
+      && draftProjectIdRef.current === projectId && startOptionsRef.current.conversationId === conversationId
+      && (startOptionsRef.current.engine ?? "claude") === "claude") {
       liveSessionIdsRef.current.add(result.sessionId);
       preStartedSessionIdRef.current = result.sessionId;
       setPreStartedSessionId(result.sessionId);
@@ -126,13 +135,15 @@ export function useDraftMaterialization({
       suppressNextSessionCompletion(result.sessionId);
       window.claude.stop(result.sessionId, "draft_abandoned");
     }
-  }, []);
+  }, [getProjectCwd]);
 
   const eagerStartAcpSession = useCallback(async (
     projectId: string,
     options?: StartOptions,
     overrideServers?: McpServerConfig[],
   ) => {
+    const attempt = ++eagerAcpAttempt.current;
+    const conversationId = options?.conversationId;
     const project = refs.projectsRef.current.find((p) => p.id === projectId);
     const agentId = options?.agentId?.trim();
     if (!project || !agentId) return;
@@ -141,9 +152,11 @@ export function useDraftMaterialization({
     let result;
     setAcpConfigOptionsLoading(true);
     try {
+      const cwd = await resolveSessionCwd(project, options?.workspaceBinding, getProjectCwd);
+      if (attempt !== eagerAcpAttempt.current) return;
       result = await window.claude.acp.start({
         agentId,
-        cwd: getProjectCwd(project),
+        cwd,
         mcpServers,
         memoryContext: { projectId },
       });
@@ -172,7 +185,9 @@ export function useDraftMaterialization({
 
     const sessionId = result.sessionId;
     const isStillDraft =
-      activeSessionIdRef.current === DRAFT_ID
+      attempt === eagerAcpAttempt.current
+      && startOptionsRef.current.conversationId === conversationId
+      && activeSessionIdRef.current === DRAFT_ID
       && draftProjectIdRef.current === projectId
       && (startOptionsRef.current.engine ?? "claude") === "acp"
       && startOptionsRef.current.agentId === agentId;
@@ -308,6 +323,7 @@ export function useDraftMaterialization({
 
   // Clean up a pre-started eager session
   const abandonEagerSession = useCallback((reason = "cleanup") => {
+    eagerClaudeAttempt.current += 1;
     const id = preStartedSessionIdRef.current;
     if (!id) return;
     suppressNextSessionCompletion(id);
@@ -320,6 +336,7 @@ export function useDraftMaterialization({
   }, []);
 
   const abandonDraftAcpSession = useCallback((reason = "cleanup") => {
+    eagerAcpAttempt.current += 1;
     void reason;
     const id = draftAcpSessionIdRef.current;
     if (!id) return;
@@ -350,13 +367,22 @@ export function useDraftMaterialization({
         materializingRef.current = false;
         return "";
       }
-      const options = startOptionsRef.current;
+      const options = { ...startOptionsRef.current };
       const draftEngine = options.engine ?? "claude";
       let sessionId: string;
       let sessionModel = options.model;
       let codexThreadId: string | undefined;
       let reusedPreStarted = false;
       let preStartedBackgroundState: BackgroundSessionState | undefined;
+
+      let cwd: string;
+      try {
+        cwd = await resolveSessionCwd(project, options.workspaceBinding, getProjectCwd);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+        materializingRef.current = false;
+        return "";
+      }
 
       // Load per-project MCP servers to pass to the session
       const mcpServers = await window.claude.mcp.list(project.id);
@@ -366,6 +392,9 @@ export function useDraftMaterialization({
         // Uses DRAFT_ID as a placeholder; replaced with real session ID on success, removed on error.
         setSessions(prev => [{
           id: DRAFT_ID,
+          conversationId: options.conversationId,
+          workspaceBinding: options.workspaceBinding,
+          origin: options.origin,
           projectId: project.id,
           title: "New Chat",
           createdAt: Date.now(),
@@ -387,7 +416,7 @@ export function useDraftMaterialization({
         } else {
           const result = await window.claude.acp.start({
             agentId: options.agentId,
-            cwd: getProjectCwd(project),
+            cwd,
             mcpServers,
             memoryContext: { projectId: project.id },
           });
@@ -420,7 +449,9 @@ export function useDraftMaterialization({
 
             window.claude.sessions.save({
               id: failedId,
-              conversationId: refs.startOptionsRef.current.conversationId ?? failedId,
+              conversationId: options.conversationId ?? failedId,
+              workspaceBinding: options.workspaceBinding,
+              origin: options.origin,
               projectId: project.id,
               title: "New Chat",
               createdAt: Date.now(),
@@ -471,6 +502,9 @@ export function useDraftMaterialization({
         // Codex app-server path
         setSessions(prev => [{
           id: DRAFT_ID,
+          conversationId: options.conversationId,
+          workspaceBinding: options.workspaceBinding,
+          origin: options.origin,
           projectId: project.id,
           title: "New Chat",
           createdAt: Date.now(),
@@ -492,7 +526,7 @@ export function useDraftMaterialization({
         const approvalPolicy = getCodexApprovalPolicy(options);
         const sandbox = getCodexSandboxMode(options);
         const result = await window.claude.codex.start({
-          cwd: getProjectCwd(project),
+          cwd,
           ...(draftModel ? { model: draftModel } : {}),
           ...(approvalPolicy ? { approvalPolicy } : {}),
           ...(sandbox ? { sandbox } : {}),
@@ -519,7 +553,9 @@ export function useDraftMaterialization({
           setDraftProjectId(null);
           window.claude.sessions.save({
             id: failedId,
-            conversationId: refs.startOptionsRef.current.conversationId ?? failedId,
+            conversationId: options.conversationId ?? failedId,
+            workspaceBinding: options.workspaceBinding,
+            origin: options.origin,
             projectId: project.id,
             title: "New Chat",
             createdAt: Date.now(),
@@ -587,7 +623,7 @@ export function useDraftMaterialization({
           let result;
           try {
             result = await window.claude.start({
-              cwd: getProjectCwd(project),
+              cwd,
               model: options.model,
               permissionMode: getEffectiveClaudePermissionMode(options),
               thinkingEnabled: options.thinkingEnabled,
@@ -613,10 +649,12 @@ export function useDraftMaterialization({
       liveSessionIdsRef.current.add(sessionId);
 
       const now = Date.now();
-      const currentBranch = refs.currentBranchRef.current;
+      const currentBranch = options.workspaceBinding ? undefined : refs.currentBranchRef.current;
       const newSession: ChatSession = {
         id: sessionId,
-        conversationId: refs.startOptionsRef.current.conversationId ?? sessionId,
+        conversationId: options.conversationId ?? sessionId,
+        workspaceBinding: options.workspaceBinding,
+        origin: options.origin,
         projectId: project.id,
         title: "New Chat",
         createdAt: now,
@@ -658,7 +696,8 @@ export function useDraftMaterialization({
       // background instead of taking focus back.
       const ownsDraft =
         activeSessionIdRef.current === DRAFT_ID
-        && draftProjectIdRef.current === project.id;
+        && draftProjectIdRef.current === project.id
+        && startOptionsRef.current.conversationId === options.conversationId;
 
       // Replace the DRAFT_ID placeholder (if any) with the real session entry.
       setSessions((prev) => {
@@ -734,13 +773,13 @@ export function useDraftMaterialization({
 
       // Fire-and-forget AI title generation — routes through ACP if that's the active engine
       if (text.trim()) {
-        generateSessionTitle(sessionId, text, getProjectCwd(project), draftEngine);
+        generateSessionTitle(sessionId, text, cwd, draftEngine);
       }
 
       materializingRef.current = false;
       return sessionId;
     },
-    [acp, applyCodexModelDefaultEffort, findProject, generateSessionTitle, codex.setCodexModels, setDraftAcpSessionId],
+    [acp, applyCodexModelDefaultEffort, findProject, generateSessionTitle, getProjectCwd, codex.setCodexModels, setDraftAcpSessionId],
   );
 
   return {

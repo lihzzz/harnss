@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { Language } from "@/types";
+import { APPS_EN, APPS_ZH } from "@/components/apps/strings";
 
 /**
  * Small, dependency-free UI translation layer.
@@ -10,6 +11,7 @@ import type { Language } from "@/types";
  * used as the fallback so newly added copy stays readable before it is translated.
  */
 const ZH_CN: Record<string, string> = {
+  ...APPS_ZH,
   sessionRecoveryCancelled: "会话已切换或停用，已取消恢复。未发送内容保留在原会话队列中。",
   sessionRecoveryNoAgent: "此会话缺少 Agent 配置，请选择有效的 Agent 后重试。",
   sessionRecoveryNoThread: "未找到可恢复的 Codex 线程。",
@@ -508,6 +510,7 @@ const ZH_CN: Record<string, string> = {
 export type TranslationKey = keyof typeof ZH_CN;
 
 const EN_US: Record<TranslationKey, string> = {
+  ...APPS_EN,
   sessionRecoveryCancelled: "The conversation changed or became unavailable. Restoration was cancelled; unsent input remains in its queue.",
   sessionRecoveryNoAgent: "This conversation has no agent configuration. Select an available agent and retry.",
   sessionRecoveryNoThread: "No resumable Codex thread was found.",

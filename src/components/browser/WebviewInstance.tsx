@@ -187,7 +187,7 @@ export function WebviewInstance({
         onGoForward={handleGoForward}
         onReloadOrStop={handleReloadOrStop}
         inspectMode={inspectMode ?? false}
-        onToggleInspect={onToggleInspect ?? (() => {})}
+        onToggleInspect={onToggleInspect}
         isDevToolsOpen={isDevToolsOpen}
         onToggleDevTools={handleToggleDevTools}
         colorScheme={tab.colorScheme}

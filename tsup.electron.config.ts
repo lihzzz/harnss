@@ -5,6 +5,7 @@ export default defineConfig({
     main: "electron/src/main.ts",
     preload: "electron/src/preload.ts",
     "computer-use-mcp": "electron/src/computer-use-mcp.ts",
+    "project-apps-mcp": "electron/src/project-apps-mcp.ts",
     "history-worker": "electron/src/lib/history/worker.ts",
     "embedding-worker": "electron/src/lib/history/embedding-worker.ts",
   },

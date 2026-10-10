@@ -1,10 +1,15 @@
 import { execSync } from "child_process";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray, webContents } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray, webContents } from "electron";
 import path from "path";
 import http from "http";
 import contextMenu from "electron-context-menu";
 import { getBootstrapMinWindowWidth } from "../../src/lib/layout/constants";
 import { fitWindowToWorkArea } from "./lib/window-bounds";
+import { isAllowedPreviewUrl } from "./lib/browser-safety";
+import { prepareManagedQuit } from "./lib/app-quit";
+import * as projectAppsIpc from "./ipc/project-apps";
+import { getProjectAppsService } from "./lib/project-apps";
+import { shutdownProjectAppAgentBridge } from "./lib/project-apps/agent-bridge";
 
 // Packaged .app bundles launched from Finder get a minimal PATH (/usr/bin:/bin).
 // Inherit the user's shell PATH so child processes (SDK's `node`, git, etc.) resolve.
@@ -36,7 +41,7 @@ import * as projectsIpc from "./ipc/projects";
 import * as sessionsIpc from "./ipc/sessions";
 import * as sessionOperationsIpc from "./ipc/session-operations";
 import * as historyIpc from "./ipc/history";
-import { configureSessionStopper } from "./lib/session-service";
+import { configureSessionStopper, configureProjectAppCleanup } from "./lib/session-service";
 import { GlobalShortcuts } from "./lib/global-shortcuts";
 import { QuickCapture } from "./lib/quick-capture";
 import * as quickCaptureIpc from "./ipc/quick-capture";
@@ -162,7 +167,35 @@ function updateRecoveryEntry(): void {
 
 app.on("second-instance", showMainWindow);
 app.on("activate", () => { if (app.isReady()) showMainWindow(); });
-app.on("before-quit", () => { quitting = true; });
+let managedQuitApproved = false;
+let preparingQuit = false;
+app.on("before-quit", (event) => {
+  if (managedQuitApproved) { quitting = true; return; }
+  event.preventDefault();
+  if (preparingQuit) return;
+  preparingQuit = true;
+  void prepareManagedQuit({
+    stop: () => getProjectAppsService().shutdown(),
+    onFailure: async (error) => {
+      reportError("PROJECT_APPS:QUIT", error);
+      const chinese = app.getLocale().startsWith("zh");
+      const response = await dialog.showMessageBox({
+        type: "error", title: "Harnss",
+        message: chinese ? "部分应用未能停止，Harnss 暂时保留运行。" : "Some applications could not be stopped. Harnss is still running.",
+        detail: error instanceof Error ? error.message : String(error),
+        buttons: chinese ? ["重试", "取消退出", "强制退出"] : ["Retry", "Cancel quit", "Force quit"],
+        defaultId: 0, cancelId: 1, noLink: true,
+      });
+      return response.response === 0 ? "retry" : response.response === 2 ? "force" : "cancel";
+    },
+  }).then((approved) => {
+    if (!approved) { showMainWindow(); return; }
+    managedQuitApproved = true;
+    quitting = true;
+    app.quit();
+  }).catch((error) => { reportError("PROJECT_APPS:QUIT", error); showMainWindow(); })
+    .finally(() => { preparingQuit = false; });
+});
 
 function isMainRendererPermissionRequest(webContents: Electron.WebContents | null): boolean {
   return !!webContents && webContents.id === mainWindow?.webContents.id;
@@ -261,6 +294,9 @@ function createWindow(): void {
     if (!quitting && shortcuts.enabled && shortcuts.keepAliveOnClose && (process.platform === "darwin" || tray)) {
       event.preventDefault();
       mainWindow?.hide();
+    } else if (!quitting) {
+      event.preventDefault();
+      app.quit();
     }
   });
   mainWindow.on("session-end", () => { quitting = true; });
@@ -289,13 +325,31 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedPreviewUrl(url) && url !== "about:blank") void shell.openExternal(url);
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (url === mainWindow?.webContents.getURL()) return;
     event.preventDefault();
-    void shell.openExternal(url);
+    if (isAllowedPreviewUrl(url) && url !== "about:blank") void shell.openExternal(url);
+  });
+
+  mainWindow.webContents.on("will-attach-webview", (event, preferences, params) => {
+    delete preferences.preload;
+    preferences.nodeIntegration = false;
+    preferences.nodeIntegrationInSubFrames = false;
+    preferences.contextIsolation = true;
+    preferences.sandbox = true;
+    preferences.webSecurity = true;
+    if (!isAllowedPreviewUrl(params.src)) event.preventDefault();
+  });
+  mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (isAllowedPreviewUrl(url) && url !== "about:blank") void shell.openExternal(url);
+      return { action: "deny" };
+    });
+    guest.on("will-navigate", (event, url) => { if (!isAllowedPreviewUrl(url)) event.preventDefault(); });
+    guest.on("will-redirect", (event, url) => { if (!isAllowedPreviewUrl(url)) event.preventDefault(); });
   });
 
   mainWindow.webContents.on("did-finish-load", () => backgroundEffects.refresh());
@@ -413,6 +467,8 @@ ipcMain.on("glass:set-theme", (_event, theme: string) => {
 // --- Register all IPC modules ---
 spacesIpc.register();
 projectsIpc.register(getMainWindow);
+projectAppsIpc.register(getMainWindow);
+configureProjectAppCleanup((projectId) => getProjectAppsService().removeProject(projectId));
 sessionsIpc.register();
 sessionOperationsIpc.register(getMainWindow);
 historyIpc.register(getMainWindow);
@@ -638,6 +694,7 @@ app.on("will-quit", (event) => {
     .then(({ stopMemoryDaemon }) => stopMemoryDaemon())
     .catch((err) => reportError("MEMORY_DAEMON", err, { context: "shutdown" }));
   Promise.all([
+    shutdownProjectAppAgentBridge().catch((err) => reportError("PROJECT_APPS:BRIDGE_SHUTDOWN", err)),
     engineShutdown,
     shutdownPostHog().catch((err) => {
       // Log and continue exit even if analytics shutdown fails

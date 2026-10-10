@@ -10,6 +10,7 @@ import { beginSessionRecovery, isSessionFrozen } from "../../lib/session/batch-r
 import { useI18n } from "@/lib/i18n";
 import { DRAFT_ID, getEffectiveClaudePermissionMode, getCodexApprovalPolicy, getCodexSandboxMode } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks, InitialMeta } from "./types";
+import { resolveSessionCwd } from "./workspace-binding";
 
 interface UseSessionRestartParams {
   refs: Pick<SharedSessionRefs, "activeSessionIdRef" | "sessionsRef" | "messagesRef" | "totalCostRef" | "contextUsageRef" | "isProcessingRef" | "liveSessionIdsRef" | "backgroundStoreRef" | "messageQueueRef" | "startOptionsRef" | "acpAgentIdRef" | "acpAgentSessionIdRef">;
@@ -61,7 +62,9 @@ export function useSessionRestart({ refs, setters, engines, findProject, getProj
       const snapshot = refs.messagesRef.current;
       await persistSessionReplacement(oldId, buildPersistedSession(session, snapshot.filter((m) => !m.isQueued), cost, usage));
       check();
-      const cwd = request.kind === "acp" && request.cwd ? request.cwd : getProjectCwd(project);
+      const cwd = await resolveSessionCwd(project, session.workspaceBinding,
+        (target) => request.kind === "acp" && request.cwd ? request.cwd : getProjectCwd(target));
+      check();
       const servers = request.kind === "acp" ? request.servers : await window.claude.mcp.list(session.projectId);
       check();
       let next: ChatSession = session;

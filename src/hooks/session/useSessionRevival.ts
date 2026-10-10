@@ -11,6 +11,7 @@ import { isRetryableUpstreamError } from "../../lib/session/retry";
 import { buildPersistedSession } from "../../lib/session/records";
 import { persistSessionReplacement } from "../../lib/session/persistence";
 import { useI18n } from "@/lib/i18n";
+import { resolveSessionCwd } from "./workspace-binding";
 import { DRAFT_ID, getEffectiveClaudePermissionMode, getCodexApprovalPolicy, getCodexSandboxMode, buildCodexCollabMode } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks, InitialMeta } from "./types";
 
@@ -51,7 +52,6 @@ export function useSessionRevival({ refs, setters, engines, findProject, getProj
     const epoch = view.current.epoch;
     const options = { ...refs.startOptionsRef.current };
     const effort = refs.codexEffortRef.current;
-    const cwd = getProjectCwd(project);
     const cost = refs.totalCostRef.current;
     const usage = refs.contextUsageRef.current;
     let targetId = oldId;
@@ -91,6 +91,8 @@ export function useSessionRevival({ refs, setters, engines, findProject, getProj
     };
 
     try {
+      const cwd = await resolveSessionCwd(project, session.workspaceBinding, getProjectCwd);
+      check();
       let next: ChatSession = session;
       let meta: InitialMeta = { isProcessing: true, isConnected: true, sessionInfo: null, totalCost: cost, contextUsage: usage };
       let configOptions: Parameters<typeof setters.setInitialConfigOptions>[0] = [];

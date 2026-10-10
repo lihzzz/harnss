@@ -5,7 +5,7 @@
  * Visual rendering is delegated to sub-components in `./browser/`.
  */
 
-import { forwardRef, useCallback, useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import { Globe, Loader2 } from "lucide-react";
 import type { GrabbedElement } from "@/types";
 import { capture } from "@/lib/analytics/analytics";
@@ -25,11 +25,14 @@ import {
 } from "./browser/browser-utils";
 import { BrowserStartPage } from "./browser/BrowserStartPage";
 import { WebviewInstance } from "./browser/WebviewInstance";
+import { useI18n } from "@/lib/i18n";
 
 // ── Props ───────────────────────────────────────────────────────────────
 
 interface BrowserPanelProps {
   persistKey: string;
+  /** An idempotent request from an app preview or another workspace surface. */
+  openRequest?: { requestId: string; tabId: string; url: string; title: string };
   onElementGrab?: (element: GrabbedElement) => void;
   headerControls?: React.ReactNode;
 }
@@ -44,7 +47,14 @@ const BrowserHeaderIcon = forwardRef<SVGSVGElement, React.ComponentPropsWithoutR
 
 // ── Component ───────────────────────────────────────────────────────────
 
-export function BrowserPanel({ persistKey, onElementGrab, headerControls }: BrowserPanelProps) {
+export function BrowserPanel(props: BrowserPanelProps) {
+  // A changed persistence scope must never write the previous scope's tabs.
+  return <BrowserPanelState key={props.persistKey} {...props} />;
+}
+
+function BrowserPanelState({ persistKey, openRequest, onElementGrab, headerControls }: BrowserPanelProps) {
+  const { t } = useI18n();
+  const lastOpenRequest = useRef<string | null>(null);
   const [tabs, setTabs] = useState<BrowserTab[]>(() => readBrowserSession(persistKey).tabs);
   const [activeTabId, setActiveTabId] = useState<string | null>(() => readBrowserSession(persistKey).activeTabId);
   const [inspectMode, setInspectMode] = useState(false);
@@ -59,17 +69,21 @@ export function BrowserPanel({ persistKey, onElementGrab, headerControls }: Brow
   }, [history]);
 
   useEffect(() => {
-    const session = readBrowserSession(persistKey);
-    setTabs(session.tabs);
-    setActiveTabId(session.activeTabId);
-    setInspectMode(false);
-    setEmptyInput("");
-    setShowEmptySuggestions(false);
-  }, [persistKey]);
-
-  useEffect(() => {
     writeBrowserSession(persistKey, tabs, activeTabId);
   }, [activeTabId, persistKey, tabs]);
+
+  useEffect(() => {
+    if (!openRequest || lastOpenRequest.current === openRequest.requestId) return;
+    let parsed: URL;
+    try { parsed = new URL(openRequest.url); } catch { return; }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+    lastOpenRequest.current = openRequest.requestId;
+    const requestedTab: BrowserTab = { id: openRequest.tabId, url: parsed.href, title: openRequest.title, label: openRequest.title, isLoading: true, colorScheme: getDefaultBrowserColorScheme(), isStartPage: false };
+    setTabs((previous) => previous.some((tab) => tab.id === requestedTab.id)
+      ? previous.map((tab) => tab.id === requestedTab.id ? { ...tab, ...requestedTab } : tab)
+      : [...previous, requestedTab]);
+    setActiveTabId(requestedTab.id);
+  }, [openRequest]);
 
   // ── History management ──────────────────────────────────────────────
 
@@ -90,8 +104,8 @@ export function BrowserPanel({ persistKey, onElementGrab, headerControls }: Brow
     const tab: BrowserTab = {
       id: crypto.randomUUID(),
       url: url ?? "",
-      title: "New Tab",
-      label: "New Tab",
+      title: t("New Tab"),
+      label: t("New Tab"),
       isLoading: !isStartPage,
       colorScheme: getDefaultBrowserColorScheme(),
       isStartPage,
@@ -99,7 +113,7 @@ export function BrowserPanel({ persistKey, onElementGrab, headerControls }: Brow
     setTabs((prev) => [...prev, tab]);
     capture("browser_tab_created");
     setActiveTabId(tab.id);
-  }, []);
+  }, [t]);
 
   const openFirstTab = useCallback((value?: string) => {
     const source = value ?? emptyInput;
@@ -133,13 +147,13 @@ export function BrowserPanel({ persistKey, onElementGrab, headerControls }: Brow
   );
 
   const updateTab = useCallback((tabId: string, updates: Partial<BrowserTab>) => {
-    setTabs((prev) => prev.map((t) => {
-      if (t.id !== tabId) return t;
-      const merged = { ...t, ...updates };
-      merged.label = merged.title || "New Tab";
+    setTabs((prev) => prev.map((tab) => {
+      if (tab.id !== tabId) return tab;
+      const merged = { ...tab, ...updates };
+      merged.label = merged.title || t("New Tab");
       return merged;
     }));
-  }, []);
+  }, [t]);
 
   const reorderTabs = useCallback((fromTabId: string, toTabId: string) => {
     setTabs((prev) => reorderTabsById(prev, fromTabId, toTabId));
@@ -156,7 +170,7 @@ export function BrowserPanel({ persistKey, onElementGrab, headerControls }: Brow
         onCloseTab={closeTab}
         onNewTab={() => createTab()}
         headerIcon={BrowserHeaderIcon}
-        headerLabel="Browser"
+        headerLabel={t("Browser")}
         renderTabIcon={(tab) =>
           tab.isLoading ? (
             <Loader2 className="h-2.5 w-2.5 animate-spin opacity-50" />
@@ -201,11 +215,11 @@ export function BrowserPanel({ persistKey, onElementGrab, headerControls }: Brow
                 history={history}
                 onVisitUrl={addHistoryEntry}
                 inspectMode={inspectMode && tab.id === activeTabId}
-                onToggleInspect={() => setInspectMode((prev) => !prev)}
-                onElementGrab={(element) => {
+                onToggleInspect={onElementGrab ? () => setInspectMode((prev) => !prev) : undefined}
+                onElementGrab={onElementGrab ? (element) => {
                   setInspectMode(false);
-                  onElementGrab?.(element);
-                }}
+                  onElementGrab(element);
+                } : undefined}
                 onInspectCancel={() => setInspectMode(false)}
               />
             )}

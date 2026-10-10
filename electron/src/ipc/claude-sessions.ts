@@ -22,6 +22,7 @@ import { beginUsageTurn, endUsageTurn, stopUsageSession } from "../lib/usage";
 import { getSessionRepository } from "../lib/session-service";
 import type { SessionRuntimeLease } from "../lib/session-repository";
 import type { SessionResumeSource } from "@shared/types/productivity";
+import { cancelProjectAppAgentPermissions, registerProjectAppAgentSession, revokeProjectAppAgentSession, withProjectAppMcpServer } from "../lib/project-apps/agent-bridge";
 
 /** SDK options for file checkpointing — enables Write/Edit/NotebookEdit revert support */
 function fileCheckpointOptions(): Record<string, unknown> {
@@ -63,6 +64,7 @@ function assertClaudeSessionActive(sessionId: string, session: SessionEntry): vo
 }
 
 async function stopSession(sessionId: string, reason: string): Promise<void> {
+  revokeProjectAppAgentSession(sessionId);
   stopUsageSession(sessionId);
   const session = sessions.get(sessionId);
   if (!session) return;
@@ -75,7 +77,7 @@ async function stopSession(sessionId: string, reason: string): Promise<void> {
   if (!session.queryHandle) {
     sessions.delete(sessionId);
     session.runtimeLease?.release();
-    unregisterMemorySession(sessionId);
+    unregisterMemorySession(sessionId); revokeProjectAppAgentSession(sessionId);
     return;
   }
   const deadline = Date.now() + 5_000;
@@ -372,7 +374,7 @@ function startEventLoop(
       const ownsSession = sessions.get(sessionId) === session;
       if (ownsSession) {
         sessions.delete(sessionId);
-        unregisterMemorySession(sessionId);
+        unregisterMemorySession(sessionId); revokeProjectAppAgentSession(sessionId);
       }
       if (!session.restarting && ownsSession) {
         stopUsageSession(sessionId);
@@ -712,7 +714,9 @@ async function startSession(options: StartOptions, getMainWindow: () => BrowserW
       queryOptions.effort = options.effort;
     }
 
-    const mcpServers = withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), sessionId);
+    await registerProjectAppAgentSession(sessionId, options.source?.projectId ?? options.memoryContext?.projectId, options.cwd || process.cwd());
+    assertClaudeSessionActive(sessionId, session);
+    const mcpServers = withProjectAppMcpServer(withHindsightMcpServers(withComputerUseMcpServer(options.mcpServers), sessionId), sessionId);
     if (mcpServers.length) {
       queryOptions.mcpServers = await buildSdkMcpConfig(mcpServers, mcpConfigOptions);
     }
@@ -921,6 +925,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
     "claude:stop",
     (_event, payload: string | { sessionId: string; reason?: string }) => {
       const { sessionId, reason } = parseStopRequest(payload);
+      revokeProjectAppAgentSession(sessionId);
       stopUsageSession(sessionId);
       const session = sessions.get(sessionId);
       if (session) {
@@ -941,6 +946,7 @@ export function register(getMainWindow: () => BrowserWindow | null): void {
   );
 
   ipcMain.handle("claude:interrupt", async (_event, sessionId: string) => {
+    cancelProjectAppAgentPermissions(sessionId);
     const session = sessions.get(sessionId);
     if (!session) {
       log("INTERRUPT", `ERROR: session ${sessionId?.slice(0, 8)} not found`);
@@ -1137,6 +1143,6 @@ export async function stopAll(): Promise<void> {
   }
   const results = await Promise.allSettled(stopping);
   for (const result of results) if (result.status === "rejected") reportError("CLAUDE_STOP_ERR", result.reason);
-  for (const sessionId of sessions.keys()) unregisterMemorySession(sessionId);
+  for (const sessionId of sessions.keys()) { unregisterMemorySession(sessionId); revokeProjectAppAgentSession(sessionId); }
   sessions.clear();
 }

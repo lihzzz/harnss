@@ -15,11 +15,12 @@ import {
   getEffectiveClaudePermissionMode,
 } from "./types";
 import type { SharedSessionRefs, SharedSessionSetters, EngineHooks, StartOptions } from "./types";
+import { resolveSessionCwd } from "./workspace-binding";
 
 interface UseSessionCrudParams {
   refs: SharedSessionRefs;
   setters: SharedSessionSetters;
-  engines: EngineHooks;
+  engines: { acp: Pick<EngineHooks["acp"], "setMessages" | "setIsProcessing"> };
   findProject: (projectId: string) => Project | null;
   getProjectCwd: (project: Project) => string;
   // From persistence
@@ -61,6 +62,7 @@ export function useSessionCrud({
   evictFromCache,
   clearQueue,
 }: UseSessionCrudParams) {
+  const createRequestIdRef = useRef(0);
   const { acp } = engines;
   const {
     setSessions,
@@ -82,7 +84,6 @@ export function useSessionCrud({
     sessionsRef,
     liveSessionIdsRef,
     backgroundStoreRef,
-    preStartedSessionIdRef,
     draftProjectIdRef,
     startOptionsRef,
     acpAgentIdRef,
@@ -130,7 +131,28 @@ export function useSessionCrud({
   // ── Create a new session (draft) ──
 
   const createSession = useCallback(
-    async (projectId: string, options?: StartOptions) => {
+    async (projectId: string, options?: StartOptions, activation?: { beforeActivate?: () => void }) => {
+      const requestId = ++createRequestIdRef.current;
+      const previousActiveId = activeSessionIdRef.current;
+      const previousConversationId = startOptionsRef.current.conversationId;
+      const nextStartOptions = { ...options, conversationId: options?.conversationId ?? crypto.randomUUID(),
+        ...(options?.workspaceBinding ? { workspaceBinding: { ...options.workspaceBinding } } : {}),
+        ...(options?.origin ? { origin: { ...options.origin } } : {}) };
+      if (nextStartOptions.workspaceBinding) {
+        const project = findProject(projectId);
+        if (!project) throw new Error("The application's project is no longer available.");
+        await resolveSessionCwd(project, nextStartOptions.workspaceBinding, getProjectCwd);
+        if (requestId !== createRequestIdRef.current || activeSessionIdRef.current !== previousActiveId
+          || startOptionsRef.current.conversationId !== previousConversationId) {
+          throw new Error("The application conversation was superseded by another selection.");
+        }
+      } else if (nextStartOptions.origin) {
+        throw new Error("Application conversations require a fixed workspace binding.");
+      }
+      // The caller may have checked its composer before the asynchronous path
+      // validation. Re-check synchronously at the last point before any draft
+      // teardown or state mutation; never persist renderer callbacks in options.
+      activation?.beforeActivate?.();
       abandonEagerSession("new_draft");
       abandonDraftAcpSession("new_draft");
       acpAgentIdRef.current = null;
@@ -139,7 +161,6 @@ export function useSessionCrud({
       seedBackgroundStore();
       void saveCurrentSession();
       const draftEngine = options?.engine ?? "claude";
-      const nextStartOptions = { ...options, conversationId: options?.conversationId ?? crypto.randomUUID() };
       // Keep the ref-backed routing state in sync with the setters so a
       // programmatic create-then-send cannot send through the old session.
       startOptionsRef.current = nextStartOptions;
@@ -164,7 +185,7 @@ export function useSessionCrud({
 
       if (draftEngine === "claude") {
         // Eager start for Claude engine (fire-and-forget)
-        eagerStartSession(projectId, options);
+        eagerStartSession(projectId, nextStartOptions);
         // Set immediate "pending" statuses while SDK connects
         window.claude.mcp.list(projectId).then(servers => {
           if (activeSessionIdRef.current === DRAFT_ID && draftProjectIdRef.current === projectId) {
@@ -175,7 +196,7 @@ export function useSessionCrud({
           }
         }).catch(() => { /* IPC failure */ });
       } else if (draftEngine === "acp") {
-        eagerStartAcpSession(projectId, options);
+        eagerStartAcpSession(projectId, nextStartOptions);
         probeMcpServers(projectId);
       } else {
         // Codex: no eager start; prefetch model list for the picker.
@@ -183,14 +204,18 @@ export function useSessionCrud({
         prefetchCodexModels(options?.model);
       }
     },
-    [saveCurrentSession, seedBackgroundStore, eagerStartSession, eagerStartAcpSession, abandonEagerSession, abandonDraftAcpSession, prefetchCodexModels, probeMcpServers],
+    [findProject, getProjectCwd, saveCurrentSession, seedBackgroundStore, eagerStartSession, eagerStartAcpSession, abandonEagerSession, abandonDraftAcpSession, prefetchCodexModels, probeMcpServers],
   );
 
   // ── Switch to an existing session ──
 
   const switchSession = useCallback(
-    async (id: string, historyLocation?: HistoryLocation) => {
+    async (id: string, historyLocation?: HistoryLocation, activation?: { beforeActivate?: () => void }) => {
       const requestId = ++switchRequestIdRef.current;
+      const previousActiveId = activeSessionIdRef.current;
+      const previousConversationId = startOptionsRef.current.conversationId;
+      let validatedData: PersistedSession | null = null;
+      let restoredSession: ChatSession | null = null;
       if (historyLocation) {
         const [data, metadata] = await Promise.all([
           window.claude.sessions.load(historyLocation.projectId, id),
@@ -202,12 +227,28 @@ export function useSessionCrud({
         const messages = id === activeSessionIdRef.current ? refs.messagesRef.current : backgroundStoreRef.current.get(id)?.messages ?? data.messages;
         if (historyLocation.messageId !== null && !messages.some((message) => message.id === historyLocation.messageId)) throw new Error("The original message is no longer available");
         if (!sessionsRef.current.some((session) => session.id === id && session.projectId === historyLocation.projectId)) {
-          const session = toChatSession(meta, false);
-          sessionsRef.current = [...sessionsRef.current, session];
-          setSessions((previous) => previous.some((entry) => entry.id === id) ? previous : [...previous, session]);
+          restoredSession = toChatSession(meta, false);
         }
-        if (id !== activeSessionIdRef.current && !backgroundStoreRef.current.get(id)) cacheSessionPayload(data);
+        validatedData = data;
+      } else if (activation && id !== activeSessionIdRef.current && !backgroundStoreRef.current.get(id)) {
+        const session = sessionsRef.current.find((entry) => entry.id === id);
+        if (!session) throw new Error("The original conversation is no longer available");
+        validatedData = await window.claude.sessions.load(session.projectId, id);
+        if (!validatedData) throw new Error("The original conversation is no longer available");
       }
+      if (activation && (requestId !== switchRequestIdRef.current || activeSessionIdRef.current !== previousActiveId
+        || startOptionsRef.current.conversationId !== previousConversationId)) {
+        throw new Error("The application conversation was superseded by another selection.");
+      }
+      // Guard only after all required reads, before changing the old composer or
+      // navigation. Retain the validated payload so activation needs no more I/O.
+      activation?.beforeActivate?.();
+      if (restoredSession) {
+        const session = restoredSession;
+        sessionsRef.current = [...sessionsRef.current, session];
+        setSessions((previous) => previous.some((entry) => entry.id === id) ? previous : [...previous, session]);
+      }
+      if (validatedData && id !== activeSessionIdRef.current && !backgroundStoreRef.current.get(id)) cacheSessionPayload(validatedData);
       if (id === activeSessionIdRef.current) return;
 
       // A draft can be in the middle of materializing after its first prompt.
@@ -226,15 +267,20 @@ export function useSessionCrud({
       const session = sessionsRef.current.find((s) => s.id === id);
       if (!session) return;
       clearSessionPlanMode(session);
-      setStartOptions((prev) => ({
-        ...prev,
+      const sessionOptions: StartOptions = {
+        ...startOptionsRef.current,
+        conversationId: session.conversationId ?? session.id,
+        workspaceBinding: session.workspaceBinding,
+        origin: session.origin,
         engine: session.engine ?? "claude",
         model: session.model,
         effort: session.effort,
         permissionMode: session.permissionMode,
         planMode: false,
         agentId: session.agentId,
-      }));
+      };
+      startOptionsRef.current = sessionOptions;
+      setStartOptions(sessionOptions);
 
       // Switch to the correct space for this session's project — ensures that
       // clicking a permission toast (or any cross-space navigation) lands in the right space
@@ -290,7 +336,7 @@ export function useSessionCrud({
       }
 
       // Fall back to loading from disk (non-live session)
-      const data = await window.claude.sessions.load(session.projectId, id);
+      const data = validatedData ?? await window.claude.sessions.load(session.projectId, id);
       if (requestId !== switchRequestIdRef.current) return;
       if (data) {
         cacheSessionPayload({ ...data, planMode: false });
@@ -483,21 +529,23 @@ export function useSessionCrud({
       capture("engine_switched", { from_engine: prevEngine, to_engine: draftEngine });
     }
 
-    if (draftEngine !== "claude" && preStartedSessionIdRef.current) {
+    if (draftEngine !== "claude") {
       // Switching away from Claude draft should immediately close the eager Claude session.
       abandonEagerSession("engine_switch");
     }
-    if (prevEngine === "acp" && refs.draftAcpSessionIdRef.current && (draftEngine !== "acp" || agentId !== prevAgentId)) {
+    if (prevEngine === "acp" && (draftEngine !== "acp" || agentId !== prevAgentId)) {
       abandonDraftAcpSession("engine_switch");
     }
 
     const normalizedModel = typeof model === "string" ? model.trim() : "";
-    setStartOptions((prev) => ({
-      ...prev,
+    const nextOptions = {
+      ...startOptionsRef.current,
       engine: draftEngine as StartOptions["engine"],
       agentId,
       model: normalizedModel || undefined,
-    }));
+    };
+    startOptionsRef.current = nextOptions;
+    setStartOptions(nextOptions);
     if (draftEngine === "codex") {
       prefetchCodexModels(normalizedModel || undefined);
     } else if (draftEngine === "acp" && draftProjectIdRef.current) {
